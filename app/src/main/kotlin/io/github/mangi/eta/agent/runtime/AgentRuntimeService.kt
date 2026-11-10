@@ -516,6 +516,15 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
         }
         mainHandler.post {
             if (destroyed) return@post
+            AgentExecutionService.updateRunStatus(
+                this,
+                null,
+                activeRunCount = runs.all().count { !it.session.isTerminal },
+                round = run.overlayState.round,
+                detailText = (if (result.ok) result.content else result.error.orEmpty()).take(240),
+                finished = result.ok,
+                failed = !result.ok && result.error != "已停止",
+            )
             val guiState = guiControl.state.value
             val ownsGui = guiState.ownerRunId == run.runId
             // StateFlow 可以合并短暂的获得与释放；终态归属仍以顺序事件记录的最后所有者为准。
@@ -591,15 +600,6 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
                         ),
                     )
                 }
-            AgentExecutionService.updateRunStatus(
-                this,
-                null,
-                activeRunCount = runs.all().count { !it.session.isTerminal },
-                round = run.overlayState.round,
-                detailText = (if (result.ok) result.content else result.error.orEmpty()).take(240),
-                finished = result.ok,
-                failed = !result.ok,
-            )
             }.onFailure { throwable ->
                 AndroidAgentLogger.warnThrottled("runtime_terminal_overlay_failed") {
                     "Agent runtime terminal overlay failed: type=${throwable.safeLogType()}"

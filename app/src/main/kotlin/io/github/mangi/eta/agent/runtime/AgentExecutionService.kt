@@ -116,6 +116,9 @@ internal class AgentExecutionService : Service() {
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .addAction(Notification.Action.Builder(null, getString(R.string.execution_stop), stop).build())
+        if (status == null && detail.isNotBlank()) {
+            builder.setStyle(Notification.BigTextStyle().bigText(detail))
+        }
         // 只有 Agent run 在跑时才申请提升为 Live Update；终端会话、Linux 启动等长驻任务不属于"正在进行、需要持续关注"的活动。
         if (status != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
             builder
@@ -135,6 +138,7 @@ internal class AgentExecutionService : Service() {
         AgentOverlayStatus.Stopping -> getString(R.string.overlay_stopping)
         AgentOverlayStatus.ResultReady -> getString(R.string.overlay_result_ready)
         AgentOverlayStatus.RunFailed -> getString(R.string.overlay_run_failed)
+        AgentOverlayStatus.Stopped -> getString(R.string.overlay_stopped)
         AgentOverlayStatus.GeneratingAnswer -> getString(R.string.execution_chip_answering)
         else -> getString(R.string.overlay_reasoning)
     }
@@ -184,7 +188,7 @@ internal class AgentExecutionService : Service() {
                     status?.localizedText(context.resources).orEmpty(),
                     detailText.take(48),
                     (detailText.length / 96).toString(),
-                    thought.takeLast(32),
+                    (thought.length / 32).toString(),
                     round.toString(),
                 ).joinToString("|")
                 if (text != publishedStatusText) {

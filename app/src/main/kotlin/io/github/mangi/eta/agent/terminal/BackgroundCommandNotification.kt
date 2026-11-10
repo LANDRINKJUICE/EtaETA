@@ -40,7 +40,7 @@ internal object BackgroundCommandNotification {
             .setStyle(
                 Notification.BigTextStyle().bigText(buildString {
                     append(task.description.ifBlank { task.command.take(300) })
-                    val tail = logTail(io.github.mangi.eta.agent.terminal.hostDaemonPath(task, task.logPath))
+                    val tail = logTail(hostLogPath(task))
                     if (tail.isNotBlank()) {
                         append("\n\n日志末尾：\n")
                         append(tail)
@@ -53,6 +53,14 @@ internal object BackgroundCommandNotification {
             .setOnlyAlertOnce(true)
             .build()
         if (manager.areNotificationsEnabled()) manager.notify(task.id, NOTIFICATION_ID, notification)
+    }
+
+    /** 与 DetachedTaskSupervisor 相同的 wire 路径映射，避免 App 进程读到不存在的容器路径。 */
+    private fun hostLogPath(task: DetachedTask): String {
+        val wire = task.logPath
+        if (!task.environment.isLinux || !wire.startsWith("/workspace/daemon")) return wire
+        val root = task.hostWorkspace?.let { "$it/daemon" } ?: "/data/local/tmp/eta/daemon"
+        return root + wire.removePrefix("/workspace/daemon")
     }
 
     /** 只读日志尾部 8KB，Linux 任务先映射到宿主路径；失败不影响通知。 */
