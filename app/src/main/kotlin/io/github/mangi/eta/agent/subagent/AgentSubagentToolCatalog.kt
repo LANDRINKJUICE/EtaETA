@@ -89,6 +89,22 @@ internal object AgentSubagentToolCatalog {
                     ),
             )
             .put(
+                "timeout_seconds",
+                JSONObject()
+                    .put("type", "integer")
+                    .put("minimum", 0)
+                    .put("maximum", 3600)
+                    .put("description", "Budget: cancel the subagent after this many seconds and return partial output. 0 (default) means unlimited."),
+            )
+            .put(
+                "max_turns",
+                JSONObject()
+                    .put("type", "integer")
+                    .put("minimum", 0)
+                    .put("maximum", 500)
+                    .put("description", "Budget: cancel the subagent when it exceeds this many model rounds (SUBAGENT_BUDGET_EXCEEDED). 0 (default) means unlimited."),
+            )
+            .put(
                 "resume",
                 JSONObject()
                     .put("type", "string")

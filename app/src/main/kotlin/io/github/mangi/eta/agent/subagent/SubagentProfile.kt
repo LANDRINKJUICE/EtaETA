@@ -23,6 +23,8 @@ internal data class SubagentProfile(
     private val allowWriteFilesAndTerminal: Boolean = false,
     /** 非空时只给这套基础只读工具，不再附带个人数据检索；plan 等无个人数据需求的角色使用。 */
     private val baseTools: Set<String>? = null,
+    /** 在基础工具之外额外放行的工具，用于 analyst 这类"只读 + 受限终端"的角色。 */
+    private val extraAllowedTools: Set<String> = emptySet(),
     val builtin: Boolean = true,
     val override: Boolean = false,
     val explicitTools: Set<String>? = null,
@@ -46,6 +48,7 @@ internal data class SubagentProfile(
         if (toolName.isBlank() || toolName in FORBIDDEN_TOOLS || toolName in disallowedTools) {
             return false
         }
+        if (toolName in extraAllowedTools) return true
         val customAllowlist = explicitTools
         if (customAllowlist != null) {
             if ("*" in customAllowlist) return true
@@ -70,6 +73,7 @@ internal data class SubagentProfile(
         const val TYPE_EXPLORE = "explore"
         const val TYPE_CODER = "coder"
         const val TYPE_PLAN = "plan"
+        const val TYPE_ANALYST = "analyst"
         const val DEFAULT_TYPE = TYPE_EXPLORE
 
         private const val SUBAGENT_ROLE_PREFIX =
@@ -211,7 +215,20 @@ internal data class SubagentProfile(
             builtin = true,
         )
 
-        val BUILTIN_PROFILES: List<SubagentProfile> = listOf(EXPLORE, CODER, PLAN)
+        /** 只读分析：explore 的全部只读检索 + 受限终端（指令级只读，禁止写文件与状态修改命令）。 */
+        val ANALYST = SubagentProfile(
+            name = TYPE_ANALYST,
+            summary = "只读数据分析：检索 + 只读 Shell（SQLite、日志、统计）",
+            whenToUse = "Read-only analysis agent for tasks needing shell-based inspection (sqlite3 queries, log processing, jq/statistics) without any file or device modification. Use instead of coder when the task is query-only.",
+            toolHighlights = listOf("terminal", "read_file", "grep_files", "web_search", "personal_data", "get_logcat"),
+            roleInstruction = "你是只读数据分析 Subagent（analyst）。你可以使用 terminal 执行**只读命令**（sqlite3 查询、grep/jq/awk 统计、cat、ls、sqlite3 只读连接等），" +
+                "严禁任何写入或状态修改：不得执行写文件、rm/mv/chmod、pm/settings/am 写操作、INSERT/UPDATE/DELETE、安装或卸载等命令；" +
+                "不得使用 write_file/edit_file（未开放）。查询 SQLite 时使用只读方式打开（file:...?mode=ro）。最终回复给出查询命令、关键证据与结论。",
+            extraAllowedTools = setOf("terminal"),
+            builtin = true,
+        )
+
+        val BUILTIN_PROFILES: List<SubagentProfile> = listOf(EXPLORE, CODER, PLAN, ANALYST)
         val BUILTIN_NAMES: Set<String> = BUILTIN_PROFILES.mapTo(linkedSetOf()) { it.name }
 
         fun resolve(

@@ -9,8 +9,15 @@ import io.github.mangi.eta.agent.runtime.AgentRunCancelledException
 import io.github.mangi.eta.agent.runtime.AgentRunController
 import io.github.mangi.eta.agent.skill.SkillContext
 import io.github.mangi.eta.agent.terminal.TerminalExecutionContext
+import io.github.mangi.eta.agent.terminal.TerminalRuntime
 import io.github.mangi.eta.agent.tool.AgentToolCapabilities
+import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -56,6 +63,12 @@ internal class SubagentExecutor(
         val resumeId = args.optString("resume").trim()
         val requestedType = args.optString("subagent_type").trim().lowercase()
         val isResume = resumeId.isNotEmpty()
+        // 预算：超时秒数与最大轮数，0 表示不限（保持旧行为）。超限即取消子运行并带回部分输出。
+        val timeoutSeconds = args.optInt("timeout_seconds", 0).coerceIn(0, 3600)
+        val maxTurns = args.optInt("max_turns", 0).coerceIn(0, 500)
+        val startedNanos = nanoTime()
+        val roundCounter = AtomicInteger(0)
+        val budgetExceeded = AtomicBoolean(false)
 
         if (isResume && requestedType.isNotEmpty()) {
             return errorResult(
@@ -98,6 +111,14 @@ internal class SubagentExecutor(
         val subagentId = entry.subagentId
         val childController = AgentRunController()
         val controllerBinding = parentController.register(childController::cancel)
+        val timeoutFuture: ScheduledFuture<*>? = if (timeoutSeconds > 0) {
+            BUDGET_SCHEDULER.schedule({
+                budgetExceeded.set(true)
+                childController.cancel()
+            }, timeoutSeconds.toLong(), TimeUnit.SECONDS)
+        } else {
+            null
+        }
 
         val resolvedConfig = runCatching { configProvider() }.getOrElse { throwable ->
             SubagentSessionStore.releaseRunning(conversationKey, subagentId)
@@ -174,6 +195,13 @@ internal class SubagentExecutor(
                 operationId = "${toolCall.id}-$subagentId",
                 toolFilter = profile::filterTools,
                 onEvent = { childEvent ->
+                    if (childEvent is AgentEvent.RoundStarted) {
+                        val round = roundCounter.incrementAndGet()
+                        if (maxTurns > 0 && round > maxTurns) {
+                            budgetExceeded.set(true)
+                            childController.cancel()
+                        }
+                    }
                     val force = tracker.onChildEvent(childEvent)
                     publishSnapshot(force = force)
                 },
@@ -194,6 +222,13 @@ internal class SubagentExecutor(
                     .put("model", modelLabel)
                     .put("status", SubagentActivitySnapshot.STATUS_COMPLETED)
                     .put("tool_calls", tracker.toolCount())
+                    .put("rounds", roundCounter.get())
+                    .put("elapsed_ms", (nanoTime() - startedNanos) / 1_000_000)
+                    .put(
+                        "report_path",
+                        writeReport(subagentId, profile.name, description, modelLabel, "completed", response.content)
+                            ?: JSONObject.NULL,
+                    )
                     .put("summary", response.content)
                     .put(
                         "resume_hint",
@@ -217,10 +252,11 @@ internal class SubagentExecutor(
             val cancelled = parentController.isCancelled ||
                 childController.isCancelled ||
                 throwable is AgentRunCancelledException
-            val errorMessage = if (cancelled) {
-                "已停止"
-            } else {
-                throwable.message ?: throwable.javaClass.simpleName
+            val errorMessage = when {
+                budgetExceeded.get() ->
+                    "超出预算（timeout_seconds=$timeoutSeconds / max_turns=$maxTurns），已停止并返回部分输出"
+                cancelled -> "已停止"
+                else -> throwable.message ?: throwable.javaClass.simpleName
             }
             if (cancelled) {
                 tracker.markCancelled(partial)
@@ -236,7 +272,18 @@ internal class SubagentExecutor(
             AgentModelClient.ToolResult(
                 content = JSONObject()
                     .put("ok", false)
-                    .put("code", if (cancelled) "SUBAGENT_CANCELLED" else "SUBAGENT_FAILED")
+                    .put(
+                        "code",
+                        if (budgetExceeded.get()) {
+                            "SUBAGENT_BUDGET_EXCEEDED"
+                        } else if (cancelled) {
+                            "SUBAGENT_CANCELLED"
+                        } else {
+                            "SUBAGENT_FAILED"
+                        },
+                    )
+                    .put("rounds", roundCounter.get())
+                    .put("elapsed_ms", (nanoTime() - startedNanos) / 1_000_000)
                     .put("subagent_id", subagentId)
                     .put("subagent_type", profile.name)
                     .put("description", description)
@@ -263,9 +310,37 @@ internal class SubagentExecutor(
                 command = latestSnapshots[toolCall.id],
             )
         } finally {
+            timeoutFuture?.cancel(false)
             controllerBinding.close()
         }
     }
+
+    /** 把子代理结论落盘为 Markdown，便于跨会话引用；失败时返回 null，不影响主流程。 */
+    private fun writeReport(
+        subagentId: String,
+        type: String,
+        description: String,
+        model: String,
+        status: String,
+        summary: String,
+    ): String? = runCatching {
+        val dir = File(TerminalRuntime.userWorkspacePath, "subagent-reports")
+        if (!dir.exists() && !dir.mkdirs()) return@runCatching null
+        val file = File(dir, "$subagentId.md")
+        file.writeText(
+            buildString {
+                appendLine("# Subagent 报告：$description")
+                appendLine("- id: $subagentId")
+                appendLine("- type: $type")
+                appendLine("- model: $model")
+                appendLine("- status: $status")
+                appendLine("- time: ${java.time.Instant.now()}")
+                appendLine()
+                append(summary)
+            },
+        )
+        file.absolutePath
+    }.getOrNull()
 
     fun executeProfileManagement(toolCall: AgentModelClient.ToolCall): AgentModelClient.ToolResult {
         parentController.throwIfCancelled()
@@ -602,5 +677,9 @@ internal class SubagentExecutor(
         private const val MAX_STEP_DETAIL_CHARS = 2_000
         private const val MAX_OUTPUT_CHARS = 12_000
         private const val MAX_STEPS = 48
+
+        private val BUDGET_SCHEDULER = Executors.newSingleThreadScheduledExecutor { runnable ->
+            Thread(runnable, "subagent-budget").apply { isDaemon = true }
+        }
     }
 }
