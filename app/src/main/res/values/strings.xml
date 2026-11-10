@@ -446,6 +446,11 @@
   <string name="ui_deep_thinking_enabled_by_default_c032d6">Reasoning enabled by default</string>
   <string name="tool_tap_area">Tap area</string>
   <string name="tool_current_context">Time and location</string>
+  <string name="tool_gesture_batch">Batch GUI actions</string>
+  <string name="tool_macro_list">List GUI macros</string>
+  <string name="tool_macro_save">Save GUI macro</string>
+  <string name="tool_macro_run">Run GUI macro</string>
+  <string name="tool_macro_delete">Delete GUI macro</string>
   <string name="tool_memory_get">Read memory</string>
   <string name="tool_memory_write">Update memory</string>
   <string name="tool_eta_get_config">Read Eta config</string>

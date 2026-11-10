@@ -21,6 +21,11 @@ internal fun buildToolsState(context: Context): AgentToolsUiState =
                     ToolItemUi("long_press", context.getString(R.string.tool_ui_long_press_f7a417), context.getString(R.string.tool_ui_long_press_on_coordinates_or_elements_796384)),
                     ToolItemUi("swipe", context.getString(R.string.tool_ui_slide_3723aa), context.getString(R.string.tool_ui_perform_up_down_left_and_right_swipe_gestures_3ef0de)),
                     ToolItemUi("scroll", context.getString(R.string.tool_ui_scroll_220e68), context.getString(R.string.tool_ui_scroll_the_page_or_specify_a_node_83ab24)),
+                    ToolItemUi("gesture_batch", "连续动作批处理", "一次执行多步点击、滑动、输入，失败即中断，全部完成后统一观察。"),
+                    ToolItemUi("macro_list", "列出 GUI 宏", "查看保存的动作脚本。"),
+                    ToolItemUi("macro_save", "保存 GUI 宏", "保存验证过的动作序列，支持参数占位。"),
+                    ToolItemUi("macro_run", "执行 GUI 宏", "按名称运行动作脚本并注入参数。"),
+                    ToolItemUi("macro_delete", "删除 GUI 宏", "按名称删除动作脚本。"),
                 ),
             ),
             ToolGroupUi(

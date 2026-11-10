@@ -59,6 +59,11 @@ internal fun toolDisplayNameResource(name: String): Int? = when (name) {
     "release_gui" -> R.string.tool_release_gui
     "present_to_user" -> R.string.tool_present_to_user
     "tap" -> R.string.tool_tap
+    "gesture_batch" -> R.string.tool_gesture_batch
+    "macro_list" -> R.string.tool_macro_list
+    "macro_save" -> R.string.tool_macro_save
+    "macro_run" -> R.string.tool_macro_run
+    "macro_delete" -> R.string.tool_macro_delete
     "tap_element" -> R.string.tool_tap_element
     "tap_area" -> R.string.tool_tap_area
     "long_press" -> R.string.tool_long_press

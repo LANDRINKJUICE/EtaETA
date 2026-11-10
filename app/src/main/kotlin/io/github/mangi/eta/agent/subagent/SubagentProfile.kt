@@ -96,6 +96,8 @@ internal data class SubagentProfile(
             "scroll",
             "scroll_element",
             "type_text",
+            "gesture_batch",
+            "macro_run",
             "input_text",
             "replace_text",
             "clear_text",

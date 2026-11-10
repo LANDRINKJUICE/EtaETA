@@ -439,6 +439,11 @@
   <string name="ui_deep_thinking_enabled_by_default_c032d6">默认启用思考</string>
   <string name="tool_tap_area">点击区域</string>
   <string name="tool_current_context">时间与位置</string>
+  <string name="tool_gesture_batch">连续动作批处理</string>
+  <string name="tool_macro_list">列出 GUI 宏</string>
+  <string name="tool_macro_save">保存 GUI 宏</string>
+  <string name="tool_macro_run">执行 GUI 宏</string>
+  <string name="tool_macro_delete">删除 GUI 宏</string>
   <string name="tool_memory_get">读取记忆</string>
   <string name="tool_memory_write">整理记忆</string>
   <string name="tool_eta_get_config">读取 Eta 配置</string>

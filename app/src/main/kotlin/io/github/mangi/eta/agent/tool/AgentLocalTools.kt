@@ -273,6 +273,28 @@ internal class AgentLocalTools(
                 "scroll" -> afterAction(deviceController.scroll(args.optString("direction"), args.optString("amount"), currentActiveDisplayId()))
                 "scroll_element" -> afterAction(scrollElement(args))
                 "type_text" -> afterAction(typeText(args))
+                "gesture_batch" -> gestureBatch(args)
+                "macro_list" -> textResult(
+                    JSONObject().put("ok", true).put("macros", GuiMacroStore.list()).toString(),
+                )
+                "macro_save" -> textResult(
+                    try {
+                        GuiMacroStore.save(
+                            args.getString("name"),
+                            args.optString("description"),
+                            args.getJSONArray("actions"),
+                        ).toString()
+                    } catch (failure: Exception) {
+                        errorResult("MACRO_SAVE_FAILED", failure.message ?: "保存宏失败")
+                    },
+                )
+                "macro_run" -> macroRun(args)
+                "macro_delete" -> textResult(
+                    JSONObject()
+                        .put("ok", runCatching { GuiMacroStore.delete(args.getString("name")) }.getOrDefault(false))
+                        .put("name", args.optString("name"))
+                        .toString(),
+                )
                 // 旧会话或旧入口仍可能请求这些工具名；保留执行路径，但不再出现在模型目录里。
                 "input_text" -> afterAction(inputText(args))
                 "replace_text" -> afterAction(replaceText(args))
@@ -595,6 +617,114 @@ internal class AgentLocalTools(
         )
         result.put("after", AgentAfterActionSummary.build(before, after))
         return textResult(result.toString())
+    }
+
+    /** 一次调用执行一串 GUI 动作，中间不观察、不经过模型回合；失败即中断。 */
+    private fun gestureBatch(args: JSONObject): AgentModelClient.ToolResult {
+        val actions = args.optJSONArray("actions")
+            ?: return textResult(errorResult("INVALID_ARGUMENT", "actions 必须是数组"))
+        if (actions.length() !in 1..50) {
+            return textResult(errorResult("INVALID_ARGUMENT", "actions 数量需为 1..50"))
+        }
+        val steps = JSONArray()
+        var stoppedAt = -1
+        var failure: JSONObject? = null
+        for (index in 0 until actions.length()) {
+            checkCancellation()
+            val action = actions.optJSONObject(index)
+            if (action == null) {
+                stoppedAt = index
+                failure = JSONObject(errorResult("INVALID_ARGUMENT", "第 $index 步不是对象"))
+                break
+            }
+            val type = action.optString("type").trim()
+            val raw = try {
+                executeBatchAction(type, action)
+            } catch (throwable: Throwable) {
+                if (throwable is AgentRunCancelledException) throw throwable
+                errorResult("BATCH_ACTION_FAILED", throwable.message ?: throwable.javaClass.simpleName)
+            }
+            val parsed = runCatching { JSONObject(raw) }.getOrNull()
+            val ok = parsed?.optBoolean("ok") == true
+            steps.put(
+                JSONObject()
+                    .put("index", index)
+                    .put("type", type)
+                    .put("ok", ok)
+                    .put("result", parsed ?: JSONObject().put("raw", raw.take(500))),
+            )
+            if (!ok) {
+                stoppedAt = index
+                failure = parsed
+                break
+            }
+        }
+        val result = JSONObject()
+            .put("ok", stoppedAt < 0)
+            .put("completed", actions.length() - steps.length() == 0 && stoppedAt < 0)
+            .put("executed", steps.length())
+            .put("total", actions.length())
+            .put("steps", steps)
+        if (stoppedAt >= 0) {
+            result.put("stopped_at", stoppedAt)
+                .put("error", failure ?: JSONObject.NULL)
+                .put("message", "已在第 $stoppedAt 步中断，未执行后续动作；请根据当前界面决定是否重试")
+            return textResult(result.toString())
+        }
+        return if (args.optString("observe", "final") == "final") {
+            afterAction(result.toString())
+        } else {
+            textResult(result.toString())
+        }
+    }
+
+    private fun executeBatchAction(type: String, action: JSONObject): String {
+        if (!action.has("coordinate_space")) action.put("coordinate_space", "screen")
+        return when (type) {
+            "tap" -> tap(action)
+            "tap_area" -> tapArea(action)
+            "long_press" -> longPress(action)
+            "swipe" -> swipe(action)
+            "scroll" -> deviceController.scroll(
+                action.optString("direction"), action.optString("amount"), currentActiveDisplayId(),
+            )
+            "type_text" -> typeText(action)
+            "press_key" -> deviceController.pressKey(action.optString("button"), currentActiveDisplayId())
+            "wait_ms" -> deviceController.waitMs(action.optInt("ms", 300).coerceIn(0, 10_000))
+            "tap_text" -> tapTextNode(action)
+            else -> errorResult("INVALID_ARGUMENT", "不支持的动作类型：$type")
+        }
+    }
+
+    /** 按可见文字/desc 找节点并点击；每次实时取树，不依赖旧 observation_id。 */
+    private fun tapTextNode(action: JSONObject): String {
+        val text = action.getString("text").trim()
+        if (text.isEmpty()) return errorResult("INVALID_ARGUMENT", "tap_text 需要 text")
+        val displayId = currentActiveDisplayId()
+        val observation = deviceController.observe(
+            includeScreenshot = false, includeUiTree = true, maxNodes = 120, displayId = displayId,
+        )
+        val nodes = observation.elementObservation?.nodes.orEmpty()
+        val exact = nodes.filter { it.text == text || it.desc == text }
+        val partial = nodes.filter {
+            it.text.contains(text, ignoreCase = true) || it.desc.contains(text, ignoreCase = true)
+        }
+        val node = (exact.ifEmpty { partial }).firstOrNull { it.enabled }
+            ?: return errorResult("TEXT_NOT_FOUND", "当前界面未找到文字节点：$text")
+        return deviceController.tap(node.centerX, node.centerY, displayId)
+    }
+
+    private fun macroRun(args: JSONObject): AgentModelClient.ToolResult {
+        val name = args.getString("name")
+        val doc = GuiMacroStore.load(name)
+            ?: return textResult(errorResult("MACRO_NOT_FOUND", "宏不存在：$name"))
+        val actions = runCatching {
+            GuiMacroStore.substitute(doc.getJSONArray("actions"), args.optJSONObject("params") ?: JSONObject())
+        }.getOrElse { return textResult(errorResult("MACRO_PARAMS", it.message ?: "参数错误")) }
+        val batchArgs = JSONObject()
+            .put("actions", actions)
+            .put("observe", args.optString("observe", "final"))
+        return gestureBatch(batchArgs)
     }
 
     private fun tap(args: JSONObject): String {
