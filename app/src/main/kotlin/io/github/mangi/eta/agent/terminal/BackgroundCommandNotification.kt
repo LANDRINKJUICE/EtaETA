@@ -30,7 +30,23 @@ internal object BackgroundCommandNotification {
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
             .setContentText(task.description.ifBlank { "在终端的后台任务中查看状态和日志" })
-            .setSubText(task.exitCode?.let { "退出码 $it" })
+            .setSubText(buildString {
+                task.exitCode?.let { append("退出码 $it") }
+                task.completedAt?.let { completed ->
+                    if (isNotEmpty()) append(" · ")
+                    append("耗时 ${(completed - task.startedAt).coerceAtLeast(0) / 1000}s")
+                }
+            })
+            .setStyle(
+                Notification.BigTextStyle().bigText(buildString {
+                    append(task.description.ifBlank { task.command.take(300) })
+                    val tail = logTail(task.logPath)
+                    if (tail.isNotBlank()) {
+                        append("\n\n日志末尾：\n")
+                        append(tail)
+                    }
+                }),
+            )
             .setVisibility(Notification.VISIBILITY_PRIVATE)
             .setContentIntent(open)
             .setAutoCancel(true)
@@ -38,4 +54,12 @@ internal object BackgroundCommandNotification {
             .build()
         if (manager.areNotificationsEnabled()) manager.notify(task.id, NOTIFICATION_ID, notification)
     }
+
+    /** 只读截取日志最后 1200 字符，失败时不影响通知发送。 */
+    private fun logTail(path: String): String = runCatching {
+        val file = java.io.File(path)
+        if (!file.isFile || file.length() == 0L || file.length() > 2 * 1024 * 1024) return@runCatching ""
+        val bytes = file.readBytes()
+        String(bytes, Charsets.UTF_8).takeLast(1200).trim()
+    }.getOrDefault("")
 }

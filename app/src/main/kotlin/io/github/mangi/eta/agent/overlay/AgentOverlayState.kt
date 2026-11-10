@@ -97,8 +97,17 @@ private fun AgentOverlayState.projectEvent(event: AgentEvent): AgentOverlayState
     is AgentEvent.ProviderResponseStarted,
     is AgentEvent.UsageReceived,
     is AgentEvent.ToolImagesAttached,
-    is AgentEvent.SubagentProgress,
-    -> this
+    is AgentEvent.SubagentProgress -> {
+        val snapshot = io.github.mangi.eta.agent.subagent.SubagentActivitySnapshot.decode(event.snapshotJson)
+        if (snapshot == null) {
+            this
+        } else {
+            copy(
+                detailText = snapshot.currentAction.ifBlank { snapshot.description }.take(120),
+                thought = "子代理 · ${snapshot.description} · ${snapshot.toolStepCount} 步",
+            )
+        }
+    }
 }
 
 private fun AgentOverlayState.running(status: AgentOverlayStatus, round: Int) =

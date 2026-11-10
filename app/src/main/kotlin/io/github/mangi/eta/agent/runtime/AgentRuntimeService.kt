@@ -976,10 +976,16 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
         } else {
             (owner ?: activeRuns.firstOrNull())?.overlayState?.status
         }
+        val overlay = (owner ?: activeRuns.firstOrNull())?.overlayState
         AgentExecutionService.updateRunStatus(
             this,
             status,
             activeRunCount = activeRuns.size,
+            round = overlay?.round ?: 0,
+            detailText = overlay?.detailText.orEmpty(),
+            thought = overlay?.thought.orEmpty(),
+            finished = overlay?.phase == io.github.mangi.eta.agent.overlay.AgentOverlayPhase.FINISHED,
+            failed = overlay?.phase == io.github.mangi.eta.agent.overlay.AgentOverlayPhase.FAILED,
         )
     }
 
