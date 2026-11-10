@@ -110,7 +110,7 @@ internal object AgentSelfToolCatalog {
             .put(
                 AgentToolSchema.function(
                     name = "eta_provider_list",
-                    description = "列出全部模型提供商及其模型、当前默认选择；API Key 只返回脱敏摘要。",
+                    description = "列出全部模型提供商、凭据可用性、模型数量与当前默认选择；模型明细用 eta_model_list 查询。",
                     parameters = JSONObject().put("type", "object"),
                 ),
             )

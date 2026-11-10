@@ -54,7 +54,7 @@ internal object AgentModelTools {
         .put("base_url", provider.baseUrl)
         .put("enabled", provider.isEnabled)
         .put("auth_mode", provider.authMode)
-        .put("has_api_key", provider.apiKey.isNotBlank())
+        .put("has_api_key", provider.apiKey.isNotBlank() || io.github.mangi.eta.data.model.ProviderAuthModes.isOAuth(provider.authMode))
         .put("model_count", provider.models.size)
 
     private fun modelJson(model: Model): JSONObject = JSONObject()
@@ -100,6 +100,9 @@ internal object AgentModelTools {
             .ifEmpty { existing?.runtimeProviderType ?: "openai_compatible" }
         require(type in setOf("openai_compatible", "anthropic", "gemini")) {
             "type 仅支持 openai_compatible / anthropic / gemini"
+        }
+        if (existing != null) {
+            require(type == existing.runtimeProviderType) { "不支持通过此工具改变提供商类型" }
         }
         // 内置提供商禁止改 base_url，避免真实 API Key 被发往被替换的域名；改 key/名称/启停允许。
         if (existing != null && existing.isBuiltIn && baseUrl != existing.baseUrl) {
@@ -152,7 +155,10 @@ internal object AgentModelTools {
         }
         runBlocking { ProviderRepository.deleteProvider(id) }
         val stillThere = runBlocking { ProviderRepository.providerById(id) } != null
+        val settings = runBlocking { ProviderRepository.repairSelection() }
         return JSONObject().put("ok", !stillThere).put("deleted", if (stillThere) JSONObject.NULL else id)
+            .put("selected_provider_id", settings.selectedProviderId ?: JSONObject.NULL)
+            .put("selected_model_id", settings.selectedModelId ?: JSONObject.NULL)
     }
 
     private fun modelList(args: JSONObject): JSONObject {
@@ -190,7 +196,7 @@ internal object AgentModelTools {
             isEnabled = enabled,
             contextWindowOverride = contextWindow,
             // Agent 宿主的模型默认允许工具调用；视觉能力保持显式声明。
-            toolCall = if (args.has("tools")) args.getBoolean("tools") else existing?.toolCall ?: true,
+            toolCall = if (args.has("tools")) args.getBoolean("tools") else (existing?.toolCall ?: true),
             attachment = if (args.has("vision")) args.getBoolean("vision") else existing?.attachment,
             reasoningOverride = if (args.has("reasoning")) args.getBoolean("reasoning") else existing?.reasoningOverride,
         )
@@ -207,7 +213,10 @@ internal object AgentModelTools {
         runBlocking { ModelRepository.deleteModel(providerId, id) }
         val stillThere = runBlocking { ProviderRepository.providerById(providerId) }
             ?.models?.any { it.id == id } == true
+        val settings = runBlocking { ProviderRepository.repairSelection() }
         return JSONObject().put("ok", !stillThere).put("deleted", if (stillThere) JSONObject.NULL else id)
+            .put("selected_provider_id", settings.selectedProviderId ?: JSONObject.NULL)
+            .put("selected_model_id", settings.selectedModelId ?: JSONObject.NULL)
     }
 
     private fun modelSelect(args: JSONObject): JSONObject {

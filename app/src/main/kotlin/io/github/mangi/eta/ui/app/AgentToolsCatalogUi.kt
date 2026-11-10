@@ -145,7 +145,7 @@ internal fun buildToolsState(context: Context): AgentToolsUiState =
                     ToolItemUi("eta_mcp_upsert", "添加或更新 MCP 服务器", "新增或修改 MCP 服务器，默认自动发现工具；凭据由安全存储保管。"),
                     ToolItemUi("eta_mcp_delete", "删除 MCP 服务器", "按 id 删除 MCP 服务器及其凭据。"),
                     ToolItemUi("eta_mcp_refresh", "刷新 MCP 工具", "重新连接 MCP 服务器并刷新工具列表。"),
-                    ToolItemUi("eta_provider_list", "列出模型提供商", "查看全部提供商、模型与当前默认选择，API Key 仅显示脱敏摘要。"),
+                    ToolItemUi("eta_provider_list", "列出模型提供商", "查看提供商、凭据可用性、模型数量与当前默认选择；明细用列出模型工具。"),
                     ToolItemUi("eta_provider_upsert", "添加或更新提供商", "新增或修改 OpenAI 兼容/Anthropic/Gemini 提供商，凭据加密保存。"),
                     ToolItemUi("eta_provider_delete", "删除提供商", "按 id 删除提供商及其凭据。"),
                     ToolItemUi("eta_model_list", "列出模型", "查看指定提供商的模型及能力。"),
