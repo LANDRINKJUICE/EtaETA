@@ -1,11 +1,11 @@
 package io.github.mangi.eta.agent.self
 
 import io.github.mangi.eta.data.model.AnthropicProviderSetting
+import io.github.mangi.eta.data.model.CustomProviderSetting
 import io.github.mangi.eta.data.model.GeminiProviderSetting
 import io.github.mangi.eta.data.model.Model
 import io.github.mangi.eta.data.model.OpenAiCompatibleProviderSetting
 import io.github.mangi.eta.data.model.ProviderSetting
-import io.github.mangi.eta.data.model.displayApiKeySummary
 import io.github.mangi.eta.data.model.runtimeProviderType
 import io.github.mangi.eta.data.repository.ModelRepository
 import io.github.mangi.eta.data.repository.ProviderRepository
@@ -54,13 +54,8 @@ internal object AgentModelTools {
         .put("base_url", provider.baseUrl)
         .put("enabled", provider.isEnabled)
         .put("auth_mode", provider.authMode)
-        .put("api_key", provider.displayApiKeySummary)
-        .put(
-            "models",
-            JSONArray().apply {
-                provider.models.forEach { model -> put(modelJson(model)) }
-            },
-        )
+        .put("has_api_key", provider.apiKey.isNotBlank())
+        .put("model_count", provider.models.size)
 
     private fun modelJson(model: Model): JSONObject = JSONObject()
         .put("id", model.id)
@@ -73,7 +68,8 @@ internal object AgentModelTools {
         .put("supports_reasoning", model.supportsReasoning)
 
     private fun providerList(): JSONObject {
-        val settings = runBlocking { ProviderRepository.settings() }
+        // 用 repairSelection 后的生效值，避免首次启动或选择失效时返回 null。
+        val settings = runBlocking { ProviderRepository.repairSelection() }
         val providers = runBlocking { ProviderRepository.allProviders() }
         return JSONObject()
             .put("ok", true)
@@ -102,6 +98,16 @@ internal object AgentModelTools {
         val enabled = if (args.has("enabled")) args.getBoolean("enabled") else existing?.isEnabled ?: true
         val type = args.optString("type").trim()
             .ifEmpty { existing?.runtimeProviderType ?: "openai_compatible" }
+        require(type in setOf("openai_compatible", "anthropic", "gemini")) {
+            "type 仅支持 openai_compatible / anthropic / gemini"
+        }
+        // 内置提供商禁止改 base_url，避免真实 API Key 被发往被替换的域名；改 key/名称/启停允许。
+        if (existing != null && existing.isBuiltIn && baseUrl != existing.baseUrl) {
+            return JSONObject()
+                .put("ok", false)
+                .put("code", "BUILTIN_BASE_URL_LOCKED")
+                .put("message", "内置提供商不允许修改 base_url；如需自定义端点请新建提供商")
+        }
         val saved = runBlocking {
             if (existing == null) {
                 val newId = ProviderRepository.newId()
@@ -122,7 +128,9 @@ internal object AgentModelTools {
                     is GeminiProviderSetting -> existing.copy(
                         name = name, baseUrl = baseUrl, apiKey = apiKey, isEnabled = enabled,
                     )
-                    else -> error("该提供商类型不支持通过此工具修改")
+                    is CustomProviderSetting -> existing.copy(
+                        name = name, baseUrl = baseUrl, apiKey = apiKey, isEnabled = enabled,
+                    )
                 }
                 ProviderRepository.updateProvider(updated)
                 ProviderRepository.providerById(existing.id)
@@ -135,8 +143,16 @@ internal object AgentModelTools {
 
     private fun providerDelete(args: JSONObject): JSONObject {
         val id = args.getString("id")
+        val existing = runBlocking { ProviderRepository.providerById(id) }
+        if (existing == null || existing.isBuiltIn) {
+            return JSONObject()
+                .put("ok", false)
+                .put("code", if (existing == null) "NOT_FOUND" else "BUILTIN_PROVIDER")
+                .put("message", if (existing == null) "Provider 不存在：$id" else "内置提供商不可删除，可在设置页重置")
+        }
         runBlocking { ProviderRepository.deleteProvider(id) }
-        return JSONObject().put("ok", true).put("deleted", id)
+        val stillThere = runBlocking { ProviderRepository.providerById(id) } != null
+        return JSONObject().put("ok", !stillThere).put("deleted", if (stillThere) JSONObject.NULL else id)
     }
 
     private fun modelList(args: JSONObject): JSONObject {
@@ -158,6 +174,7 @@ internal object AgentModelTools {
         val existing = provider.models.firstOrNull {
             (id.isNotEmpty() && it.id == id) || (id.isEmpty() && modelId.isNotEmpty() && it.modelId == modelId)
         }
+        if (id.isNotEmpty() && existing == null) error("模型不存在：$id")
         require(existing != null || modelId.isNotEmpty()) { "新增模型时 model_id 必填" }
         val displayName = args.optString("display_name").trim()
             .ifEmpty { existing?.displayName ?: modelId }
@@ -168,11 +185,13 @@ internal object AgentModelTools {
             existing?.contextWindowOverride
         }
         val draft = (existing ?: Model(id = ModelRepository.newId(), modelId = modelId, displayName = displayName)).copy(
+            modelId = modelId.ifEmpty { existing?.modelId.orEmpty() },
             displayName = displayName,
             isEnabled = enabled,
             contextWindowOverride = contextWindow,
+            // Agent 宿主的模型默认允许工具调用；视觉能力保持显式声明。
+            toolCall = if (args.has("tools")) args.getBoolean("tools") else existing?.toolCall ?: true,
             attachment = if (args.has("vision")) args.getBoolean("vision") else existing?.attachment,
-            toolCall = if (args.has("tools")) args.getBoolean("tools") else existing?.toolCall,
             reasoningOverride = if (args.has("reasoning")) args.getBoolean("reasoning") else existing?.reasoningOverride,
         )
         val saved = runBlocking { ModelRepository.saveModel(providerId, draft) }
@@ -182,21 +201,44 @@ internal object AgentModelTools {
     private fun modelDelete(args: JSONObject): JSONObject {
         val providerId = args.getString("provider_id")
         val id = args.getString("id")
+        val provider = runBlocking { ProviderRepository.providerById(providerId) }
+            ?: error("Provider 不存在：$providerId")
+        if (provider.models.none { it.id == id }) error("模型不存在：$id")
         runBlocking { ModelRepository.deleteModel(providerId, id) }
-        return JSONObject().put("ok", true).put("deleted", id)
+        val stillThere = runBlocking { ProviderRepository.providerById(providerId) }
+            ?.models?.any { it.id == id } == true
+        return JSONObject().put("ok", !stillThere).put("deleted", if (stillThere) JSONObject.NULL else id)
     }
 
     private fun modelSelect(args: JSONObject): JSONObject {
+        val expectedModelId: String?
+        val expectedProviderId: String?
         if (args.has("id")) {
-            runBlocking { RuntimeConfigRepository.setSelectedModelId(args.getString("id")) }
+            val modelId = args.getString("id")
+            val provider = runBlocking { ProviderRepository.providerByModelId(modelId) }
+                ?: error("模型不存在：$modelId")
+            require(provider.isEnabled) { "提供商已禁用：${provider.name}" }
+            require(provider.models.any { it.id == modelId && it.isEnabled }) { "模型已禁用：$modelId" }
+            runBlocking { RuntimeConfigRepository.setSelectedModelId(modelId) }
+            expectedModelId = modelId
+            expectedProviderId = provider.id
         } else if (args.has("provider_id")) {
-            runBlocking { RuntimeConfigRepository.setSelectedProviderId(args.getString("provider_id")) }
+            val providerId = args.getString("provider_id")
+            val provider = runBlocking { ProviderRepository.providerById(providerId) }
+                ?: error("Provider 不存在：$providerId")
+            require(provider.isEnabled) { "提供商已禁用：${provider.name}" }
+            runBlocking { RuntimeConfigRepository.setSelectedProviderId(providerId) }
+            expectedModelId = null
+            expectedProviderId = providerId
         } else {
             error("id（模型内部 id）或 provider_id 至少提供一个")
         }
-        val settings = runBlocking { ProviderRepository.settings() }
+        val settings = runBlocking { ProviderRepository.repairSelection() }
+        val verified = settings.selectedProviderId == expectedProviderId &&
+            (expectedModelId == null || settings.selectedModelId == expectedModelId)
         return JSONObject()
-            .put("ok", true)
+            .put("ok", verified)
+            .put("verified", verified)
             .put("selected_provider_id", settings.selectedProviderId ?: JSONObject.NULL)
             .put("selected_model_id", settings.selectedModelId ?: JSONObject.NULL)
     }

@@ -13,6 +13,7 @@ import androidx.compose.material.icons.rounded.AdminPanelSettings
 import androidx.compose.material.icons.rounded.AdsClick
 import androidx.compose.material.icons.rounded.Alarm
 import androidx.compose.material.icons.rounded.Apps
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.ChatBubble
@@ -21,6 +22,7 @@ import androidx.compose.material.icons.rounded.Contacts
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.ContentPasteGo
 import androidx.compose.material.icons.rounded.Description
+import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.DocumentScanner
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.EditNote
@@ -54,6 +56,7 @@ import androidx.compose.material.icons.rounded.Smartphone
 import androidx.compose.material.icons.rounded.SwapVert
 import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material.icons.rounded.TouchApp
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.TravelExplore
 import androidx.compose.material.icons.rounded.WebAsset
 import androidx.compose.material.icons.rounded.Wifi
@@ -92,11 +95,11 @@ internal fun iconForTool(toolId: String): ImageVector = when (toolId) {
     "eta_get_config", "eta_set_config", "eta_set_tool_enabled" -> Icons.Rounded.Settings
     "eta_mcp_list", "eta_mcp_upsert", "eta_mcp_delete", "eta_mcp_refresh" ->
         Icons.Rounded.Extension
-    "eta_provider_list", "eta_provider_upsert", "eta_provider_delete",
+    "eta_provider_list", "eta_provider_upsert", "eta_provider_delete" -> Icons.Rounded.Dns
     "eta_model_list", "eta_model_upsert", "eta_model_delete", "eta_model_select" ->
-        Icons.Rounded.Smartphone
+        Icons.Rounded.Tune
     "eta_skill_list", "eta_skill_set_enabled", "eta_skill_delete" ->
-        Icons.Rounded.Extension
+        Icons.Rounded.AutoAwesome
     "release_gui" -> Icons.Rounded.Smartphone
     "present_to_user" -> Icons.AutoMirrored.Rounded.OpenInNew
     "press_key" -> Icons.Rounded.KeyboardCommandKey

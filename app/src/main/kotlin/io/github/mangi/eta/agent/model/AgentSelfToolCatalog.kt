@@ -217,7 +217,7 @@ internal object AgentSelfToolCatalog {
             .put(
                 AgentToolSchema.function(
                     name = "eta_skill_set_enabled",
-                    description = "按 id 启用或禁用已安装的 Skill。",
+                    description = "按 id 启用或禁用已安装的 Skill；从下一轮运行生效。",
                     parameters = JSONObject()
                         .put("type", "object")
                         .put(
@@ -232,10 +232,12 @@ internal object AgentSelfToolCatalog {
             .put(
                 AgentToolSchema.function(
                     name = "eta_skill_delete",
-                    description = "按 id 卸载 Skill（内置 Skill 可能被系统保护，失败时如实返回）。",
+                    description = "按 id 卸载 Skill，从下一轮运行生效（内置 Skill 可能被系统保护，失败时如实返回）。",
                     parameters = JSONObject()
                         .put("type", "object")
                         .put("properties", JSONObject().put("id", JSONObject().put("type", "string")))
                         .put("required", JSONArray().put("id")),
                 ),
             )
+    }
+}
