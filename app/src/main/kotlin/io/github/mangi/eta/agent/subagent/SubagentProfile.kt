@@ -21,6 +21,8 @@ internal data class SubagentProfile(
     val toolHighlights: List<String>,
     val roleInstruction: String,
     private val allowWriteFilesAndTerminal: Boolean = false,
+    /** 非空时只给这套基础只读工具，不再附带个人数据检索；plan 等无个人数据需求的角色使用。 */
+    private val baseTools: Set<String>? = null,
     val builtin: Boolean = true,
     val override: Boolean = false,
     val explicitTools: Set<String>? = null,
@@ -50,11 +52,18 @@ internal data class SubagentProfile(
             return toolName in customAllowlist ||
                 ("personal_data" in customAllowlist && (toolName in PersonalSearchTools.names || toolName in AgentPhoneToolCatalog.reads))
         }
-        if (toolName in READ_ONLY_TOOLS || toolName in PersonalSearchTools.names || toolName in AgentPhoneToolCatalog.reads) {
+        val base = baseTools
+        if (base != null) {
+            if (toolName in base) return true
+        } else if (
+            toolName in READ_ONLY_TOOLS ||
+            toolName in PersonalSearchTools.names ||
+            toolName in AgentPhoneToolCatalog.reads
+        ) {
             return true
         }
         if (!allowWriteFilesAndTerminal) return false
-        return toolName in CODER_EXTRA_TOOLS || toolName.startsWith("mcp_")
+        return toolName in CODER_EXTRA_TOOLS
     }
 
     companion object {
@@ -118,19 +127,15 @@ internal data class SubagentProfile(
             "network_info",
             "top_memory_apps",
             "top_storage_apps",
-            "get_setting",
             "get_logcat",
             "get_current_location",
             "get_device_environment",
             "list_alarms",
             "list_active_timers",
-            "get_health_summary",
             "recent_notifications",
             "search_notification_history",
             "recent_app_activity",
             "app_usage_summary",
-            "search_clipboard_history",
-            "get_clipboard",
             "get_flashlight",
             "get_device_state",
             "get_display_state",
@@ -165,6 +170,13 @@ internal data class SubagentProfile(
         private val CODER_EXTRA_TOOLS =
             (AgentFileToolCatalog.names + AgentTerminalToolCatalog.names) - FORBIDDEN_TOOLS
 
+        /** plan 只做架构分析：文件、网页与 Skill 检索，不开放任何个人数据来源。 */
+        private val PLAN_BASE_TOOLS = setOf(
+            "read_file", "stat_file", "list_directory", "glob_files", "grep_files",
+            "read_image", "web_search", "fetch_url", "get_current_context", "search_apps",
+            "skills_list", "skills_read", "skills_read_resource",
+        )
+
         val EXPLORE = SubagentProfile(
             name = TYPE_EXPLORE,
             summary = "只读探索与多源信息检索",
@@ -195,6 +207,7 @@ internal data class SubagentProfile(
             roleInstruction = "你是只读规划 Subagent（plan）。你拥有只读检索能力，不得修改文件或执行破坏性操作。" +
                 "请在最终回复中清晰列出：1. 已确认的上下文事实；2. 仍待核实的关键问题；3. 分步执行方案与风险权衡。",
             allowWriteFilesAndTerminal = false,
+            baseTools = PLAN_BASE_TOOLS,
             builtin = true,
         )
 
