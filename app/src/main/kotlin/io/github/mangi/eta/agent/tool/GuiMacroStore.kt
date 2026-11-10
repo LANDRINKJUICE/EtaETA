@@ -60,12 +60,12 @@ internal object GuiMacroStore {
         return runCatching { JSONObject(target.readText()) }.getOrNull()
     }
 
-    fun delete(name: String): Boolean = runCatching { file(name).delete() }.getOrDefault(false)
+    fun delete(name: String): Boolean = file(name).delete()
 
     /** 递归替换字符串值中的 {{key}}；缺失参数在替换前检测，显式 null 视为缺失。 */
     fun substitute(actions: JSONArray, params: JSONObject): JSONArray {
         fun render(text: String): String {
-            val required = Regex("\{\{([^{}]+)}}").findAll(text).map { it.groupValues[1] }.toSet()
+            val required = Regex("\\{\\{([^{}]+)}}").findAll(text).map { it.groupValues[1].trim() }.toSet()
             required.forEach { key ->
                 require(params.has(key) && !params.isNull(key)) { "缺少宏参数：$key" }
             }

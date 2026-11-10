@@ -640,6 +640,7 @@ internal class AgentLocalTools(
         for (index in 0 until actions.length()) {
             checkCancellation()
             if (SystemClock.elapsedRealtime() - batchStartedAt > 60_000) {
+                publishedObservation.set(PublishedObservation(generation = publishedObservation.get().generation))
                 return textResult(
                     JSONObject()
                         .put("ok", false)
@@ -745,7 +746,7 @@ internal class AgentLocalTools(
         val text = action.getString("text").trim()
         if (text.isEmpty()) return errorResult("INVALID_ARGUMENT", "tap_text 需要 text")
         val displayId = currentActiveDisplayId()
-        val observation = screenObservationProvider?.invoke(AFTER_ACTION_OPTIONS)
+        val observation = screenObservationProvider?.invoke(TAP_TEXT_OPTIONS)
             ?: deviceController.observe(
                 includeScreenshot = false, includeUiTree = true, maxNodes = 120, displayId = displayId,
             )
@@ -2017,6 +2018,11 @@ private val AFTER_ACTION_OPTIONS = AgentScreenObservationContract.Options(
     includeScreenshot = false,
     includeUiTree = true,
     maxNodes = 30,
+)
+private val TAP_TEXT_OPTIONS = AgentScreenObservationContract.Options(
+    includeScreenshot = false,
+    includeUiTree = true,
+    maxNodes = 120,
 )
 
 /** append 超过该长度改走粘贴路径；逐字键入的增量重建对长文本既慢又容易被输入法打断。 */

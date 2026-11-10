@@ -55,14 +55,6 @@ internal class AgentTraceFormatter {
             AgentSubagentToolCatalog.TOOL_NAME -> summarizeSubagentArguments(toolCall.argumentsJson)
             AgentSubagentToolCatalog.PROFILE_TOOL_NAME -> summarizeSubagentProfileArguments(toolCall.argumentsJson)
             AgentConversationToolCatalog.READ_HISTORY -> "读取当前会话历史"
-            "gesture_batch", "macro_run" -> {
-                if (json.optBoolean("ok")) {
-                    append("已执行 ${json.optInt("executed")}/${json.optInt("total")} 步")
-                } else {
-                    append("第 ${json.optInt("stopped_at", -1)} 步中断")
-                    json.optString("code").takeIf { it.isNotBlank() }?.let { append(" · $it") }
-                }
-            }
             "memory_get", "character_memory_get", "memory_write", "character_memory_write" ->
                 AgentPersonalResultFormatter.summarizeArguments(toolCall.name, toolCall.argumentsJson) ?: "记忆"
             "skills_list" -> "查看技能列表"
@@ -266,6 +258,10 @@ internal class AgentTraceFormatter {
         }
         if (json?.optString("status") == "unconfirmed") return "操作已提交，效果未确认"
         if (!isSuccessResult(result)) return summarizeFailure(json)
+        if ((toolName == "gesture_batch" || toolName == "macro_run") && json?.optBoolean("ok") == true) {
+            return "已执行 ${json.optInt("executed")}/${json.optInt("total")} 步"
+        }
+
         if (json != null) {
             val summary = AgentDeviceResultFormatter.summarize(toolName, json)
                 ?: AgentPhoneResultFormatter.summarize(toolName, json)

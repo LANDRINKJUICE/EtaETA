@@ -211,7 +211,7 @@ internal object Prefs {
     fun canonicalToolSwitchId(toolName: String): String = when (toolName) {
         "tap" -> "tap_area"
         "gesture_batch" -> "tap_area"
-        "macro_run" -> "gesture_batch"
+        "macro_run" -> "tap_area"
         "long_press_element" -> "long_press"
         "scroll_element" -> "scroll"
         "input_text", "replace_text", "clear_text", "paste_text" -> "type_text"
