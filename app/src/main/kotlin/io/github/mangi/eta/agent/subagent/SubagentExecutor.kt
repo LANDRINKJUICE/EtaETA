@@ -716,7 +716,7 @@ internal class SubagentExecutor(
         /** analyst 只读约束的启发式写命令识别；宁可误拦，不放行显式写入。 */
         private val ANALYST_WRITE_PATTERN = Regex(
             "(?i)(^|[|&;\\n])\\s*(rm|mv|cp|chmod|chown|mkdir|rmdir|touch|ln|dd|shred|pm|settings|am|svc|setprop|apt|apt-get|pip|pip3|npm|tee|truncate)\\b" +
-                "|sed\\s+(-\\w+\\s+)*-i|git\\s+(push|commit|add|reset|checkout)\\b|(^|\\s)>>?\\s*\\S" +
+                "|sed\\s+(-\\w+\\s+)*-i|git\\s+(push|commit|add|reset|checkout)\\b|(^|\\s)>>?\\s*\\S|(?<=\\w)>>?" +
                 "|\\b(INSERT|UPDATE|DELETE|DROP|CREATE|REPLACE)\\s+(INTO|SET|FROM|TABLE|OR)\\b",
         )
     }
