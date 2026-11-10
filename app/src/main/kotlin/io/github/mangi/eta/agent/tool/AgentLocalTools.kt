@@ -32,6 +32,7 @@ import io.github.mangi.eta.agent.runtime.AgentRunCancelledException
 import io.github.mangi.eta.agent.runtime.GuiControlCoordinator
 import io.github.mangi.eta.agent.virtualdisplay.CanvasRoutingPolicy
 import io.github.mangi.eta.agent.virtualdisplay.VirtualDisplayController
+import io.github.mangi.eta.agent.self.AgentSelfTools
 import io.github.mangi.eta.agent.skill.SkillCompatibilityChecker
 import io.github.mangi.eta.agent.skill.SkillIndexService
 import io.github.mangi.eta.agent.skill.SkillInstallErrorCode
@@ -298,6 +299,7 @@ internal class AgentLocalTools(
                 in AgentFileToolCatalog.names -> textResult(terminalTool { terminalController.fileTool(toolCall.name, args) })
                 "memory_get" -> textResult(memoryGet(args))
                 "memory_write" -> textResult(memoryWrite(args))
+                in AgentSelfTools.TOOL_NAMES -> textResult(AgentSelfTools.execute(toolCall.name, args))
                 "skills_list" -> textResult(skillsList(args))
                 "skills_read" -> textResult(skillsRead(args))
                 "skills_read_resource" -> textResult(skillsReadResource(args))
@@ -429,6 +431,11 @@ internal class AgentLocalTools(
             )
             "append" -> AgentMemoryMutation.Append(
                 revision = revision,
+                content = args.requiredText("content"),
+            )
+            "upsert_section" -> AgentMemoryMutation.UpsertSection(
+                revision = revision,
+                heading = args.requiredText("heading"),
                 content = args.requiredText("content"),
             )
             "clear" -> AgentMemoryMutation.Clear(revision)

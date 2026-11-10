@@ -39,6 +39,13 @@ internal sealed interface AgentMemoryMutation {
         val content: String,
     ) : AgentMemoryMutation
 
+    /** 按 Markdown 标题整体替换一节（标题保留，正文换成 content）；节不存在时追加到文末。 */
+    data class UpsertSection(
+        override val revision: String,
+        val heading: String,
+        val content: String,
+    ) : AgentMemoryMutation
+
     data class Clear(
         override val revision: String,
     ) : AgentMemoryMutation
@@ -89,6 +96,7 @@ internal class AgentMemoryStore(
         val updated = when (mutation) {
             is AgentMemoryMutation.ReplaceRange -> replaceRange(current, mutation)
             is AgentMemoryMutation.Append -> append(current, mutation.content)
+            is AgentMemoryMutation.UpsertSection -> upsertSection(current, mutation)
             is AgentMemoryMutation.Clear -> ""
         }
         writeLocked(updated)
@@ -193,6 +201,37 @@ internal class AgentMemoryStore(
         if (snapshot.content.isEmpty()) return content
         return snapshot.content.trimEnd('\n') + "\n" + content
     }
+
+    private fun upsertSection(
+        snapshot: AgentMemorySnapshot,
+        mutation: AgentMemoryMutation.UpsertSection,
+    ): String {
+        val heading = mutation.heading.trim()
+        if (!HEADING_LINE.matches(heading)) {
+            throw AgentMemoryException(
+                code = "MEMORY_HEADING_INVALID",
+                message = "heading 必须是 1 到 3 级 Markdown 标题，如 '## 当前服务'",
+            )
+        }
+        val level = heading.takeWhile { it == '#' }.length
+        val lines = snapshot.content.memoryLines().toMutableList()
+        val section = listOf(heading) + mutation.content.memoryLines()
+        val start = lines.indexOfFirst { it.trim() == heading }
+        if (start < 0) {
+            return append(snapshot, section.joinToString("\n"))
+        }
+        // 节的结束位置：下一个同级或更高级标题。
+        val end = ((start + 1) until lines.size).firstOrNull { index ->
+            val line = lines[index]
+            val lineLevel = line.takeWhile { it == '#' }.length
+            lineLevel in 1..level && line.getOrNull(lineLevel) == ' '
+        } ?: lines.size
+        lines.subList(start, end).clear()
+        lines.addAll(start, section)
+        return lines.joinToString("\n")
+    }
+
+    private val HEADING_LINE = Regex("^#{1,3}\\s+.+$")
 
     private fun page(
         snapshot: AgentMemorySnapshot,

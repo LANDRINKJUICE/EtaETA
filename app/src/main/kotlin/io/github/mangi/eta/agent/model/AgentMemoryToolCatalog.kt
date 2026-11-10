@@ -47,7 +47,7 @@ internal object AgentMemoryToolCatalog {
             .put(
                 AgentToolSchema.function(
                     name = "memory_write",
-                    description = "Atomically update persistent MEMORY.md. Store only durable cross-conversation facts, preferences, relationships, and ongoing project context; never store secrets, credentials, verification codes, or transient requests. Keep '# 核心记忆' concise, correct stale facts, and prefer replacing an existing section over blindly appending duplicates. Use the revision from the most recent memory_write or memory_get result, or the session memory snapshot if neither has run.",
+                    description = "Atomically update persistent MEMORY.md. Store only durable cross-conversation facts, preferences, relationships, and ongoing project context; never store secrets, credentials, verification codes, or transient requests. Keep '# 核心记忆' concise, correct stale facts, and prefer replacing an existing section over blindly appending duplicates. Prefer mode=upsert_section for section-level updates: it replaces the whole section body by heading without line-number surgery. Use the revision from the most recent memory_write or memory_get result, or the session memory snapshot if neither has run.",
                     parameters = JSONObject()
                         .put("type", "object")
                         .put(
@@ -62,9 +62,10 @@ internal object AgentMemoryToolCatalog {
                                             JSONArray()
                                                 .put("replace_range")
                                                 .put("append")
+                                                .put("upsert_section")
                                                 .put("clear"),
                                         )
-                                        .put("description", "replace_range edits inclusive 1-based lines; append adds a distinct section; clear removes all memory."),
+                                        .put("description", "replace_range edits inclusive 1-based lines; append adds a distinct section; upsert_section replaces the body of the section identified by heading (appends it when missing); clear removes all memory."),
                                 )
                                 .put(
                                     "revision",
@@ -87,6 +88,13 @@ internal object AgentMemoryToolCatalog {
                                         .put("type", "integer")
                                         .put("minimum", 1)
                                         .put("description", "Required for replace_range; inclusive 1-based last line."),
+                                )
+                                .put(
+                                    "heading",
+                                    JSONObject()
+                                        .put("type", "string")
+                                        .put("maxLength", 120)
+                                        .put("description", "Required for upsert_section; exact 1-3 level Markdown heading, e.g. '## 当前服务'."),
                                 )
                                 .put(
                                     "content",
