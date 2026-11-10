@@ -37,6 +37,9 @@ internal class StreamingMarkdownState {
             }
         },
         publish = { snapshot = it },
+        // 高速 token 流按帧预算合并排版目标：显示最多约 25fps，解析仍在后台执行，
+        // 不改变文字显现速度，只避免每个 token 都触发一次全文档解析与 Compose 测量。
+        publishIntervalMs = 40L,
     )
 }
 
@@ -50,6 +53,7 @@ internal suspend fun consumeStreamingMarkdownTargets(
     targets: ReceiveChannel<StreamingMarkdownTarget>,
     parse: suspend (StreamingMarkdownTarget) -> StreamingGfmSnapshot,
     publish: (StreamingGfmSnapshot) -> Unit,
+    publishIntervalMs: Long = 0L,
 ) {
     var target = targets.receiveCatching().getOrNull() ?: return
     while (true) {
@@ -57,7 +61,7 @@ internal suspend fun consumeStreamingMarkdownTargets(
             target = targets.tryReceive().getOrNull() ?: break
         }
         val parsed = parse(target)
-        val newerTarget = targets.tryReceive().getOrNull()
+        var newerTarget = targets.tryReceive().getOrNull()
         // 追加分片不会使已解析的前缀失效。若每次有新目标就丢弃结果，持续高速流会
         // 饿死显示端；只有上游纠正全文或重新打开终态时，才跳过不再适用的快照。
         if (newerTarget == null ||
@@ -65,6 +69,21 @@ internal suspend fun consumeStreamingMarkdownTargets(
                 (!parsed.isComplete || newerTarget == target))
         ) {
             publish(parsed)
+            if (publishIntervalMs > 0 && parsed.isComplete.not()) {
+                // 只限制快照发布频率，不延迟终态。等待期间继续吸收最新追加，避免
+                // 高频小分片把主线程的排版与测量排队到模型结束之后。
+                kotlinx.coroutines.delay(publishIntervalMs)
+                while (true) {
+                    val latest = targets.tryReceive().getOrNull() ?: break
+                    if (latest.content.startsWith(parsed.originalSource)) {
+                        newerTarget = latest
+                    } else {
+                        // 上游改写全文时不能跳过纠正，立即让下一轮处理。
+                        newerTarget = latest
+                        break
+                    }
+                }
+            }
         }
         target = newerTarget ?: targets.receiveCatching().getOrNull() ?: return
     }
