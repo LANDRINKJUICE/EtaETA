@@ -45,5 +45,12 @@ internal object AgentSensitiveToolPolicy {
         "memory_write",
         "character_memory_get",
         "character_memory_write",
+        "eta_get_config",
+        "eta_set_config",
+        "eta_set_tool_enabled",
+        "eta_mcp_list",
+        "eta_mcp_upsert",
+        "eta_mcp_delete",
+        "eta_mcp_refresh",
     )
 }

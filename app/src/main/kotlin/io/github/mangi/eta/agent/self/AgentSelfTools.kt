@@ -59,7 +59,8 @@ internal object AgentSelfTools {
             "eta_mcp_refresh" -> mcpRefresh(args)
             else -> error("未知自身配置工具：$name")
         }.toString()
-    } catch (failure: Throwable) {
+    } catch (failure: Exception) {
+        if (failure is InterruptedException || failure is kotlinx.coroutines.CancellationException) throw failure
         JSONObject()
             .put("ok", false)
             .put("code", "SELF_TOOL_ERROR")
@@ -73,7 +74,7 @@ internal object AgentSelfTools {
         appendLine()
         appendLine("- Eta 版本：${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
         val switches = SWITCH_LABELS.entries.joinToString(", ") { (key, label) ->
-            "$label=${if (runCatching { Prefs.isEnabled(key) }.getOrDefault(true)) "on" else "off"}"
+            "$label=${if (switchState(key)) "on" else "off"}"
         }
         appendLine("- 工具组开关：$switches")
         val disabled = runCatching { Prefs.disabledTools() }.getOrDefault(emptySet())
@@ -85,22 +86,27 @@ internal object AgentSelfTools {
                 "无"
             } else {
                 servers.joinToString("; ") { server ->
-                    "${server.name}(${if (server.enabled) "on" else "off"}, ${server.activeTools.size} tools)"
+                    "${server.name}(${if (server.enabled) "on" else "off"}, ${server.tools.size} tools)"
                 }
             },
         )
         append(
             "你可以用 eta_get_config / eta_set_config / eta_set_tool_enabled 直接读取和修改上述配置，" +
                 "用 eta_mcp_list / eta_mcp_upsert / eta_mcp_delete / eta_mcp_refresh 管理 MCP 服务器；" +
-                "修改即时生效，不需要用户去设置页手动操作，也不要用 GUI 点击设置页代替。" +
+                "若这些工具不在你的可用工具列表中，说明当前会话（如子智能体或角色会话）无权使用，不要尝试调用。" +
+                "关闭开关立即生效，开启从下一轮运行生效；不需要用户去设置页手动操作，也不要用 GUI 点击设置页代替。" +
                 "开关为 off 的工具组即使声明也无法执行；需要开启时经用户同意后用 eta_set_config 打开。",
         )
     }
 
+    private fun switchState(key: String): Boolean = runCatching {
+        if (Prefs.isGroupSwitchKey(key)) Prefs.isAgentGroupEnabled(key) else Prefs.isEnabled(key)
+    }.getOrDefault(true)
+
     private fun getConfig(): JSONObject {
         val switches = JSONObject()
         SWITCH_LABELS.keys.forEach { key ->
-            switches.put(key, runCatching { Prefs.isEnabled(key) }.getOrDefault(true))
+            switches.put(key, switchState(key))
         }
         return JSONObject()
             .put("ok", true)
@@ -121,6 +127,18 @@ internal object AgentSelfTools {
                 .put("message", "该键不在可写白名单内；可写键见 eta_get_config 的 writable_switches")
         }
         val value = args.getBoolean("value")
+        // 组开关必须走禁用工具集这一权威模型，legacy 布尔直接写会被后续操作刷回。
+        if (Prefs.isGroupSwitchKey(key)) {
+            val committed = runCatching {
+                Prefs.setAgentGroupEnabled(key, value, EtaApp.serviceInstance)
+            }.getOrDefault(false)
+            return JSONObject()
+                .put("ok", committed)
+                .put("key", key)
+                .put("value", value)
+                .put("verified", committed && Prefs.isAgentGroupEnabled(key) == value)
+                .put("note", "组内全部工具已同步；关闭立即生效，开启从下一轮运行生效")
+        }
         val preferences = Prefs.localAgentPreferences()
             ?: return JSONObject()
                 .put("ok", false)
@@ -129,17 +147,27 @@ internal object AgentSelfTools {
         val committed = runCatching {
             preferences.edit().putBoolean(key, value).commit()
         }.getOrDefault(false)
+        if (committed) {
+            runCatching { Prefs.reconcileAgentPreferences(EtaApp.serviceInstance) }
+        }
         val verified = committed && Prefs.isEnabled(key) == value
         return JSONObject()
             .put("ok", verified)
             .put("key", key)
             .put("value", value)
             .put("verified", verified)
+            .put("note", "关闭立即生效，开启从下一轮运行生效")
     }
 
     private fun setToolEnabled(args: JSONObject): JSONObject {
         val tool = args.getString("tool").trim()
         val enabled = args.getBoolean("enabled")
+        if (io.github.mangi.eta.agent.tool.AgentToolRequirements.find(tool) == null) {
+            return JSONObject()
+                .put("ok", false)
+                .put("code", "UNKNOWN_TOOL")
+                .put("message", "未登记的工具名：$tool")
+        }
         val committed = runCatching {
             Prefs.setToolEnabled(tool, enabled, EtaApp.serviceInstance)
         }.getOrDefault(false)
@@ -193,30 +221,30 @@ internal object AgentSelfTools {
         require(
             protocolMode in setOf(McpProtocolMode.AUTO, McpProtocolMode.LATEST, McpProtocolMode.LEGACY),
         ) { "protocol_mode 仅支持 auto / ${McpProtocolMode.LATEST} / ${McpProtocolMode.LEGACY}" }
-        val bearerToken = args.optString("bearer_token")
+        val bearerProvided = args.has("bearer_token")
+        val bearerToken = if (bearerProvided) args.optString("bearer_token", "") else ""
         var server = (existing ?: McpServerSetting(id = "", name = "", url = url)).copy(
             name = args.optString("name").trim().ifEmpty { existing?.name ?: url },
             url = url,
             enabled = if (args.has("enabled")) args.getBoolean("enabled") else existing?.enabled ?: true,
             protocolMode = protocolMode,
             authorizationType = when {
-                bearerToken.isNotEmpty() -> McpAuthorizationType.BEARER
+                bearerProvided && bearerToken.isNotEmpty() -> McpAuthorizationType.BEARER
+                bearerProvided -> McpAuthorizationType.NONE
                 else -> existing?.authorizationType ?: McpAuthorizationType.NONE
             },
         )
         var discoveryError: String? = null
         if (args.optBoolean("discover", true)) {
             server = try {
-                val discovered = McpServerManager.discover(
-                    server,
-                    bearerToken.ifEmpty { existing?.let { McpServerRepository.bearerToken(it.id) } },
-                )
-                // 新服务器默认启用发现的全部工具；已有服务器保留原有选择。
-                if (existing == null) {
-                    discovered.copy(enabledToolNames = discovered.tools.mapTo(linkedSetOf()) { it.name })
+                // 首次成功发现的默认全开在 McpServerManager.discover 内统一处理。
+                // 显式传入 bearer_token（含清空）时不再回退旧凭据。
+                val discoveryToken = if (bearerProvided) {
+                    bearerToken
                 } else {
-                    discovered
+                    existing?.let { McpServerRepository.bearerToken(it.id) }
                 }
+                McpServerManager.discover(server, discoveryToken)
             } catch (failure: Throwable) {
                 discoveryError = failure.message ?: failure.javaClass.simpleName
                 server
@@ -226,7 +254,7 @@ internal object AgentSelfTools {
             if (existing == null) {
                 McpServerRepository.add(server, bearerToken)
             } else {
-                McpServerRepository.update(server, bearerToken.ifEmpty { null })
+                McpServerRepository.update(server, if (bearerProvided) bearerToken else null)
                 McpServerRepository.serverById(existing.id)
             }
         }
@@ -247,6 +275,7 @@ internal object AgentSelfTools {
     }
 
     private fun mcpRefresh(args: JSONObject): JSONObject {
+        // 首次发现的默认全开在 McpServerManager.discover 内统一处理；这里不覆盖用户手动全关的选择。
         val refreshed = runBlocking { McpServerManager.refresh(args.getString("id")) }
         return JSONObject()
             .put("ok", true)

@@ -4,6 +4,7 @@ import io.github.mangi.eta.agent.context.PersonalSearchTools
 import io.github.mangi.eta.agent.model.AgentFileToolCatalog
 import io.github.mangi.eta.agent.model.AgentPhoneToolCatalog
 import io.github.mangi.eta.agent.model.AgentTerminalToolCatalog
+import io.github.mangi.eta.agent.self.AgentSelfTools
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -99,7 +100,7 @@ internal data class SubagentProfile(
             "character_memory_write",
             "skills_install_from_github",
             "terminal_daemon",
-        )
+        ) + AgentSelfTools.TOOL_NAMES
 
         val READ_ONLY_TOOLS = setOf(
             "read_file",

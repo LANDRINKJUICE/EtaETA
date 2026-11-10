@@ -290,46 +290,61 @@ internal object Prefs {
         }
         if (disabledLegacyGroups.isEmpty()) return
         val migratedDisabled = linkedSetOf<String>()
-        if (Keys.AGENT_BROWSER_TOOLS in disabledLegacyGroups) {
-            migratedDisabled += listOf("web_search", "fetch_url", "browser_use")
-        }
-        if (Keys.AGENT_TERMINAL_TOOLS in disabledLegacyGroups) {
-            migratedDisabled += AgentTerminalToolCatalog.names
-            migratedDisabled += AgentFileToolCatalog.names
-            migratedDisabled += "read_image"
-        }
-        if (Keys.AGENT_DEVICE_DIRECT_TOOLS in disabledLegacyGroups) {
-            migratedDisabled += AgentPhoneToolCatalog.direct
-            migratedDisabled += listOf(
-                "set_alarm", "set_timer", "device_status", "inspect_app",
-                "network_info", "top_memory_apps", "top_storage_apps",
-                "media_control", "set_volume",
-            )
-        }
-        if (Keys.AGENT_DEVICE_SENSITIVE_READ_TOOLS in disabledLegacyGroups) {
-            migratedDisabled += PersonalSearchTools.names
-            migratedDisabled += AgentPhoneToolCatalog.reads
-            migratedDisabled += listOf(
-                "read_personal_item", "summarize_bills", "get_setting", "wifi_credentials",
-                "recent_notifications", "search_notification_history", "recent_app_activity",
-                "app_usage_summary", "get_current_location", "get_device_environment",
-                "list_alarms", "list_active_timers", "search_clipboard_history",
-                "get_health_summary", "read_sms_code", "get_logcat", "search_media",
-                "search_audio", "search_recordings", "search_files", "search_calendar_events",
-                "search_contacts", "search_call_history", "search_messages", "search_downloads",
-                "search_notes", "search_coloros_recordings", "search_recording_summaries",
-                "search_system_memories", "search_saved_places", "search_personal_orders",
-                "search_qq_chat_images", "search_wechat_chat_images",
-            )
-        }
-        if (Keys.AGENT_DEVICE_SENSITIVE_ACTION_TOOLS in disabledLegacyGroups) {
-            migratedDisabled += AgentPhoneToolCatalog.writes
-            migratedDisabled += listOf("set_setting", "set_device_state", "app_state_control")
+        disabledLegacyGroups.forEach { key ->
+            migratedDisabled += LEGACY_GROUP_TOOL_NAMES.getValue(key)
         }
         val editor = local.edit()
             .putString(Keys.AGENT_DISABLED_TOOLS_JSON, JSONArray(migratedDisabled.sorted()).toString())
         disabledLegacyGroups.forEach { key -> editor.putBoolean(key, true) }
         runCatching { editor.commit() }
+    }
+
+    /** 组开关与组内工具名的单一映射来源，迁移与运行时组开关共用。 */
+    private val LEGACY_GROUP_TOOL_NAMES: Map<String, Collection<String>> = mapOf(
+        Keys.AGENT_BROWSER_TOOLS to listOf("web_search", "fetch_url", "browser_use"),
+        Keys.AGENT_TERMINAL_TOOLS to
+            (AgentTerminalToolCatalog.names + AgentFileToolCatalog.names + "read_image").toList(),
+        Keys.AGENT_DEVICE_DIRECT_TOOLS to (AgentPhoneToolCatalog.direct + listOf(
+            "set_alarm", "set_timer", "device_status", "inspect_app",
+            "network_info", "top_memory_apps", "top_storage_apps",
+            "media_control", "set_volume",
+        )),
+        Keys.AGENT_DEVICE_SENSITIVE_READ_TOOLS to (PersonalSearchTools.names + AgentPhoneToolCatalog.reads + listOf(
+            "read_personal_item", "summarize_bills", "get_setting", "wifi_credentials",
+            "recent_notifications", "search_notification_history", "recent_app_activity",
+            "app_usage_summary", "get_current_location", "get_device_environment",
+            "list_alarms", "list_active_timers", "search_clipboard_history",
+            "get_health_summary", "read_sms_code", "get_logcat", "search_media",
+            "search_audio", "search_recordings", "search_files", "search_calendar_events",
+            "search_contacts", "search_call_history", "search_messages", "search_downloads",
+            "search_notes", "search_coloros_recordings", "search_recording_summaries",
+            "search_system_memories", "search_saved_places", "search_personal_orders",
+            "search_qq_chat_images", "search_wechat_chat_images",
+        )),
+        Keys.AGENT_DEVICE_SENSITIVE_ACTION_TOOLS to
+            (AgentPhoneToolCatalog.writes + listOf("set_setting", "set_device_state", "app_state_control")),
+    )
+
+    fun isGroupSwitchKey(key: String): Boolean = LEGACY_GROUP_TOOL_NAMES.containsKey(key)
+
+    /** 组开关的读取口径与写入口径一致：组内工具全部被禁用才视为组关闭。 */
+    fun isAgentGroupEnabled(key: String): Boolean {
+        val tools = LEGACY_GROUP_TOOL_NAMES[key] ?: return isEnabled(key)
+        val disabled = disabledTools()
+        return !tools.all { it in disabled }
+    }
+
+    /**
+     * 组开关的权威写入入口：通过禁用工具集同步组内全部工具，避免 legacy 布尔值
+     * 被 setToolsEnabled 强制刷回 true 导致 UI 与运行时状态矛盾。
+     */
+    fun setAgentGroupEnabled(
+        key: String,
+        enabled: Boolean,
+        service: XposedService? = null,
+    ): Boolean {
+        val tools = LEGACY_GROUP_TOOL_NAMES[key] ?: return false
+        return setToolsEnabled(tools, enabled, service)
     }
 
     private val LEGACY_TOOL_GROUP_KEYS = listOf(

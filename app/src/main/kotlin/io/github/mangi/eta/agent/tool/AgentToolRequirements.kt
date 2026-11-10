@@ -6,6 +6,7 @@ import io.github.mangi.eta.agent.model.AgentTerminalToolCatalog
 import io.github.mangi.eta.agent.model.AgentFileToolCatalog
 import io.github.mangi.eta.agent.model.AgentPhoneToolCatalog
 import io.github.mangi.eta.agent.context.PersonalSearchTools
+import io.github.mangi.eta.agent.self.AgentSelfTools
 
 internal enum class RootRequirement { NONE, PARTIAL, REQUIRED }
 internal enum class LsposedRequirement { NONE, OPTIONAL, REQUIRED }
@@ -43,6 +44,7 @@ internal object AgentToolRequirements {
             "character_memory_get", "character_memory_write",
             "skills_list", "skills_read", "skills_read_resource", "skills_list_curated",
             "skills_inspect_github", "skills_install_from_github",
+            *AgentSelfTools.TOOL_NAMES.toTypedArray(),
         )
         register(
             RootRequirement.PARTIAL,

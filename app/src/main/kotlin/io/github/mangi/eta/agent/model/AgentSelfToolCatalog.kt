@@ -18,7 +18,7 @@ internal object AgentSelfToolCatalog {
             .put(
                 AgentToolSchema.function(
                     name = "eta_set_config",
-                    description = "修改 Eta 工具组开关（仅限 eta_get_config 返回的 writable_switches 白名单键），并读回验证。修改即时生效，无需用户打开设置页。",
+                    description = "修改 Eta 工具组开关（仅限 eta_get_config 返回的 writable_switches 白名单键），并读回验证。关闭立即生效，开启从下一轮运行生效；无需用户打开设置页。",
                     parameters = JSONObject()
                         .put("type", "object")
                         .put(

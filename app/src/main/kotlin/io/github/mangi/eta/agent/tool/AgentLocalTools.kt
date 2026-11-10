@@ -93,6 +93,7 @@ internal class AgentLocalTools(
         runBlocking { AgentMemoryRepository.isEnabled() }
     },
     private val memoryWritable: Boolean = true,
+    private val selfToolsAllowed: Boolean = true,
     private val screenshotExcludedPackages: () -> Set<String> = { emptySet() },
     private val screenObservationProvider: (
         (AgentScreenObservationContract.Options) -> RootShellDeviceController.Observation
@@ -299,7 +300,13 @@ internal class AgentLocalTools(
                 in AgentFileToolCatalog.names -> textResult(terminalTool { terminalController.fileTool(toolCall.name, args) })
                 "memory_get" -> textResult(memoryGet(args))
                 "memory_write" -> textResult(memoryWrite(args))
-                in AgentSelfTools.TOOL_NAMES -> textResult(AgentSelfTools.execute(toolCall.name, args))
+                in AgentSelfTools.TOOL_NAMES -> textResult(
+                    if (selfToolsAllowed) {
+                        AgentSelfTools.execute(toolCall.name, args)
+                    } else {
+                        errorResult("TOOL_DISABLED", "当前会话不开放 Eta 自身配置工具")
+                    },
+                )
                 "skills_list" -> textResult(skillsList(args))
                 "skills_read" -> textResult(skillsRead(args))
                 "skills_read_resource" -> textResult(skillsReadResource(args))

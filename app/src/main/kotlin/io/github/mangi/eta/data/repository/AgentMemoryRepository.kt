@@ -216,12 +216,22 @@ internal class AgentMemoryStore(
         val level = heading.takeWhile { it == '#' }.length
         val lines = snapshot.content.memoryLines().toMutableList()
         val section = listOf(heading) + mutation.content.memoryLines()
-        val start = lines.indexOfFirst { it.trim() == heading }
+        // 只把围栏代码块之外的行当作标题候选，避免正文里的 '# 注释' 被误判为节边界。
+        val headingCandidates = headingLineIndexes(lines)
+        val starts = headingCandidates.filter { lines[it].trim() == heading }
+        if (starts.size > 1) {
+            throw AgentMemoryException(
+                code = "MEMORY_HEADING_AMBIGUOUS",
+                message = "记忆中有多个同名标题 '$heading'，请先调用 memory_get 确认后改用 replace_range",
+            )
+        }
+        val start = starts.firstOrNull() ?: -1
         if (start < 0) {
             return append(snapshot, section.joinToString("\n"))
         }
         // 节的结束位置：下一个同级或更高级标题。
-        val end = ((start + 1) until lines.size).firstOrNull { index ->
+        val end = headingCandidates.firstOrNull { index ->
+            if (index <= start) return@firstOrNull false
             val line = lines[index]
             val lineLevel = line.takeWhile { it == '#' }.length
             lineLevel in 1..level && line.getOrNull(lineLevel) == ' '
@@ -229,6 +239,28 @@ internal class AgentMemoryStore(
         lines.subList(start, end).clear()
         lines.addAll(start, section)
         return lines.joinToString("\n")
+    }
+
+    /** 全文扫描一次，返回围栏外 Markdown 标题行的下标。 */
+    private fun headingLineIndexes(lines: List<String>): List<Int> {
+        val result = mutableListOf<Int>()
+        var fence: String? = null
+        lines.forEachIndexed { index, line ->
+            val trimmed = line.trimStart()
+            val marker = when {
+                trimmed.startsWith("```") -> "```"
+                trimmed.startsWith("~~~") -> "~~~"
+                else -> null
+            }
+            if (marker != null) {
+                fence = if (fence == marker) null else marker
+                return@forEachIndexed
+            }
+            if (fence == null && line.length - line.trimStart().length < 4 && HEADING_LINE.matches(line.trim())) {
+                result += index
+            }
+        }
+        return result
     }
 
     private val HEADING_LINE = Regex("^#{1,3}\\s+.+$")
