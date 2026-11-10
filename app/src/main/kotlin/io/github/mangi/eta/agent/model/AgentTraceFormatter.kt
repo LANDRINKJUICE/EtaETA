@@ -55,6 +55,14 @@ internal class AgentTraceFormatter {
             AgentSubagentToolCatalog.TOOL_NAME -> summarizeSubagentArguments(toolCall.argumentsJson)
             AgentSubagentToolCatalog.PROFILE_TOOL_NAME -> summarizeSubagentProfileArguments(toolCall.argumentsJson)
             AgentConversationToolCatalog.READ_HISTORY -> "读取当前会话历史"
+            "gesture_batch", "macro_run" -> {
+                if (json.optBoolean("ok")) {
+                    append("已执行 ${json.optInt("executed")}/${json.optInt("total")} 步")
+                } else {
+                    append("第 ${json.optInt("stopped_at", -1)} 步中断")
+                    json.optString("code").takeIf { it.isNotBlank() }?.let { append(" · $it") }
+                }
+            }
             "memory_get", "character_memory_get", "memory_write", "character_memory_write" ->
                 AgentPersonalResultFormatter.summarizeArguments(toolCall.name, toolCall.argumentsJson) ?: "记忆"
             "skills_list" -> "查看技能列表"

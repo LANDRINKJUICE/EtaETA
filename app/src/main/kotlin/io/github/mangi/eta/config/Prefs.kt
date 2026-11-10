@@ -210,6 +210,8 @@ internal object Prefs {
     /** 将运行时工具名映射为工具列表中的主开关标识，确保同一能力的不同动作变体受同一开关约束。 */
     fun canonicalToolSwitchId(toolName: String): String = when (toolName) {
         "tap" -> "tap_area"
+        "gesture_batch" -> "tap_area"
+        "macro_run" -> "gesture_batch"
         "long_press_element" -> "long_press"
         "scroll_element" -> "scroll"
         "input_text", "replace_text", "clear_text", "paste_text" -> "type_text"

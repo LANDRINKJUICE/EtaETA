@@ -2,6 +2,7 @@ package io.github.mangi.eta.agent.tool
 
 import io.github.mangi.eta.agent.terminal.TerminalRuntime
 import java.io.File
+import java.util.Locale
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -13,7 +14,7 @@ internal object GuiMacroStore {
     private fun dir(): File = File(TerminalRuntime.userWorkspacePath, "gui-macros")
 
     private fun file(name: String): File {
-        val normalized = name.trim().lowercase()
+        val normalized = name.trim().lowercase(Locale.ROOT)
         require(normalized.matches(Regex("[a-z0-9_-]{1,64}"))) { "宏名仅允许小写字母、数字、下划线、连字符" }
         val root = dir().canonicalFile
         val target = File(root, "$normalized.json").canonicalFile
@@ -37,12 +38,15 @@ internal object GuiMacroStore {
         }
     }
 
-    fun save(name: String, description: String, actions: JSONArray): JSONObject {
-        require(actions.length() in 1..100) { "宏动作数需为 1..100" }
+    const val MAX_ACTIONS = 50
+
+    fun save(name: String, description: String, actions: JSONArray, overwrite: Boolean = false): JSONObject {
+        require(actions.length() in 1..MAX_ACTIONS) { "宏动作数需为 1..$MAX_ACTIONS" }
         val target = file(name)
+        require(overwrite || !target.exists()) { "宏已存在；确认覆盖时传 overwrite=true" }
         target.parentFile?.mkdirs()
         val doc = JSONObject()
-            .put("name", name.trim().lowercase())
+            .put("name", name.trim().lowercase(Locale.ROOT))
             .put("description", description)
             .put("actions", actions)
         target.writeText(doc.toString(2))
@@ -58,16 +62,16 @@ internal object GuiMacroStore {
 
     fun delete(name: String): Boolean = runCatching { file(name).delete() }.getOrDefault(false)
 
-    /** 递归替换字符串值中的 {{key}}；params 只接受字符串/数字/布尔，值原样字符串化。 */
+    /** 递归替换字符串值中的 {{key}}；缺失参数在替换前检测，显式 null 视为缺失。 */
     fun substitute(actions: JSONArray, params: JSONObject): JSONArray {
         fun render(text: String): String {
-            var result = text
-            params.keys().forEach { key ->
-                result = result.replace("{{$key}}", params.opt(key)?.toString().orEmpty())
+            val required = Regex("\{\{([^{}]+)}}").findAll(text).map { it.groupValues[1] }.toSet()
+            required.forEach { key ->
+                require(params.has(key) && !params.isNull(key)) { "缺少宏参数：$key" }
             }
-            if (result.contains("{{")) {
-                val missing = Regex("\\{\\{([^{}]+)}}").find(result)?.groupValues?.get(1)
-                require(missing == null) { "缺少宏参数：$missing" }
+            var result = text
+            required.forEach { key ->
+                result = result.replace("{{$key}}", params.opt(key)?.toString().orEmpty())
             }
             return result
         }
