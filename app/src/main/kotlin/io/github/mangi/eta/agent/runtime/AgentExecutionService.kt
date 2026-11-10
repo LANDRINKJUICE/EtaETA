@@ -111,14 +111,11 @@ internal class AgentExecutionService : Service() {
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(actionText)
             .setContentText(detail.ifBlank { executionText(this, status, taskCount) })
-            .setSubText(if (runRound > 0) "第 $runRound 轮 · $taskCount 项任务" else executionText(this, status, taskCount))
+            .setSubText(if (runRound > 0) "第 $runRound 轮 · $taskCount 项任务" else null)
             .setContentIntent(open)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .addAction(Notification.Action.Builder(null, getString(R.string.execution_stop), stop).build())
-        if (detail.isNotBlank()) {
-            builder.setStyle(Notification.BigTextStyle().bigText(detail))
-        }
         // 只有 Agent run 在跑时才申请提升为 Live Update；终端会话、Linux 启动等长驻任务不属于"正在进行、需要持续关注"的活动。
         if (status != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
             builder
@@ -132,10 +129,12 @@ internal class AgentExecutionService : Service() {
 
     /** 状态栏胶囊约 7 个字符可完整显示；更长时只取动作，工具名留在展开态。 */
     private fun AgentOverlayStatus.shortText(): String = when (this) {
-        is AgentOverlayStatus.RunningTool -> toolDisplayName(resources, name).take(7)
+        is AgentOverlayStatus.RunningTool -> toolDisplayName(resources, name).take(7).trim()
         is AgentOverlayStatus.HostedToolRunning -> getString(R.string.execution_chip_running)
         AgentOverlayStatus.Paused -> getString(R.string.overlay_paused)
         AgentOverlayStatus.Stopping -> getString(R.string.overlay_stopping)
+        AgentOverlayStatus.ResultReady -> getString(R.string.overlay_result_ready)
+        AgentOverlayStatus.RunFailed -> getString(R.string.overlay_run_failed)
         AgentOverlayStatus.GeneratingAnswer -> getString(R.string.execution_chip_answering)
         else -> getString(R.string.overlay_reasoning)
     }
@@ -183,8 +182,9 @@ internal class AgentExecutionService : Service() {
                 val text = listOf(
                     executionText(context, status, count),
                     status?.localizedText(context.resources).orEmpty(),
-                    detailText,
-                    thought,
+                    detailText.take(48),
+                    (detailText.length / 96).toString(),
+                    thought.takeLast(32),
                     round.toString(),
                 ).joinToString("|")
                 if (text != publishedStatusText) {

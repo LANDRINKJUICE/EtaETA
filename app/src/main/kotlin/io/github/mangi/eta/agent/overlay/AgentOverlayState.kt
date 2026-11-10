@@ -97,6 +97,7 @@ private fun AgentOverlayState.projectEvent(event: AgentEvent): AgentOverlayState
     is AgentEvent.ProviderResponseStarted,
     is AgentEvent.UsageReceived,
     is AgentEvent.ToolImagesAttached,
+    -> this
     is AgentEvent.SubagentProgress -> {
         val snapshot = io.github.mangi.eta.agent.subagent.SubagentActivitySnapshot.decode(event.snapshotJson)
         if (snapshot == null) {

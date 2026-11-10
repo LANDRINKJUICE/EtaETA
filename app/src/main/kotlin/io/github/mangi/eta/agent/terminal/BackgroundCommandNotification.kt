@@ -40,7 +40,7 @@ internal object BackgroundCommandNotification {
             .setStyle(
                 Notification.BigTextStyle().bigText(buildString {
                     append(task.description.ifBlank { task.command.take(300) })
-                    val tail = logTail(task.logPath)
+                    val tail = logTail(io.github.mangi.eta.agent.terminal.hostDaemonPath(task, task.logPath))
                     if (tail.isNotBlank()) {
                         append("\n\n日志末尾：\n")
                         append(tail)
@@ -55,11 +55,16 @@ internal object BackgroundCommandNotification {
         if (manager.areNotificationsEnabled()) manager.notify(task.id, NOTIFICATION_ID, notification)
     }
 
-    /** 只读截取日志最后 1200 字符，失败时不影响通知发送。 */
+    /** 只读日志尾部 8KB，Linux 任务先映射到宿主路径；失败不影响通知。 */
     private fun logTail(path: String): String = runCatching {
         val file = java.io.File(path)
-        if (!file.isFile || file.length() == 0L || file.length() > 2 * 1024 * 1024) return@runCatching ""
-        val bytes = file.readBytes()
-        String(bytes, Charsets.UTF_8).takeLast(1200).trim()
+        if (!file.isFile || file.length() == 0L) return@runCatching ""
+        java.io.RandomAccessFile(file, "r").use { reader ->
+            val start = (reader.length() - 8 * 1024).coerceAtLeast(0)
+            reader.seek(start)
+            val bytes = ByteArray((reader.length() - start).toInt())
+            reader.readFully(bytes)
+            String(bytes, Charsets.UTF_8).takeLast(1200).trim()
+        }
     }.getOrDefault("")
 }

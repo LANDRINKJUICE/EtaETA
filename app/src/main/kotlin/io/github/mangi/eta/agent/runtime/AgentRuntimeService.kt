@@ -591,6 +591,15 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
                         ),
                     )
                 }
+            AgentExecutionService.updateRunStatus(
+                this,
+                null,
+                activeRunCount = runs.all().count { !it.session.isTerminal },
+                round = run.overlayState.round,
+                detailText = (if (result.ok) result.content else result.error.orEmpty()).take(240),
+                finished = result.ok,
+                failed = !result.ok,
+            )
             }.onFailure { throwable ->
                 AndroidAgentLogger.warnThrottled("runtime_terminal_overlay_failed") {
                     "Agent runtime terminal overlay failed: type=${throwable.safeLogType()}"
