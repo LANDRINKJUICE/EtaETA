@@ -30,7 +30,23 @@ internal object BackgroundCommandNotification {
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
             .setContentText(task.description.ifBlank { "在终端的后台任务中查看状态和日志" })
-            .setSubText(task.exitCode?.let { "退出码 $it" })
+            .setSubText(buildString {
+                task.exitCode?.let { append("退出码 $it") }
+                task.completedAt?.let { completed ->
+                    if (isNotEmpty()) append(" · ")
+                    append("耗时 ${(completed - task.startedAt).coerceAtLeast(0) / 1000}s")
+                }
+            })
+            .setStyle(
+                Notification.BigTextStyle().bigText(buildString {
+                    append(task.description.ifBlank { task.command.take(300) })
+                    val tail = logTail(hostLogPath(task))
+                    if (tail.isNotBlank()) {
+                        append("\n\n日志末尾：\n")
+                        append(tail)
+                    }
+                }),
+            )
             .setVisibility(Notification.VISIBILITY_PRIVATE)
             .setContentIntent(open)
             .setAutoCancel(true)
@@ -38,4 +54,25 @@ internal object BackgroundCommandNotification {
             .build()
         if (manager.areNotificationsEnabled()) manager.notify(task.id, NOTIFICATION_ID, notification)
     }
+
+    /** 与 DetachedTaskSupervisor 相同的 wire 路径映射，避免 App 进程读到不存在的容器路径。 */
+    private fun hostLogPath(task: DetachedTask): String {
+        val wire = task.logPath
+        if (!task.environment.isLinux || !wire.startsWith("/workspace/daemon")) return wire
+        val root = task.hostWorkspace?.let { "$it/daemon" } ?: "/data/local/tmp/eta/daemon"
+        return root + wire.removePrefix("/workspace/daemon")
+    }
+
+    /** 只读日志尾部 8KB，Linux 任务先映射到宿主路径；失败不影响通知。 */
+    private fun logTail(path: String): String = runCatching {
+        val file = java.io.File(path)
+        if (!file.isFile || file.length() == 0L) return@runCatching ""
+        java.io.RandomAccessFile(file, "r").use { reader ->
+            val start = (reader.length() - 8 * 1024).coerceAtLeast(0)
+            reader.seek(start)
+            val bytes = ByteArray((reader.length() - start).toInt())
+            reader.readFully(bytes)
+            String(bytes, Charsets.UTF_8).takeLast(1200).trim()
+        }
+    }.getOrDefault("")
 }

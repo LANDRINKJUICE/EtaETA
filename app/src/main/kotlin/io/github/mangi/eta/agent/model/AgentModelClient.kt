@@ -159,6 +159,7 @@ internal object AgentModelClient {
                 skillGitHubInstall = true,
                 memoryTools = memoryContext.enabled,
                 memoryWritable = roleplayContext == null,
+                selfTools = roleplayContext == null,
                 capabilities = capabilities,
                 localWebSearch = !config.usesHostedWebSearch,
                 disabledTools = Prefs.disabledTools(),

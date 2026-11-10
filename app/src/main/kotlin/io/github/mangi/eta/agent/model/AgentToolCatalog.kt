@@ -16,6 +16,7 @@ internal object AgentToolCatalog {
         skillGitHubInstall: Boolean = false,
         memoryTools: Boolean = false,
         memoryWritable: Boolean = true,
+        selfTools: Boolean = true,
         capabilities: AgentToolCapabilities = AgentToolCapabilities(rootAvailable = true),
         localWebSearch: Boolean = true,
         disabledTools: Set<String> = emptySet(),
@@ -23,6 +24,7 @@ internal object AgentToolCatalog {
         capabilities.project(JSONArray().also { tools ->
             AgentContextAppToolCatalog.appendTo(tools)
             AgentGestureToolCatalog.appendTo(tools)
+            AgentBatchToolCatalog.appendTo(tools)
             AgentTextSystemToolCatalog.appendTo(tools)
             AgentDeviceToolCatalog.appendTo(
                 tools,
@@ -40,6 +42,7 @@ internal object AgentToolCatalog {
                 githubInstall = skillGitHubInstall,
             )
             if (memoryTools) AgentMemoryToolCatalog.appendTo(tools, writable = memoryWritable)
+            if (selfTools) AgentSelfToolCatalog.appendTo(tools)
             if (terminalTools) {
                 AgentFileVisionToolCatalog.appendTo(tools)
                 AgentTerminalToolCatalog.appendTo(tools)

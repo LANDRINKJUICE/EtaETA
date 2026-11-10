@@ -5,6 +5,7 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -130,6 +131,61 @@ class StreamingMarkdownParsingTest {
 
         assertEquals(1, published.size)
         assertFalse(published.single().isComplete)
+    }
+
+    @Test
+    fun throttledPublishesCoalesceAppendsArrivingDuringTheFrameBudget() = runBlocking {
+        val targets = Channel<StreamingMarkdownTarget>(Channel.CONFLATED)
+        val parser = StreamingGfmParserSession()
+        val parsedSources = mutableListOf<String>()
+        targets.send(StreamingMarkdownTarget("第一段", isStreaming = true))
+
+        consumeStreamingMarkdownTargets(
+            targets = targets,
+            parse = { target ->
+                parsedSources += target.content
+                if (target.content == "第一段") {
+                    // 必须等消费端进入 40ms 发布窗口后再追加，才能覆盖窗口内合并。
+                    launch {
+                        delay(5)
+                        targets.send(StreamingMarkdownTarget("第一段第二段第三段", isStreaming = true))
+                        targets.close()
+                    }
+                }
+                parser.parse(target.content, isComplete = !target.isStreaming)
+            },
+            publish = {},
+            publishIntervalMs = 40L,
+        )
+
+        assertEquals(listOf("第一段", "第一段第二段第三段"), parsedSources)
+    }
+
+    @Test
+    fun throttledPublishKeepsLateCompletionAndSourceCorrection() = runBlocking {
+        val targets = Channel<StreamingMarkdownTarget>(Channel.CONFLATED)
+        val parser = StreamingGfmParserSession()
+        val published = mutableListOf<StreamingGfmSnapshot>()
+        targets.send(StreamingMarkdownTarget("旧内容", isStreaming = true))
+
+        consumeStreamingMarkdownTargets(
+            targets = targets,
+            parse = { target ->
+                if (target.content == "旧内容") {
+                    launch {
+                        delay(5)
+                        targets.send(StreamingMarkdownTarget("修正后的内容", isStreaming = false))
+                        targets.close()
+                    }
+                }
+                parser.parse(target.content, isComplete = !target.isStreaming)
+            },
+            publish = published::add,
+            publishIntervalMs = 40L,
+        )
+
+        assertEquals(listOf("旧内容", "修正后的内容"), published.map { it.originalSource })
+        assertTrue(published.last().isComplete)
     }
 
     @Test

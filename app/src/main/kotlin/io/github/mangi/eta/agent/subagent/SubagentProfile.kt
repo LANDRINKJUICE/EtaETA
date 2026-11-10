@@ -4,6 +4,7 @@ import io.github.mangi.eta.agent.context.PersonalSearchTools
 import io.github.mangi.eta.agent.model.AgentFileToolCatalog
 import io.github.mangi.eta.agent.model.AgentPhoneToolCatalog
 import io.github.mangi.eta.agent.model.AgentTerminalToolCatalog
+import io.github.mangi.eta.agent.self.AgentSelfTools
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -20,6 +21,10 @@ internal data class SubagentProfile(
     val toolHighlights: List<String>,
     val roleInstruction: String,
     private val allowWriteFilesAndTerminal: Boolean = false,
+    /** 非空时只给这套基础只读工具，不再附带个人数据检索；plan 等无个人数据需求的角色使用。 */
+    private val baseTools: Set<String>? = null,
+    /** 在基础工具之外额外放行的工具，用于 analyst 这类"只读 + 受限终端"的角色。 */
+    private val extraAllowedTools: Set<String> = emptySet(),
     val builtin: Boolean = true,
     val override: Boolean = false,
     val explicitTools: Set<String>? = null,
@@ -49,17 +54,26 @@ internal data class SubagentProfile(
             return toolName in customAllowlist ||
                 ("personal_data" in customAllowlist && (toolName in PersonalSearchTools.names || toolName in AgentPhoneToolCatalog.reads))
         }
-        if (toolName in READ_ONLY_TOOLS || toolName in PersonalSearchTools.names || toolName in AgentPhoneToolCatalog.reads) {
+        if (toolName in extraAllowedTools) return true
+        val base = baseTools
+        if (base != null) {
+            if (toolName in base) return true
+        } else if (
+            toolName in READ_ONLY_TOOLS ||
+            toolName in PersonalSearchTools.names ||
+            toolName in AgentPhoneToolCatalog.reads
+        ) {
             return true
         }
         if (!allowWriteFilesAndTerminal) return false
-        return toolName in CODER_EXTRA_TOOLS || toolName.startsWith("mcp_")
+        return toolName in CODER_EXTRA_TOOLS
     }
 
     companion object {
         const val TYPE_EXPLORE = "explore"
         const val TYPE_CODER = "coder"
         const val TYPE_PLAN = "plan"
+        const val TYPE_ANALYST = "analyst"
         const val DEFAULT_TYPE = TYPE_EXPLORE
 
         private const val SUBAGENT_ROLE_PREFIX =
@@ -82,6 +96,11 @@ internal data class SubagentProfile(
             "scroll",
             "scroll_element",
             "type_text",
+            "gesture_batch",
+            "macro_run",
+            "macro_list",
+            "macro_save",
+            "macro_delete",
             "input_text",
             "replace_text",
             "clear_text",
@@ -99,7 +118,7 @@ internal data class SubagentProfile(
             "character_memory_write",
             "skills_install_from_github",
             "terminal_daemon",
-        )
+        ) + AgentSelfTools.TOOL_NAMES
 
         val READ_ONLY_TOOLS = setOf(
             "read_file",
@@ -117,19 +136,15 @@ internal data class SubagentProfile(
             "network_info",
             "top_memory_apps",
             "top_storage_apps",
-            "get_setting",
             "get_logcat",
             "get_current_location",
             "get_device_environment",
             "list_alarms",
             "list_active_timers",
-            "get_health_summary",
             "recent_notifications",
             "search_notification_history",
             "recent_app_activity",
             "app_usage_summary",
-            "search_clipboard_history",
-            "get_clipboard",
             "get_flashlight",
             "get_device_state",
             "get_display_state",
@@ -164,6 +179,13 @@ internal data class SubagentProfile(
         private val CODER_EXTRA_TOOLS =
             (AgentFileToolCatalog.names + AgentTerminalToolCatalog.names) - FORBIDDEN_TOOLS
 
+        /** plan 只做架构分析：文件、网页与 Skill 检索，不开放任何个人数据来源。 */
+        private val PLAN_BASE_TOOLS = setOf(
+            "read_file", "stat_file", "list_directory", "glob_files", "grep_files",
+            "read_image", "web_search", "fetch_url", "get_current_context", "search_apps",
+            "skills_list", "skills_read", "skills_read_resource",
+        )
+
         val EXPLORE = SubagentProfile(
             name = TYPE_EXPLORE,
             summary = "只读探索与多源信息检索",
@@ -194,10 +216,24 @@ internal data class SubagentProfile(
             roleInstruction = "你是只读规划 Subagent（plan）。你拥有只读检索能力，不得修改文件或执行破坏性操作。" +
                 "请在最终回复中清晰列出：1. 已确认的上下文事实；2. 仍待核实的关键问题；3. 分步执行方案与风险权衡。",
             allowWriteFilesAndTerminal = false,
+            baseTools = PLAN_BASE_TOOLS,
             builtin = true,
         )
 
-        val BUILTIN_PROFILES: List<SubagentProfile> = listOf(EXPLORE, CODER, PLAN)
+        /** 只读分析：explore 的全部只读检索 + 受限终端（工具层启发式拦截写命令与重定向）。 */
+        val ANALYST = SubagentProfile(
+            name = TYPE_ANALYST,
+            summary = "只读数据分析：检索 + 受限 Shell（SQLite、日志、统计）",
+            whenToUse = "Read-only analysis agent for tasks needing shell-based inspection (sqlite3 queries, log processing, jq/statistics). Write-like commands are blocked by a heuristic guard at tool layer; no file editing tools. Use instead of coder when the task is query-only.",
+            toolHighlights = listOf("terminal", "read_file", "grep_files", "web_search", "personal_data", "get_logcat"),
+            roleInstruction = "你是只读数据分析 Subagent（analyst）。你可以使用 terminal 执行**只读命令**（sqlite3 查询、grep/jq/awk 统计、cat、ls 等），" +
+                "写类命令与输出重定向会在工具层被启发式拦截（误拦时改用等价只读写法，不要尝试绕过）；" +
+                "不得使用 write_file/edit_file（未开放）。查询 SQLite 时使用只读方式打开（file:...?mode=ro）。最终回复给出查询命令、关键证据与结论。",
+            extraAllowedTools = setOf("terminal"),
+            builtin = true,
+        )
+
+        val BUILTIN_PROFILES: List<SubagentProfile> = listOf(EXPLORE, CODER, PLAN, ANALYST)
         val BUILTIN_NAMES: Set<String> = BUILTIN_PROFILES.mapTo(linkedSetOf()) { it.name }
 
         fun resolve(

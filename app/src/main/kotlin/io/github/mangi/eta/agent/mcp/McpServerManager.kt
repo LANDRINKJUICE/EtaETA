@@ -11,9 +11,16 @@ internal object McpServerManager {
         val discovery = client.discoverTools()
         val availableNames = discovery.tools.mapTo(mutableSetOf()) { it.name }
         val refreshedAt = System.currentTimeMillis()
+        // 仅在首次成功发现时默认全开；用户手动全关过的服务器保持其选择。
+        val firstSuccessfulDiscovery = server.tools.isEmpty() && server.lastRefreshedAt == null
+        val enabledNames = if (firstSuccessfulDiscovery && server.enabledToolNames.isEmpty()) {
+            availableNames
+        } else {
+            server.enabledToolNames.intersect(availableNames)
+        }
         server.copy(
             tools = discovery.tools,
-            enabledToolNames = server.enabledToolNames.intersect(availableNames),
+            enabledToolNames = enabledNames,
             lastRefreshedAt = refreshedAt,
             lastProtocolVersion = discovery.protocolVersion,
             toolsExpireAt = discovery.cacheTtlMs?.let { ttl ->

@@ -39,6 +39,13 @@ internal sealed interface AgentMemoryMutation {
         val content: String,
     ) : AgentMemoryMutation
 
+    /** 按 Markdown 标题整体替换一节（标题保留，正文换成 content）；节不存在时追加到文末。 */
+    data class UpsertSection(
+        override val revision: String,
+        val heading: String,
+        val content: String,
+    ) : AgentMemoryMutation
+
     data class Clear(
         override val revision: String,
     ) : AgentMemoryMutation
@@ -89,6 +96,7 @@ internal class AgentMemoryStore(
         val updated = when (mutation) {
             is AgentMemoryMutation.ReplaceRange -> replaceRange(current, mutation)
             is AgentMemoryMutation.Append -> append(current, mutation.content)
+            is AgentMemoryMutation.UpsertSection -> upsertSection(current, mutation)
             is AgentMemoryMutation.Clear -> ""
         }
         writeLocked(updated)
@@ -193,6 +201,69 @@ internal class AgentMemoryStore(
         if (snapshot.content.isEmpty()) return content
         return snapshot.content.trimEnd('\n') + "\n" + content
     }
+
+    private fun upsertSection(
+        snapshot: AgentMemorySnapshot,
+        mutation: AgentMemoryMutation.UpsertSection,
+    ): String {
+        val heading = mutation.heading.trim()
+        if (!HEADING_LINE.matches(heading)) {
+            throw AgentMemoryException(
+                code = "MEMORY_HEADING_INVALID",
+                message = "heading 必须是 1 到 3 级 Markdown 标题，如 '## 当前服务'",
+            )
+        }
+        val level = heading.takeWhile { it == '#' }.length
+        val lines = snapshot.content.memoryLines().toMutableList()
+        val section = listOf(heading) + mutation.content.memoryLines()
+        // 只把围栏代码块之外的行当作标题候选，避免正文里的 '# 注释' 被误判为节边界。
+        val headingCandidates = headingLineIndexes(lines)
+        val starts = headingCandidates.filter { lines[it].trim() == heading }
+        if (starts.size > 1) {
+            throw AgentMemoryException(
+                code = "MEMORY_HEADING_AMBIGUOUS",
+                message = "记忆中有多个同名标题 '$heading'，请先调用 memory_get 确认后改用 replace_range",
+            )
+        }
+        val start = starts.firstOrNull() ?: -1
+        if (start < 0) {
+            return append(snapshot, section.joinToString("\n"))
+        }
+        // 节的结束位置：下一个同级或更高级标题。
+        val end = headingCandidates.firstOrNull { index ->
+            if (index <= start) return@firstOrNull false
+            val line = lines[index]
+            val lineLevel = line.takeWhile { it == '#' }.length
+            lineLevel in 1..level && line.getOrNull(lineLevel) == ' '
+        } ?: lines.size
+        lines.subList(start, end).clear()
+        lines.addAll(start, section)
+        return lines.joinToString("\n")
+    }
+
+    /** 全文扫描一次，返回围栏外 Markdown 标题行的下标。 */
+    private fun headingLineIndexes(lines: List<String>): List<Int> {
+        val result = mutableListOf<Int>()
+        var fence: String? = null
+        lines.forEachIndexed { index, line ->
+            val trimmed = line.trimStart()
+            val marker = when {
+                trimmed.startsWith("```") -> "```"
+                trimmed.startsWith("~~~") -> "~~~"
+                else -> null
+            }
+            if (marker != null) {
+                fence = if (fence == marker) null else marker
+                return@forEachIndexed
+            }
+            if (fence == null && line.length - line.trimStart().length < 4 && HEADING_LINE.matches(line.trim())) {
+                result += index
+            }
+        }
+        return result
+    }
+
+    private val HEADING_LINE = Regex("^#{1,3}\\s+.+$")
 
     private fun page(
         snapshot: AgentMemorySnapshot,

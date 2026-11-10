@@ -202,6 +202,7 @@ internal class AgentRuntimeRunExecutor(
                     runBlocking { AgentMemoryRepository.isEnabled() }
                 },
                 memoryWritable = roleplayContext == null,
+                selfToolsAllowed = roleplayContext == null,
                 screenshotExcludedPackages = {
                     entrySurfaceGuard?.consumeScreenshotExcludedPackages().orEmpty()
                 },

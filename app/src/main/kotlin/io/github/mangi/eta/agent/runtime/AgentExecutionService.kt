@@ -15,6 +15,7 @@ import android.os.Looper
 import io.github.mangi.eta.R
 import io.github.mangi.eta.agent.overlay.AgentOverlayStatus
 import io.github.mangi.eta.agent.overlay.localizedText
+import io.github.mangi.eta.agent.overlay.toolDisplayName
 import io.github.mangi.eta.core.AndroidAgentLogger
 import io.github.mangi.eta.core.safeLogType
 import io.github.mangi.eta.ui.MainActivity
@@ -104,14 +105,20 @@ internal class AgentExecutionService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val taskCount = if (activeRunCount > 0) activeRunCount else leases.count()
+        val actionText = status?.localizedText(resources) ?: getString(R.string.execution_title)
+        val detail = runDetail.ifBlank { runThought }.take(240)
         val builder = Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle(getString(R.string.execution_title))
-            .setContentText(executionText(this, status, taskCount))
+            .setContentTitle(actionText)
+            .setContentText(detail.ifBlank { executionText(this, status, taskCount) })
+            .setSubText(if (runRound > 0) "第 $runRound 轮 · $taskCount 项任务" else null)
             .setContentIntent(open)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .addAction(Notification.Action.Builder(null, getString(R.string.execution_stop), stop).build())
+        if (status == null && detail.isNotBlank()) {
+            builder.setStyle(Notification.BigTextStyle().bigText(detail))
+        }
         // 只有 Agent run 在跑时才申请提升为 Live Update；终端会话、Linux 启动等长驻任务不属于"正在进行、需要持续关注"的活动。
         if (status != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
             builder
@@ -125,9 +132,13 @@ internal class AgentExecutionService : Service() {
 
     /** 状态栏胶囊约 7 个字符可完整显示；更长时只取动作，工具名留在展开态。 */
     private fun AgentOverlayStatus.shortText(): String = when (this) {
-        is AgentOverlayStatus.RunningTool, is AgentOverlayStatus.HostedToolRunning -> getString(R.string.execution_chip_running)
+        is AgentOverlayStatus.RunningTool -> toolDisplayName(resources, name).take(7).trim()
+        is AgentOverlayStatus.HostedToolRunning -> getString(R.string.execution_chip_running)
         AgentOverlayStatus.Paused -> getString(R.string.overlay_paused)
         AgentOverlayStatus.Stopping -> getString(R.string.overlay_stopping)
+        AgentOverlayStatus.ResultReady -> getString(R.string.overlay_result_ready)
+        AgentOverlayStatus.RunFailed -> getString(R.string.overlay_run_failed)
+        AgentOverlayStatus.Stopped -> getString(R.string.overlay_stopped)
         AgentOverlayStatus.GeneratingAnswer -> getString(R.string.execution_chip_answering)
         else -> getString(R.string.overlay_reasoning)
     }
@@ -135,6 +146,8 @@ internal class AgentExecutionService : Service() {
     companion object {
         private const val CHANNEL = "eta_execution"
         private const val NOTIFICATION_ID = 1107
+        private const val RESULT_CHANNEL = "eta_run_results"
+        private const val RESULT_NOTIFICATION_ID = 1108
         private const val ACTION_STOP = "io.github.mangi.eta.action.STOP_USER_EXECUTION"
         private val leases = ExecutionLeaseRegistry()
         private val ownerSequence = AtomicLong()
@@ -143,21 +156,73 @@ internal class AgentExecutionService : Service() {
         private var runStatus: AgentOverlayStatus? = null
         private var activeRunCount = 0
         private var publishedStatusText: String? = null
+        private var runRound = 0
+        private var runDetail = ""
+        private var runThought = ""
+        private var resultPublished = false
 
         /**
          * Agent run 的当前状态，供通知与状态栏胶囊展示；null 表示没有 Agent run 在跑。
          * 只在显示文字变化时刷新通知，避免流式事件把通知更新频率推到系统限流。
          */
-        fun updateRunStatus(context: Context, status: AgentOverlayStatus?, activeRunCount: Int) {
+        fun updateRunStatus(
+            context: Context,
+            status: AgentOverlayStatus?,
+            activeRunCount: Int,
+            round: Int = 0,
+            detailText: String = "",
+            thought: String = "",
+            finished: Boolean = false,
+            failed: Boolean = false,
+        ) {
             mainHandler.post {
                 runStatus = status
                 this.activeRunCount = activeRunCount
+                runRound = round
+                runDetail = detailText
+                runThought = thought
+                if (status != null && !finished && !failed) resultPublished = false
                 val count = if (activeRunCount > 0) activeRunCount else leases.count()
-                val text = executionText(context, status, count)
-                if (text == publishedStatusText) return@post
-                publishedStatusText = text
-                instance?.takeIf { it.foregroundActive }?.refreshNotification()
+                val text = listOf(
+                    executionText(context, status, count),
+                    status?.localizedText(context.resources).orEmpty(),
+                    detailText.take(48),
+                    (detailText.length / 96).toString(),
+                    (thought.length / 32).toString(),
+                    round.toString(),
+                ).joinToString("|")
+                if (text != publishedStatusText) {
+                    publishedStatusText = text
+                    instance?.takeIf { it.foregroundActive }?.refreshNotification()
+                }
+                if ((finished || failed) && !resultPublished) {
+                    resultPublished = true
+                    showRunResult(context, failed, detailText)
+                }
             }
+        }
+
+        /** 后台完成时给出可消散的结果卡；成功安静、失败保留，均不替代常驻执行通知。 */
+        private fun showRunResult(context: Context, failed: Boolean, detail: String) {
+            val manager = context.getSystemService(NotificationManager::class.java)
+            manager.createNotificationChannel(
+                NotificationChannel(RESULT_CHANNEL, "Agent 任务结果", NotificationManager.IMPORTANCE_DEFAULT),
+            )
+            val open = PendingIntent.getActivity(
+                context, 20, Intent(context, MainActivity::class.java),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            val text = detail.ifBlank { if (failed) "任务未能完成，打开会话查看原因" else "任务已完成，打开会话查看结果" }
+            val notification = Notification.Builder(context, RESULT_CHANNEL)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle(if (failed) "Eta 任务中断" else "Eta 任务完成")
+                .setContentText(text)
+                .setStyle(Notification.BigTextStyle().bigText(text))
+                .setContentIntent(open)
+                .setAutoCancel(true)
+                .setOnlyAlertOnce(true)
+                .build()
+            if (manager.areNotificationsEnabled()) manager.notify(RESULT_NOTIFICATION_ID, notification)
         }
 
         private fun executionText(context: Context, status: AgentOverlayStatus?, taskCount: Int): String {

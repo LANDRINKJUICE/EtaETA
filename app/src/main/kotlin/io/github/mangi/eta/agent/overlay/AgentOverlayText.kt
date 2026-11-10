@@ -59,6 +59,11 @@ internal fun toolDisplayNameResource(name: String): Int? = when (name) {
     "release_gui" -> R.string.tool_release_gui
     "present_to_user" -> R.string.tool_present_to_user
     "tap" -> R.string.tool_tap
+    "gesture_batch" -> R.string.tool_gesture_batch
+    "macro_list" -> R.string.tool_macro_list
+    "macro_save" -> R.string.tool_macro_save
+    "macro_run" -> R.string.tool_macro_run
+    "macro_delete" -> R.string.tool_macro_delete
     "tap_element" -> R.string.tool_tap_element
     "tap_area" -> R.string.tool_tap_area
     "long_press" -> R.string.tool_long_press
@@ -98,6 +103,23 @@ internal fun toolDisplayNameResource(name: String): Int? = when (name) {
     "list_directory" -> R.string.tool_list_directory
     "memory_get" -> R.string.tool_memory_get
     "memory_write" -> R.string.tool_memory_write
+    "eta_get_config" -> R.string.tool_eta_get_config
+    "eta_set_config" -> R.string.tool_eta_set_config
+    "eta_set_tool_enabled" -> R.string.tool_eta_set_tool_enabled
+    "eta_mcp_list" -> R.string.tool_eta_mcp_list
+    "eta_mcp_upsert" -> R.string.tool_eta_mcp_upsert
+    "eta_mcp_delete" -> R.string.tool_eta_mcp_delete
+    "eta_mcp_refresh" -> R.string.tool_eta_mcp_refresh
+    "eta_provider_list" -> R.string.tool_eta_provider_list
+    "eta_provider_upsert" -> R.string.tool_eta_provider_upsert
+    "eta_provider_delete" -> R.string.tool_eta_provider_delete
+    "eta_model_list" -> R.string.tool_eta_model_list
+    "eta_model_upsert" -> R.string.tool_eta_model_upsert
+    "eta_model_delete" -> R.string.tool_eta_model_delete
+    "eta_model_select" -> R.string.tool_eta_model_select
+    "eta_skill_list" -> R.string.tool_eta_skill_list
+    "eta_skill_set_enabled" -> R.string.tool_eta_skill_set_enabled
+    "eta_skill_delete" -> R.string.tool_eta_skill_delete
     "set_alarm" -> R.string.tool_set_alarm
     "set_timer" -> R.string.tool_set_timer
     "device_status" -> R.string.tool_device_status

@@ -9,8 +9,14 @@ import io.github.mangi.eta.agent.runtime.AgentRunCancelledException
 import io.github.mangi.eta.agent.runtime.AgentRunController
 import io.github.mangi.eta.agent.skill.SkillContext
 import io.github.mangi.eta.agent.terminal.TerminalExecutionContext
+import io.github.mangi.eta.agent.terminal.TerminalRuntime
 import io.github.mangi.eta.agent.tool.AgentToolCapabilities
+import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -56,6 +62,18 @@ internal class SubagentExecutor(
         val resumeId = args.optString("resume").trim()
         val requestedType = args.optString("subagent_type").trim().lowercase()
         val isResume = resumeId.isNotEmpty()
+        // 预算：超时秒数与最大轮数，0 表示不限（保持旧行为）。超限即取消子运行并带回部分输出。
+        val timeoutSeconds = args.optInt("timeout_seconds", 0)
+        val maxTurns = args.optInt("max_turns", 0)
+        if (timeoutSeconds < 0 || maxTurns < 0) {
+            return errorResult("INVALID_ARGUMENTS", "timeout_seconds / max_turns 不能为负数；0 表示不限")
+        }
+        val boundedTimeout = timeoutSeconds.coerceAtMost(3600)
+        val boundedTurns = maxTurns.coerceAtMost(500)
+        val startedNanos = nanoTime()
+        val roundCounter = AtomicInteger(0)
+        val budgetExceeded = AtomicBoolean(false)
+        val budgetReason = java.util.concurrent.atomic.AtomicReference("")
 
         if (isResume && requestedType.isNotEmpty()) {
             return errorResult(
@@ -98,6 +116,7 @@ internal class SubagentExecutor(
         val subagentId = entry.subagentId
         val childController = AgentRunController()
         val controllerBinding = parentController.register(childController::cancel)
+        var timeoutFuture: ScheduledFuture<*>? = null
 
         val resolvedConfig = runCatching { configProvider() }.getOrElse { throwable ->
             SubagentSessionStore.releaseRunning(conversationKey, subagentId)
@@ -105,6 +124,14 @@ internal class SubagentExecutor(
             return errorResult("SUBAGENT_CONFIG_ERROR", throwable.message ?: "无法加载 Subagent 模型配置")
         }
         val modelLabel = resolvedConfig.modelDisplayName.ifBlank { resolvedConfig.model }
+        // 配置解析成功后再调度超时，避免早退路径泄漏定时任务。
+        if (boundedTimeout > 0) {
+            timeoutFuture = BUDGET_SCHEDULER.schedule({
+                budgetReason.compareAndSet("", "timeout_seconds=$boundedTimeout")
+                budgetExceeded.set(true)
+                childController.cancel()
+            }, boundedTimeout.toLong(), TimeUnit.SECONDS)
+        }
         val tracker = StepTracker(
             subagentId = subagentId,
             subagentType = profile.name,
@@ -147,6 +174,17 @@ internal class SubagentExecutor(
                         )
                         .toString(),
                 )
+            } else if (profile.name == SubagentProfile.TYPE_ANALYST && subCall.name == "terminal" &&
+                isWriteLikeCommand(subCall.argumentsJson)
+            ) {
+                // analyst 为只读分析角色：在工具层启发式拦截写类命令与重定向，而非仅靠提示词。
+                AgentModelClient.ToolResult(
+                    content = JSONObject()
+                        .put("ok", false)
+                        .put("code", "SUBAGENT_READONLY_COMMAND")
+                        .put("message", "analyst 仅允许只读命令；该命令含写操作或重定向，已被拦截")
+                        .toString(),
+                )
             } else {
                 baseToolExecutor.execute(subCall)
             }
@@ -174,6 +212,15 @@ internal class SubagentExecutor(
                 operationId = "${toolCall.id}-$subagentId",
                 toolFilter = profile::filterTools,
                 onEvent = { childEvent ->
+                    if (childEvent is AgentEvent.RoundStarted) {
+                        // 用事件携带的逻辑轮次，网络重试（同 round 多 attempt）不重复计预算。
+                        val round = roundCounter.accumulateAndGet(childEvent.round, ::maxOf)
+                        if (boundedTurns > 0 && round > boundedTurns) {
+                            budgetReason.compareAndSet("", "max_turns=$boundedTurns")
+                            budgetExceeded.set(true)
+                            childController.cancel()
+                        }
+                    }
                     val force = tracker.onChildEvent(childEvent)
                     publishSnapshot(force = force)
                 },
@@ -194,6 +241,14 @@ internal class SubagentExecutor(
                     .put("model", modelLabel)
                     .put("status", SubagentActivitySnapshot.STATUS_COMPLETED)
                     .put("tool_calls", tracker.toolCount())
+                    .put("rounds", roundCounter.get())
+                    .put("elapsed_ms", (nanoTime() - startedNanos) / 1_000_000)
+                    .put(
+                        "report_path",
+                        writeReport(subagentId, profile.name, description, modelLabel, "completed", response.content)
+                            ?: JSONObject.NULL,
+                    )
+                    .put("report_note", "报告位于 App 私有工作区，读取请用 environment=android")
                     .put("summary", response.content)
                     .put(
                         "resume_hint",
@@ -217,10 +272,11 @@ internal class SubagentExecutor(
             val cancelled = parentController.isCancelled ||
                 childController.isCancelled ||
                 throwable is AgentRunCancelledException
-            val errorMessage = if (cancelled) {
-                "已停止"
-            } else {
-                throwable.message ?: throwable.javaClass.simpleName
+            val errorMessage = when {
+                budgetExceeded.get() ->
+                    "超出预算（${budgetReason.get()}），已停止并返回部分输出；正在执行的单个工具会先完成"
+                cancelled -> "已停止"
+                else -> throwable.message ?: throwable.javaClass.simpleName
             }
             if (cancelled) {
                 tracker.markCancelled(partial)
@@ -236,7 +292,18 @@ internal class SubagentExecutor(
             AgentModelClient.ToolResult(
                 content = JSONObject()
                     .put("ok", false)
-                    .put("code", if (cancelled) "SUBAGENT_CANCELLED" else "SUBAGENT_FAILED")
+                    .put(
+                        "code",
+                        if (budgetExceeded.get()) {
+                            "SUBAGENT_BUDGET_EXCEEDED"
+                        } else if (cancelled) {
+                            "SUBAGENT_CANCELLED"
+                        } else {
+                            "SUBAGENT_FAILED"
+                        },
+                    )
+                    .put("rounds", roundCounter.get())
+                    .put("elapsed_ms", (nanoTime() - startedNanos) / 1_000_000)
                     .put("subagent_id", subagentId)
                     .put("subagent_type", profile.name)
                     .put("description", description)
@@ -263,9 +330,37 @@ internal class SubagentExecutor(
                 command = latestSnapshots[toolCall.id],
             )
         } finally {
+            timeoutFuture?.cancel(false)
             controllerBinding.close()
         }
     }
+
+    /** 把子代理结论落盘为 Markdown，便于跨会话引用；失败时返回 null，不影响主流程。 */
+    private fun writeReport(
+        subagentId: String,
+        type: String,
+        description: String,
+        model: String,
+        status: String,
+        summary: String,
+    ): String? = runCatching {
+        val dir = File(TerminalRuntime.userWorkspacePath, "subagent-reports")
+        if (!dir.exists() && !dir.mkdirs()) return@runCatching null
+        val file = File(dir, "$subagentId-${System.currentTimeMillis()}.md")
+        file.writeText(
+            buildString {
+                appendLine("# Subagent 报告：$description")
+                appendLine("- id: $subagentId")
+                appendLine("- type: $type")
+                appendLine("- model: $model")
+                appendLine("- status: $status")
+                appendLine("- time: ${java.time.Instant.now()}")
+                appendLine()
+                append(summary)
+            },
+        )
+        file.absolutePath
+    }.getOrNull()
 
     fun executeProfileManagement(toolCall: AgentModelClient.ToolCall): AgentModelClient.ToolResult {
         parentController.throwIfCancelled()
@@ -390,6 +485,17 @@ internal class SubagentExecutor(
                 .put("message", message)
                 .toString(),
         )
+
+    private fun isWriteLikeCommand(argumentsJson: String): Boolean {
+        val command = runCatching {
+            JSONObject(argumentsJson).opt("command") as? String
+        }.getOrNull() ?: return true // 非字符串命令无法验证，按写操作拦截
+        // 先剔除引号内文本与常见 stderr 重定向，避免误拦 SQL/jq/awk 里的 '>' 比较符。
+        val stripped = command
+            .replace(Regex("'[^']*'|\"[^\"]*\""), " ")
+            .replace(Regex("\\d+>&\\d+|\\d+>\\s*/dev/null"), " ")
+        return ANALYST_WRITE_PATTERN.containsMatchIn(stripped)
+    }
 
     private class StepTracker(
         private val subagentId: String,
@@ -602,5 +708,16 @@ internal class SubagentExecutor(
         private const val MAX_STEP_DETAIL_CHARS = 2_000
         private const val MAX_OUTPUT_CHARS = 12_000
         private const val MAX_STEPS = 48
+
+        private val BUDGET_SCHEDULER = java.util.concurrent.ScheduledThreadPoolExecutor(1) { runnable ->
+            Thread(runnable, "subagent-budget").apply { isDaemon = true }
+        }.apply { removeOnCancelPolicy = true }
+
+        /** analyst 只读约束的启发式写命令识别；宁可误拦，不放行显式写入。 */
+        private val ANALYST_WRITE_PATTERN = Regex(
+            "(?i)(^|[|&;\\n])\\s*(rm|mv|cp|chmod|chown|mkdir|rmdir|touch|ln|dd|shred|pm|settings|am|svc|setprop|apt|apt-get|pip|pip3|npm|tee|truncate)\\b" +
+                "|sed\\s+(-\\w+\\s+)*-i|git\\s+(push|commit|add|reset|checkout)\\b|(^|\\s)>>?\\s*\\S|(?<=\\w)>>?" +
+                "|\\b(INSERT|UPDATE|DELETE|DROP|CREATE|REPLACE)\\s+(INTO|SET|FROM|TABLE|OR)\\b",
+        )
     }
 }

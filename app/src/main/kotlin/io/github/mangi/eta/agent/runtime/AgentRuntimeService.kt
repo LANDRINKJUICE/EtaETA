@@ -564,6 +564,15 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
         mainHandler.post {
             if (destroyed) return@post
             run.completedContext = completedContext
+            AgentExecutionService.updateRunStatus(
+                this,
+                null,
+                activeRunCount = runs.all().count { !it.session.isTerminal },
+                round = run.overlayState.round,
+                detailText = (if (result.ok) result.content else result.error.orEmpty()).take(240),
+                finished = result.ok,
+                failed = !result.ok && result.error != "已停止",
+            )
             val guiState = guiControl.state.value
             if (lastGuiOwnerRunId != run.runId || guiState.userPaused ||
                 (guiState.ownerRunId != null && guiState.ownerRunId != run.runId)) return@post
@@ -976,10 +985,16 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
         } else {
             (owner ?: activeRuns.firstOrNull())?.overlayState?.status
         }
+        val overlay = (owner ?: activeRuns.firstOrNull())?.overlayState
         AgentExecutionService.updateRunStatus(
             this,
             status,
             activeRunCount = activeRuns.size,
+            round = overlay?.round ?: 0,
+            detailText = overlay?.detailText.orEmpty(),
+            thought = overlay?.thought.orEmpty(),
+            finished = overlay?.phase == io.github.mangi.eta.agent.overlay.AgentOverlayPhase.FINISHED,
+            failed = overlay?.phase == io.github.mangi.eta.agent.overlay.AgentOverlayPhase.FAILED,
         )
     }
 
