@@ -98,6 +98,13 @@ internal fun toolDisplayNameResource(name: String): Int? = when (name) {
     "list_directory" -> R.string.tool_list_directory
     "memory_get" -> R.string.tool_memory_get
     "memory_write" -> R.string.tool_memory_write
+    "eta_get_config" -> R.string.tool_eta_get_config
+    "eta_set_config" -> R.string.tool_eta_set_config
+    "eta_set_tool_enabled" -> R.string.tool_eta_set_tool_enabled
+    "eta_mcp_list" -> R.string.tool_eta_mcp_list
+    "eta_mcp_upsert" -> R.string.tool_eta_mcp_upsert
+    "eta_mcp_delete" -> R.string.tool_eta_mcp_delete
+    "eta_mcp_refresh" -> R.string.tool_eta_mcp_refresh
     "set_alarm" -> R.string.tool_set_alarm
     "set_timer" -> R.string.tool_set_timer
     "device_status" -> R.string.tool_device_status

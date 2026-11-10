@@ -89,6 +89,9 @@ internal fun iconForTool(toolId: String): ImageVector = when (toolId) {
     "mcp_call", "MCP 工具" -> Icons.Rounded.Extension
     "memory_get", "memory_write", "character_memory_get", "character_memory_write" ->
         Icons.Rounded.Psychology
+    "eta_get_config", "eta_set_config", "eta_set_tool_enabled" -> Icons.Rounded.Settings
+    "eta_mcp_list", "eta_mcp_upsert", "eta_mcp_delete", "eta_mcp_refresh" ->
+        Icons.Rounded.Extension
     "release_gui" -> Icons.Rounded.Smartphone
     "present_to_user" -> Icons.AutoMirrored.Rounded.OpenInNew
     "press_key" -> Icons.Rounded.KeyboardCommandKey

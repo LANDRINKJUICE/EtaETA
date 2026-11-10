@@ -429,6 +429,13 @@
   <string name="tool_current_context">時間與位置</string>
   <string name="tool_memory_get">讀取記憶</string>
   <string name="tool_memory_write">整理記憶</string>
+  <string name="tool_eta_get_config">讀取 Eta 設定</string>
+  <string name="tool_eta_set_config">修改 Eta 開關</string>
+  <string name="tool_eta_set_tool_enabled">開關單一工具</string>
+  <string name="tool_eta_mcp_list">列出 MCP 伺服器</string>
+  <string name="tool_eta_mcp_upsert">新增或更新 MCP 伺服器</string>
+  <string name="tool_eta_mcp_delete">刪除 MCP 伺服器</string>
+  <string name="tool_eta_mcp_refresh">重新整理 MCP 工具</string>
   <string name="tool_set_alarm">設定鬧鐘</string>
   <string name="tool_set_timer">設定計時器</string>
   <string name="tool_device_status">裝置狀態</string>

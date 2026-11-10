@@ -135,6 +135,19 @@ internal fun buildToolsState(context: Context): AgentToolsUiState =
                 ),
             ),
             ToolGroupUi(
+                id = "eta_self",
+                title = "Eta 自身",
+                tools = listOf(
+                    ToolItemUi("eta_get_config", "读取 Eta 配置", "读取 Eta 版本、工具组开关、被禁用的工具和 MCP 服务器列表。"),
+                    ToolItemUi("eta_set_config", "修改 Eta 开关", "直接修改本地 Agent 工具组开关并读回验证，无需手动打开设置页。"),
+                    ToolItemUi("eta_set_tool_enabled", "开关单个工具", "按工具名启用或禁用 Agent 工具，写入本工具列表。"),
+                    ToolItemUi("eta_mcp_list", "列出 MCP 服务器", "查看已配置的 MCP 服务器及工具启用情况。"),
+                    ToolItemUi("eta_mcp_upsert", "添加或更新 MCP 服务器", "新增或修改 MCP 服务器，默认自动发现工具；凭据由安全存储保管。"),
+                    ToolItemUi("eta_mcp_delete", "删除 MCP 服务器", "按 id 删除 MCP 服务器及其凭据。"),
+                    ToolItemUi("eta_mcp_refresh", "刷新 MCP 工具", "重新连接 MCP 服务器并刷新工具列表。"),
+                ),
+            ),
+            ToolGroupUi(
                 id = "terminal",
                 title = context.getString(R.string.state_terminal_and_files_ae7c54),
                 tools = listOf(
