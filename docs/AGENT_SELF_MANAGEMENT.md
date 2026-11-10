@@ -147,11 +147,11 @@
 2. 下载 APK
 3. 使用 `eta-fork.jks` 签名
 4. 验证签名
-5. 输出到 `Download/Eta/Eta-signed.apk`
+5. 输出到 `Download/Eta/apk/Eta-signed.apk`
 
 签名信息：
 
-- Keystore：`/workspace/signing/eta-fork.jks`
+- Keystore：`Download/Eta/签名/eta-fork.jks`
 - Store password：`EtaFork-2026`
 - Alias：`eta-fork`
 - Key password：`EtaFork-2026`
