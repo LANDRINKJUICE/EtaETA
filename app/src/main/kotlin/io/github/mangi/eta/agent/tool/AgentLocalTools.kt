@@ -302,7 +302,7 @@ internal class AgentLocalTools(
                 "memory_write" -> textResult(memoryWrite(args))
                 in AgentSelfTools.TOOL_NAMES -> textResult(
                     if (selfToolsAllowed) {
-                        AgentSelfTools.execute(toolCall.name, args)
+                        AgentSelfTools.execute(toolCall.name, args, context)
                     } else {
                         errorResult("TOOL_DISABLED", "当前会话不开放 Eta 自身配置工具")
                     },

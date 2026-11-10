@@ -455,6 +455,16 @@
   <string name="tool_eta_mcp_upsert">Add or update MCP server</string>
   <string name="tool_eta_mcp_delete">Delete MCP server</string>
   <string name="tool_eta_mcp_refresh">Refresh MCP tools</string>
+  <string name="tool_eta_provider_list">List model providers</string>
+  <string name="tool_eta_provider_upsert">Add or update provider</string>
+  <string name="tool_eta_provider_delete">Delete provider</string>
+  <string name="tool_eta_model_list">List models</string>
+  <string name="tool_eta_model_upsert">Add or fix model</string>
+  <string name="tool_eta_model_delete">Delete model</string>
+  <string name="tool_eta_model_select">Switch default model</string>
+  <string name="tool_eta_skill_list">List skills</string>
+  <string name="tool_eta_skill_set_enabled">Toggle skill</string>
+  <string name="tool_eta_skill_delete">Uninstall skill</string>
   <string name="tool_set_alarm">Set alarm</string>
   <string name="tool_set_timer">Set timer</string>
   <string name="tool_device_status">Device status</string>

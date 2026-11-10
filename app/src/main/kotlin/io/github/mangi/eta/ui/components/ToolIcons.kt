@@ -92,6 +92,11 @@ internal fun iconForTool(toolId: String): ImageVector = when (toolId) {
     "eta_get_config", "eta_set_config", "eta_set_tool_enabled" -> Icons.Rounded.Settings
     "eta_mcp_list", "eta_mcp_upsert", "eta_mcp_delete", "eta_mcp_refresh" ->
         Icons.Rounded.Extension
+    "eta_provider_list", "eta_provider_upsert", "eta_provider_delete",
+    "eta_model_list", "eta_model_upsert", "eta_model_delete", "eta_model_select" ->
+        Icons.Rounded.Smartphone
+    "eta_skill_list", "eta_skill_set_enabled", "eta_skill_delete" ->
+        Icons.Rounded.Extension
     "release_gui" -> Icons.Rounded.Smartphone
     "present_to_user" -> Icons.AutoMirrored.Rounded.OpenInNew
     "press_key" -> Icons.Rounded.KeyboardCommandKey

@@ -34,7 +34,7 @@ internal object AgentSelfTools {
         "eta_mcp_upsert",
         "eta_mcp_delete",
         "eta_mcp_refresh",
-    )
+    ) + AgentModelTools.TOOL_NAMES + AgentSkillAdminTools.TOOL_NAMES
 
     private val SWITCH_LABELS = linkedMapOf(
         Prefs.Keys.AGENT_TERMINAL_TOOLS to "terminal/file",
@@ -48,7 +48,13 @@ internal object AgentSelfTools {
         Prefs.Keys.AGENT_AUTO_COMPACTION_ENABLED to "auto_compaction",
     )
 
-    fun execute(name: String, args: JSONObject): String = try {
+    fun execute(name: String, args: JSONObject, context: android.content.Context): String = when {
+        name in AgentModelTools.TOOL_NAMES -> AgentModelTools.execute(name, args)
+        name in AgentSkillAdminTools.TOOL_NAMES -> AgentSkillAdminTools.execute(name, args, context)
+        else -> executeSelf(name, args)
+    }
+
+    private fun executeSelf(name: String, args: JSONObject): String = try {
         when (name) {
             "eta_get_config" -> getConfig()
             "eta_set_config" -> setConfig(args)

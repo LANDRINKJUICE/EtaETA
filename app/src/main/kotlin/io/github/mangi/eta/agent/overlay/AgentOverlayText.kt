@@ -105,6 +105,16 @@ internal fun toolDisplayNameResource(name: String): Int? = when (name) {
     "eta_mcp_upsert" -> R.string.tool_eta_mcp_upsert
     "eta_mcp_delete" -> R.string.tool_eta_mcp_delete
     "eta_mcp_refresh" -> R.string.tool_eta_mcp_refresh
+    "eta_provider_list" -> R.string.tool_eta_provider_list
+    "eta_provider_upsert" -> R.string.tool_eta_provider_upsert
+    "eta_provider_delete" -> R.string.tool_eta_provider_delete
+    "eta_model_list" -> R.string.tool_eta_model_list
+    "eta_model_upsert" -> R.string.tool_eta_model_upsert
+    "eta_model_delete" -> R.string.tool_eta_model_delete
+    "eta_model_select" -> R.string.tool_eta_model_select
+    "eta_skill_list" -> R.string.tool_eta_skill_list
+    "eta_skill_set_enabled" -> R.string.tool_eta_skill_set_enabled
+    "eta_skill_delete" -> R.string.tool_eta_skill_delete
     "set_alarm" -> R.string.tool_set_alarm
     "set_timer" -> R.string.tool_set_timer
     "device_status" -> R.string.tool_device_status

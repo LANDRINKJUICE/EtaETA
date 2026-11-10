@@ -52,5 +52,15 @@ internal object AgentSensitiveToolPolicy {
         "eta_mcp_upsert",
         "eta_mcp_delete",
         "eta_mcp_refresh",
+        "eta_provider_list",
+        "eta_provider_upsert",
+        "eta_provider_delete",
+        "eta_model_list",
+        "eta_model_upsert",
+        "eta_model_delete",
+        "eta_model_select",
+        "eta_skill_list",
+        "eta_skill_set_enabled",
+        "eta_skill_delete",
     )
 }

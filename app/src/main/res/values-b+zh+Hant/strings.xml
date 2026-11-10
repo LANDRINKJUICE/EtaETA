@@ -436,6 +436,16 @@
   <string name="tool_eta_mcp_upsert">新增或更新 MCP 伺服器</string>
   <string name="tool_eta_mcp_delete">刪除 MCP 伺服器</string>
   <string name="tool_eta_mcp_refresh">重新整理 MCP 工具</string>
+  <string name="tool_eta_provider_list">列出模型提供商</string>
+  <string name="tool_eta_provider_upsert">新增或更新提供商</string>
+  <string name="tool_eta_provider_delete">刪除提供商</string>
+  <string name="tool_eta_model_list">列出模型</string>
+  <string name="tool_eta_model_upsert">新增或修復模型</string>
+  <string name="tool_eta_model_delete">刪除模型</string>
+  <string name="tool_eta_model_select">切換預設模型</string>
+  <string name="tool_eta_skill_list">列出技能</string>
+  <string name="tool_eta_skill_set_enabled">開關技能</string>
+  <string name="tool_eta_skill_delete">解除安裝技能</string>
   <string name="tool_set_alarm">設定鬧鐘</string>
   <string name="tool_set_timer">設定計時器</string>
   <string name="tool_device_status">裝置狀態</string>
