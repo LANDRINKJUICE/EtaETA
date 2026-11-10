@@ -64,7 +64,7 @@ internal object AgentSubagentToolCatalog {
                     .put("maxLength", 48)
                     .put(
                         "description",
-                        "Preset type (\"explore\", \"coder\", \"plan\", or a saved custom profile) OR any ad-hoc kebab-case role name (e.g. \"bill-analyzer\", \"apk-inspector\") to spawn an ephemeral specialized subagent on the fly. Defaults to \"explore\" when omitted. Do not set when `resume` is provided.",
+                        "Preset type (${SubagentProfile.BUILTIN_PROFILES.joinToString("\", \"") { it.name }}, or a saved custom profile) OR any ad-hoc kebab-case role name (e.g. \"bill-analyzer\", \"apk-inspector\") to spawn an ephemeral specialized subagent on the fly. Defaults to \"explore\" when omitted. Do not set when `resume` is provided.",
                     ),
             )
             .put(
@@ -94,7 +94,7 @@ internal object AgentSubagentToolCatalog {
                     .put("type", "integer")
                     .put("minimum", 0)
                     .put("maximum", 3600)
-                    .put("description", "Budget: cancel the subagent after this many seconds and return partial output. 0 (default) means unlimited."),
+                    .put("description", "Budget: cancel the subagent after this many seconds and return partial output (cooperative: a tool already executing finishes first). 0 (default) means unlimited."),
             )
             .put(
                 "max_turns",

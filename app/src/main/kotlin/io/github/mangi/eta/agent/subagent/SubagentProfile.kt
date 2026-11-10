@@ -48,13 +48,13 @@ internal data class SubagentProfile(
         if (toolName.isBlank() || toolName in FORBIDDEN_TOOLS || toolName in disallowedTools) {
             return false
         }
-        if (toolName in extraAllowedTools) return true
         val customAllowlist = explicitTools
         if (customAllowlist != null) {
             if ("*" in customAllowlist) return true
             return toolName in customAllowlist ||
                 ("personal_data" in customAllowlist && (toolName in PersonalSearchTools.names || toolName in AgentPhoneToolCatalog.reads))
         }
+        if (toolName in extraAllowedTools) return true
         val base = baseTools
         if (base != null) {
             if (toolName in base) return true
@@ -218,11 +218,11 @@ internal data class SubagentProfile(
         /** 只读分析：explore 的全部只读检索 + 受限终端（指令级只读，禁止写文件与状态修改命令）。 */
         val ANALYST = SubagentProfile(
             name = TYPE_ANALYST,
-            summary = "只读数据分析：检索 + 只读 Shell（SQLite、日志、统计）",
-            whenToUse = "Read-only analysis agent for tasks needing shell-based inspection (sqlite3 queries, log processing, jq/statistics) without any file or device modification. Use instead of coder when the task is query-only.",
+            summary = "只读数据分析：检索 + 受限 Shell（SQLite、日志、统计）",
+            whenToUse = "Read-only analysis agent for tasks needing shell-based inspection (sqlite3 queries, log processing, jq/statistics). Write-like commands are blocked by a heuristic guard at tool layer; no file editing tools. Use instead of coder when the task is query-only.",
             toolHighlights = listOf("terminal", "read_file", "grep_files", "web_search", "personal_data", "get_logcat"),
-            roleInstruction = "你是只读数据分析 Subagent（analyst）。你可以使用 terminal 执行**只读命令**（sqlite3 查询、grep/jq/awk 统计、cat、ls、sqlite3 只读连接等），" +
-                "严禁任何写入或状态修改：不得执行写文件、rm/mv/chmod、pm/settings/am 写操作、INSERT/UPDATE/DELETE、安装或卸载等命令；" +
+            roleInstruction = "你是只读数据分析 Subagent（analyst）。你可以使用 terminal 执行**只读命令**（sqlite3 查询、grep/jq/awk 统计、cat、ls 等），" +
+                "写类命令与输出重定向会在工具层被启发式拦截（误拦时改用等价只读写法，不要尝试绕过）；" +
                 "不得使用 write_file/edit_file（未开放）。查询 SQLite 时使用只读方式打开（file:...?mode=ro）。最终回复给出查询命令、关键证据与结论。",
             extraAllowedTools = setOf("terminal"),
             builtin = true,
