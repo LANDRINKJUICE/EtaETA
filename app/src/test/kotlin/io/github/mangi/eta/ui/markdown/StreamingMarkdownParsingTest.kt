@@ -5,6 +5,7 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -82,8 +83,8 @@ class StreamingMarkdownParsingTest {
             publish = published::add,
         )
 
-        assertEquals(listOf("修正后的内容"), published.map { it.originalSource })
-        assertTrue(published.single().isComplete)
+        assertEquals(listOf("旧内容", "修正后的内容"), published.map { it.originalSource })
+        assertTrue(published.last().isComplete)
     }
 
     @Test
@@ -144,9 +145,12 @@ class StreamingMarkdownParsingTest {
             parse = { target ->
                 parsedSources += target.content
                 if (target.content == "第一段") {
-                    targets.send(StreamingMarkdownTarget("第一段第二段", isStreaming = true))
-                    targets.send(StreamingMarkdownTarget("第一段第二段第三段", isStreaming = true))
-                    targets.close()
+                    // 必须等消费端进入 40ms 发布窗口后再追加，才能覆盖窗口内合并。
+                    launch {
+                        delay(5)
+                        targets.send(StreamingMarkdownTarget("第一段第二段第三段", isStreaming = true))
+                        targets.close()
+                    }
                 }
                 parser.parse(target.content, isComplete = !target.isStreaming)
             },
@@ -168,8 +172,11 @@ class StreamingMarkdownParsingTest {
             targets = targets,
             parse = { target ->
                 if (target.content == "旧内容") {
-                    targets.send(StreamingMarkdownTarget("修正后的内容", isStreaming = false))
-                    targets.close()
+                    launch {
+                        delay(5)
+                        targets.send(StreamingMarkdownTarget("修正后的内容", isStreaming = false))
+                        targets.close()
+                    }
                 }
                 parser.parse(target.content, isComplete = !target.isStreaming)
             },
