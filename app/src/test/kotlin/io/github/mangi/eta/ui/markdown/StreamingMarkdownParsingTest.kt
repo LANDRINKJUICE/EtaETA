@@ -83,8 +83,8 @@ class StreamingMarkdownParsingTest {
             publish = published::add,
         )
 
-        assertEquals(listOf("旧内容", "修正后的内容"), published.map { it.originalSource })
-        assertTrue(published.last().isComplete)
+        assertEquals(listOf("修正后的内容"), published.map { it.originalSource })
+        assertTrue(published.single().isComplete)
     }
 
     @Test

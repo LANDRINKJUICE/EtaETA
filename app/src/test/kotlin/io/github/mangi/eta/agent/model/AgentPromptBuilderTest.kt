@@ -114,7 +114,7 @@ class AgentPromptBuilderTest {
         )
 
         assertEquals(
-            listOf("system", "system", "system", "system", "user", "assistant", "user"),
+            listOf("system", "system", "system", "system", "system", "user", "assistant", "user"),
             messages.roles(),
         )
         assertEquals("自定义系统约束", messages.getJSONObject(0).getString("content"))
@@ -186,13 +186,13 @@ class AgentPromptBuilderTest {
             skillContext = SkillContext(installedSkills = listOf(skill)),
         )
 
-        assertEquals(listOf("system", "system", "system", "system", "user"), messages.roles())
+        assertEquals(listOf("system", "system", "system", "system", "system", "user"), messages.roles())
         val systemContents = messages.systemContents()
         assertTrue(systemContents.any { it.contains("browser_use") })
         assertFalse(systemContents.any { it.contains("只需 command") })
         assertTrue(messages.getJSONObject(2).getString("content").contains("可调用 subagent 派发子智能体"))
         val skillMessage = systemContents.single { it.contains("id=screen-audit") }
-        assertEquals(skillMessage, messages.getJSONObject(3).getString("content"))
+        assertEquals(skillMessage, messages.getJSONObject(4).getString("content"))
         assertTrue(skillMessage.contains("path=/skills/screen-audit/SKILL.md"))
         assertTrue(skillMessage.contains("capabilities=scripts, assets"))
         assertTrue(skillMessage.contains("description=检查屏幕 并输出 结论"))
