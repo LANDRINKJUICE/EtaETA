@@ -64,7 +64,7 @@ internal object AgentSubagentToolCatalog {
                     .put("maxLength", 48)
                     .put(
                         "description",
-                        "Preset type (${SubagentProfile.BUILTIN_PROFILES.joinToString("\", \"") { it.name }}, or a saved custom profile) OR any ad-hoc kebab-case role name (e.g. \"bill-analyzer\", \"apk-inspector\") to spawn an ephemeral specialized subagent on the fly. Defaults to \"explore\" when omitted. Do not set when `resume` is provided.",
+                        "Preset type (${SubagentProfile.BUILTIN_PROFILES.joinToString(", ") { "\"${it.name}\"" }}, or a saved custom profile) OR any ad-hoc kebab-case role name (e.g. \"bill-analyzer\", \"apk-inspector\") to spawn an ephemeral specialized subagent on the fly. Defaults to \"explore\" when omitted. Do not set when `resume` is provided.",
                     ),
             )
             .put(

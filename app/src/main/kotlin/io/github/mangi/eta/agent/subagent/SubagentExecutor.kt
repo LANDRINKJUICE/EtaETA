@@ -127,7 +127,7 @@ internal class SubagentExecutor(
         // 配置解析成功后再调度超时，避免早退路径泄漏定时任务。
         if (boundedTimeout > 0) {
             timeoutFuture = BUDGET_SCHEDULER.schedule({
-                budgetReason.set("timeout_seconds=$boundedTimeout")
+                budgetReason.compareAndSet("", "timeout_seconds=$boundedTimeout")
                 budgetExceeded.set(true)
                 childController.cancel()
             }, boundedTimeout.toLong(), TimeUnit.SECONDS)
@@ -216,7 +216,7 @@ internal class SubagentExecutor(
                         // 用事件携带的逻辑轮次，网络重试（同 round 多 attempt）不重复计预算。
                         val round = roundCounter.accumulateAndGet(childEvent.round, ::maxOf)
                         if (boundedTurns > 0 && round > boundedTurns) {
-                            budgetReason.set("max_turns=$boundedTurns")
+                            budgetReason.compareAndSet("", "max_turns=$boundedTurns")
                             budgetExceeded.set(true)
                             childController.cancel()
                         }
@@ -248,7 +248,7 @@ internal class SubagentExecutor(
                         writeReport(subagentId, profile.name, description, modelLabel, "completed", response.content)
                             ?: JSONObject.NULL,
                     )
-                    .put("report_note", "报告位于 App 私有工作区，读取请用 environment=android"),
+                    .put("report_note", "报告位于 App 私有工作区，读取请用 environment=android")
                     .put("summary", response.content)
                     .put(
                         "resume_hint",
@@ -488,10 +488,13 @@ internal class SubagentExecutor(
 
     private fun isWriteLikeCommand(argumentsJson: String): Boolean {
         val command = runCatching {
-            JSONObject(argumentsJson).optString("command")
-        }.getOrDefault("")
-        if (command.isEmpty()) return false
-        return ANALYST_WRITE_PATTERN.containsMatchIn(command)
+            JSONObject(argumentsJson).opt("command") as? String
+        }.getOrNull() ?: return true // 非字符串命令无法验证，按写操作拦截
+        // 先剔除引号内文本与常见 stderr 重定向，避免误拦 SQL/jq/awk 里的 '>' 比较符。
+        val stripped = command
+            .replace(Regex("'[^']*'|\"[^\"]*\""), " ")
+            .replace(Regex("\\d+>&\\d+|\\d+>\\s*/dev/null"), " ")
+        return ANALYST_WRITE_PATTERN.containsMatchIn(stripped)
     }
 
     private class StepTracker(
@@ -713,7 +716,7 @@ internal class SubagentExecutor(
         /** analyst 只读约束的启发式写命令识别；宁可误拦，不放行显式写入。 */
         private val ANALYST_WRITE_PATTERN = Regex(
             "(?i)(^|[|&;\\n])\\s*(rm|mv|cp|chmod|chown|mkdir|rmdir|touch|ln|dd|shred|pm|settings|am|svc|setprop|apt|apt-get|pip|pip3|npm|tee|truncate)\\b" +
-                "|sed\\s+(-\\w+\\s+)*-i|git\\s+(push|commit|add|reset|checkout)\\b|>>?" +
+                "|sed\\s+(-\\w+\\s+)*-i|git\\s+(push|commit|add|reset|checkout)\\b|(^|\\s)>>?\\s*\\S" +
                 "|\\b(INSERT|UPDATE|DELETE|DROP|CREATE|REPLACE)\\s+(INTO|SET|FROM|TABLE|OR)\\b",
         )
     }

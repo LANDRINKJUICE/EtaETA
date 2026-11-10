@@ -215,7 +215,7 @@ internal data class SubagentProfile(
             builtin = true,
         )
 
-        /** 只读分析：explore 的全部只读检索 + 受限终端（指令级只读，禁止写文件与状态修改命令）。 */
+        /** 只读分析：explore 的全部只读检索 + 受限终端（工具层启发式拦截写命令与重定向）。 */
         val ANALYST = SubagentProfile(
             name = TYPE_ANALYST,
             summary = "只读数据分析：检索 + 受限 Shell（SQLite、日志、统计）",
