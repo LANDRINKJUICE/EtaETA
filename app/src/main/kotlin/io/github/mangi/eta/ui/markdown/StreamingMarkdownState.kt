@@ -9,6 +9,8 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.withContext
 
+private const val STREAMING_PUBLISH_INTERVAL_MS = 40L
+
 /** 列表按消息身份保留会话，条目重新挂载时接用已有解析和显现进度。 */
 internal class StreamingMarkdownState {
     private var attachedContentCount by mutableIntStateOf(0)
@@ -37,9 +39,9 @@ internal class StreamingMarkdownState {
             }
         },
         publish = { snapshot = it },
-        // 高速 token 流按帧预算合并排版目标：显示最多约 25fps，解析仍在后台执行，
+        // 高速 token 流按帧预算合并解析与排版目标：快照最多约 25fps，解析仍在后台执行，
         // 不改变文字显现速度，只避免每个 token 都触发一次全文档解析与 Compose 测量。
-        publishIntervalMs = 40L,
+        publishIntervalMs = STREAMING_PUBLISH_INTERVAL_MS,
     )
 }
 
@@ -69,20 +71,11 @@ internal suspend fun consumeStreamingMarkdownTargets(
                 (!parsed.isComplete || newerTarget == target))
         ) {
             publish(parsed)
-            if (publishIntervalMs > 0 && parsed.isComplete.not()) {
-                // 只限制快照发布频率，不延迟终态。等待期间继续吸收最新追加，避免
-                // 高频小分片把主线程的排版与测量排队到模型结束之后。
+            if (publishIntervalMs > 0 && !parsed.isComplete) {
+                // 只限制快照发布与后续解析频率，不延迟终态。CONFLATED 容量为 1，
+                // 等待期间最多吸收一个最新目标，追加与全文纠正都不会被丢弃。
                 kotlinx.coroutines.delay(publishIntervalMs)
-                while (true) {
-                    val latest = targets.tryReceive().getOrNull() ?: break
-                    if (latest.content.startsWith(parsed.originalSource)) {
-                        newerTarget = latest
-                    } else {
-                        // 上游改写全文时不能跳过纠正，立即让下一轮处理。
-                        newerTarget = latest
-                        break
-                    }
-                }
+                targets.tryReceive().getOrNull()?.let { newerTarget = it }
             }
         }
         target = newerTarget ?: targets.receiveCatching().getOrNull() ?: return

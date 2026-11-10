@@ -133,6 +133,55 @@ class StreamingMarkdownParsingTest {
     }
 
     @Test
+    fun throttledPublishesCoalesceAppendsArrivingDuringTheFrameBudget() = runBlocking {
+        val targets = Channel<StreamingMarkdownTarget>(Channel.CONFLATED)
+        val parser = StreamingGfmParserSession()
+        val parsedSources = mutableListOf<String>()
+        targets.send(StreamingMarkdownTarget("第一段", isStreaming = true))
+
+        consumeStreamingMarkdownTargets(
+            targets = targets,
+            parse = { target ->
+                parsedSources += target.content
+                if (target.content == "第一段") {
+                    targets.send(StreamingMarkdownTarget("第一段第二段", isStreaming = true))
+                    targets.send(StreamingMarkdownTarget("第一段第二段第三段", isStreaming = true))
+                    targets.close()
+                }
+                parser.parse(target.content, isComplete = !target.isStreaming)
+            },
+            publish = {},
+            publishIntervalMs = 40L,
+        )
+
+        assertEquals(listOf("第一段", "第一段第二段第三段"), parsedSources)
+    }
+
+    @Test
+    fun throttledPublishKeepsLateCompletionAndSourceCorrection() = runBlocking {
+        val targets = Channel<StreamingMarkdownTarget>(Channel.CONFLATED)
+        val parser = StreamingGfmParserSession()
+        val published = mutableListOf<StreamingGfmSnapshot>()
+        targets.send(StreamingMarkdownTarget("旧内容", isStreaming = true))
+
+        consumeStreamingMarkdownTargets(
+            targets = targets,
+            parse = { target ->
+                if (target.content == "旧内容") {
+                    targets.send(StreamingMarkdownTarget("修正后的内容", isStreaming = false))
+                    targets.close()
+                }
+                parser.parse(target.content, isComplete = !target.isStreaming)
+            },
+            publish = published::add,
+            publishIntervalMs = 40L,
+        )
+
+        assertEquals(listOf("修正后的内容"), published.map { it.originalSource })
+        assertTrue(published.single().isComplete)
+    }
+
+    @Test
     fun disposingConsumerCancelsParsingWithoutPublishingLateResults() = runBlocking {
         val targets = Channel<StreamingMarkdownTarget>(Channel.CONFLATED)
         val started = CompletableDeferred<Unit>()
