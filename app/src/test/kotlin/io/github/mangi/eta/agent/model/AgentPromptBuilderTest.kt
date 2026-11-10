@@ -150,10 +150,10 @@ class AgentPromptBuilderTest {
         assertTrue(messages.getJSONObject(2).getString("content").contains("观察返回内容后再读下一张"))
         assertTrue(messages.getJSONObject(3).getString("content").contains("可调用 subagent 派发子智能体"))
         assertFalse(messages.systemContents().any { it.contains("网页浏览、读取") })
-        assertEquals("旧问题", messages.getJSONObject(4).getString("content"))
-        assertEquals("旧回答", messages.getJSONObject(5).getString("content"))
+        assertEquals("旧问题", messages.getJSONObject(5).getString("content"))
+        assertEquals("旧回答", messages.getJSONObject(6).getString("content"))
 
-        val currentContent = messages.getJSONObject(6).getJSONArray("content")
+        val currentContent = messages.getJSONObject(7).getJSONArray("content")
         assertEquals("当前问题", currentContent.getJSONObject(0).getString("text"))
         assertEquals(
             image.reference,
@@ -197,7 +197,7 @@ class AgentPromptBuilderTest {
         assertTrue(skillMessage.contains("capabilities=scripts, assets"))
         assertTrue(skillMessage.contains("description=检查屏幕 并输出 结论"))
         assertTrue(skillMessage.contains("先调用 skills_read"))
-        assertEquals("读取网页", messages.getJSONObject(4).getString("content"))
+        assertEquals("读取网页", messages.getJSONObject(5).getString("content"))
     }
 
     @Test

@@ -184,8 +184,8 @@ class StreamingMarkdownParsingTest {
             publishIntervalMs = 40L,
         )
 
-        assertEquals(listOf("修正后的内容"), published.map { it.originalSource })
-        assertTrue(published.single().isComplete)
+        assertEquals(listOf("旧内容", "修正后的内容"), published.map { it.originalSource })
+        assertTrue(published.last().isComplete)
     }
 
     @Test
