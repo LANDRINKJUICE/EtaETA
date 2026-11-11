@@ -15,15 +15,15 @@ internal object AgentScheduleToolCatalog {
                         "kind",
                         JSONObject().put("type", "string")
                             .put("enum", JSONArray().put("once").put("daily").put("weekly").put("interval"))
-                            .put("description", "once=指定时间执行一次；daily\/weekly=每天\/每周几的固定时刻；interval=固定间隔重复"),
+                            .put("description", "once=指定时间执行一次；daily/weekly=每天/每周几的固定时刻；interval=固定间隔重复"),
                     )
                     .put(
                         "at",
                         JSONObject().put("type", "string")
                             .put("description", "kind=once 的本地时间，例如 2026-11-12 09:00；也接受 ISO-8601 带偏移的写法"),
                     )
-                    .put("hour", JSONObject().put("type", "integer").put("description", "kind=daily\/weekly 的小时 0..23"))
-                    .put("minute", JSONObject().put("type", "integer").put("description", "kind=daily\/weekly 的分钟 0..59"))
+                    .put("hour", JSONObject().put("type", "integer").put("description", "kind=daily/weekly 的小时 0..23"))
+                    .put("minute", JSONObject().put("type", "integer").put("description", "kind=daily/weekly 的分钟 0..59"))
                     .put(
                         "days_of_week",
                         JSONObject().put("type", "array")
@@ -42,7 +42,7 @@ internal object AgentScheduleToolCatalog {
             AgentToolSchema.function(
                 name = "schedule_task",
                 description = "管理到点自动执行的 agent 任务。action=create 创建（需要 prompt 与 schedule），" +
-                    "list 列出全部任务与下次触发时间，enable\/disable 启停，delete 删除，run_now 立刻跑一次验证。" +
+                    "list 列出全部任务与下次触发时间，enable/disable 启停，delete 删除，run_now 立刻跑一次验证。" +
                     "任务到点后会在后台无人值守地执行 prompt：危险操作仍会被拦下并等待确认，无人确认会超时且不执行。",
                 parameters = JSONObject()
                     .put("type", "object")

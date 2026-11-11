@@ -160,7 +160,7 @@ internal class AgentExecutionService : Service() {
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(actionText)
             .setContentText(contentText)
-            .setSubText(ongoingSubText(taskCount))
+            .setSubText(ongoingSubText(this, taskCount))
             .setContentIntent(open)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -310,13 +310,15 @@ internal class AgentExecutionService : Service() {
             if (manager.areNotificationsEnabled()) manager.notify(RESULT_NOTIFICATION_ID, notification)
         }
 
-        private fun ongoingSubText(taskCount: Int): String? {
+        private fun ongoingSubText(context: Context, taskCount: Int): String? {
+            // companion 里没有 Context：所有本地化都必须走调用方传进来的 context
+            // （之前直接调 getString 是编译错误，也是 CI 报 unresolved reference 的原因）。
             val parts = buildList {
-                if (runRound > 0) add(getString(R.string.execution_subtext_round, runRound))
-                if (taskCount > 0) add(getString(R.string.execution_subtext_tasks, taskCount))
+                if (runRound > 0) add(context.getString(R.string.execution_subtext_round, runRound))
+                if (taskCount > 0) add(context.getString(R.string.execution_subtext_tasks, taskCount))
                 if (runStartedAtMillis > 0L) {
                     val elapsed = (SystemClock.elapsedRealtime() - runStartedAtMillis).coerceAtLeast(0L)
-                    add(String.format(getString(R.string.notify_elapsed_format), elapsed / 1_000L))
+                    add(String.format(context.getString(R.string.notify_elapsed_format), elapsed / 1_000L))
                 }
             }
             // 三段都为空时返回 null：不要给通知塞一个空 subText（会多出一行空白）。

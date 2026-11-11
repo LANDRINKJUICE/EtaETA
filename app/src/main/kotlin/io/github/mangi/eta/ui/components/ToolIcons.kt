@@ -67,8 +67,9 @@ internal fun iconForTool(toolId: String): ImageVector = when (toolId) {
     "observe", "observe_screen" -> Icons.Rounded.DocumentScanner
     "click", "tap", "tap_element" -> Icons.Rounded.AdsClick
     "gesture_batch" -> Icons.Rounded.AdsClick
-    "macro_list", "macro_save", "macro_run", "macro_delete" -> Icons.Rounded.Hub
-    "macro_record" -> Icons.Rounded.RadioButtonChecked
+    // 宏的整组（含录制）统一用一个图标：Hub 是本文件已在用、确定存在于依赖里的扩展图标，
+    // 不引入 RadioButtonChecked 这类需要额外验证的条目。
+    "macro_list", "macro_save", "macro_run", "macro_delete", "macro_record" -> Icons.Rounded.Hub
     "schedule_task" -> Icons.Rounded.Alarm
     "tap_area" -> Icons.Rounded.MyLocation
     "long_press", "long_press_element" -> Icons.Rounded.TouchApp

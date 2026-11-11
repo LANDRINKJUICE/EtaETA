@@ -1,6 +1,7 @@
 package io.github.mangi.eta.agent.accessibility
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.accessibilityservice.GestureDescription
 import android.content.ClipData
 import android.content.ClipDescription
@@ -27,7 +28,6 @@ import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
-import android.view.accessibility.AccessibilityServiceInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import io.github.mangi.eta.agent.device.ScrollAxis
 import io.github.mangi.eta.agent.device.ScrollAxisContract

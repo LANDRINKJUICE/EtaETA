@@ -5,7 +5,7 @@ import io.github.mangi.eta.agent.schedule.TaskRunOutcome
 
 /** 自动任务页的一条任务（已本地化，直接交给 Compose 渲染）。 */
 @Immutable
-data class ScheduledTaskUi(
+internal data class ScheduledTaskUi(
     val id: String,
     val title: String,
     val prompt: String,
@@ -21,7 +21,7 @@ data class ScheduledTaskUi(
 )
 
 @Immutable
-data class ScheduledTasksUiState(
+internal data class ScheduledTasksUiState(
     val isLoading: Boolean = true,
     val tasks: List<ScheduledTaskUi> = emptyList(),
     /** 精确闹钟授权状态；false 时页面顶部提示任务可能被推迟。 */
