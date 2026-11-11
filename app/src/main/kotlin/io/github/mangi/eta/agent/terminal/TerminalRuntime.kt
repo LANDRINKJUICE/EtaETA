@@ -19,17 +19,46 @@ internal object TerminalRuntime {
     @Volatile private var appContext: Context? = null
     private var backgroundJobs: BackgroundTerminalJobs? = null
 
+    /** 任务完成自动唤醒的记录文件：与任务记录同目录，重启后仍能约束冷却与链条计数。 */
+    fun wakeupLedgerFile(context: Context): File = File(context.applicationContext.filesDir, "terminal-job-wakeup.json")
+
     @Synchronized
     fun backgroundJobs(context: Context): BackgroundTerminalJobs {
         val app = context.applicationContext
-        return backgroundJobs ?: BackgroundTerminalJobs(
-            supervisor = DetachedTaskSupervisor(AndroidAgentLogger, DetachedTaskSupervisor.defaultRecordsFile(app)),
-            logger = AndroidAgentLogger,
-            acquireLease = { onStop -> AgentExecutionService.acquire(app, "terminal-background-commands", onStop = onStop) },
-            releaseLease = { AgentExecutionService.release("terminal-background-commands") },
-            onCompleted = { BackgroundCommandNotification.show(app, it) },
-            completionNotificationsEnabled = { app.getSystemService(android.app.NotificationManager::class.java).areNotificationsEnabled() },
-        ).also { backgroundJobs = it }
+        return backgroundJobs ?: run {
+            val supervisor = DetachedTaskSupervisor(AndroidAgentLogger, DetachedTaskSupervisor.defaultRecordsFile(app))
+            val wakeup = BackgroundJobWakeup(
+                context = app,
+                logger = AndroidAgentLogger,
+                ledgerFile = wakeupLedgerFile(app),
+                enabled = { io.github.mangi.eta.config.Prefs.isJobWakeupEnabled() },
+                acquireLease = { id, onStop -> AgentExecutionService.acquire(app, id, onStop = onStop) },
+                releaseLease = { id -> AgentExecutionService.release(id) },
+                notifyRunning = { task, watched -> JobWakeupNotifications.showRunning(app, task, watched) },
+                notifyFinished = { task, finish -> JobWakeupNotifications.showFinished(app, task, finish) },
+                notifyChainLimit = { task, globalLimit -> JobWakeupNotifications.showChainLimit(app, task, globalLimit) },
+                readOutputTail = { task, maxBytes ->
+                    // 读出的原始文本由 JobWakeupPolicy 统一剥控制序列并按字符裁剪。
+                    BackgroundCommandNotification.logTail(task, maxBytes, JobWakeupPolicy.OUTPUT_TAIL_CHARS)
+                },
+                // 把 Runtime 的真实结果透出来：通知终态要区分"处理完"与"跑挂了"。
+                runWakeup = { request ->
+                    io.github.mangi.eta.agent.runtime.AgentRuntimeClient(app, AndroidAgentLogger).run(request) { }
+                },
+            )
+            BackgroundTerminalJobs(
+                supervisor = supervisor,
+                logger = AndroidAgentLogger,
+                acquireLease = { onStop -> AgentExecutionService.acquire(app, "terminal-background-commands", onStop = onStop) },
+                releaseLease = { AgentExecutionService.release("terminal-background-commands") },
+                onCompleted = { BackgroundCommandNotification.show(app, it) },
+                // 任务结束的自动唤醒：与"发通知"各走一条通路，互不影响。
+                onCompletedWakeup = wakeup::onJobFinished,
+                completionNotificationsEnabled = { app.getSystemService(android.app.NotificationManager::class.java).areNotificationsEnabled() },
+                // 任务宿主关闭时连带关掉唤醒宿主：不留一个还能起无人值守 run 的孤儿线程。
+                closeWakeup = wakeup::close,
+            ).also { jobs -> backgroundJobs = jobs }
+        }
     }
 
     fun acquireUserTask(id: String, onStop: () -> Unit): Boolean =

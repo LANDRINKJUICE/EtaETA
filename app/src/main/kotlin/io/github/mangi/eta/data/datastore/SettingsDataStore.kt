@@ -73,6 +73,57 @@ internal object SettingsDataStore {
         dataStore.edit { it[WEB_TOOLS_SETTINGS] = speechJson.encodeToString(settings) }
     }
 
+    /**
+     * 读取网页设置的**原始 JSON**（从未写过时为 null）。
+     *
+     * 与 [webToolsSettingsFlow] 的区别：这里不吞解析失败、不回落默认值。调用方据此区分
+     * "还没配过"（可以按默认值起手）与"配过但坏了"（必须拒绝写入，而不是拿默认值覆盖掉
+     * 用户原有可能只是暂时读不出来的配置）。
+     */
+    suspend fun webToolsSettingsRaw(): String? {
+        ensureInitialized()
+        return dataStore.data.first()[WEB_TOOLS_SETTINGS]
+    }
+
+    /** 语音设置的原始 JSON；语义同 [webToolsSettingsRaw]。 */
+    suspend fun speechSettingsRaw(): String? {
+        ensureInitialized()
+        return dataStore.data.first()[SPEECH_SETTINGS]
+    }
+
+    /**
+     * 在 `dataStore.edit {}` 事务内对原始 JSON 打补丁：读到的永远是该事务内的最新值，
+     * 其它写者（设置页、Agent 工具）不会与本次读-改-写交错。
+     *
+     * @param transform 收到事务内的原始字符串（从未写过时为 null），返回要落盘的新字符串；
+     *   返回 null 表示放弃写入（存储保持原值，方法返回 false）；抛异常则事务整体失败、不落盘。
+     * @return 是否真的写入。
+     */
+    suspend fun patchWebToolsSettingsRaw(transform: (String?) -> String?): Boolean =
+        patchRaw(WEB_TOOLS_SETTINGS, transform)
+
+    /** 语音设置的事务内原始 JSON 补丁；语义同 [patchWebToolsSettingsRaw]。 */
+    suspend fun patchSpeechSettingsRaw(transform: (String?) -> String?): Boolean =
+        patchRaw(SPEECH_SETTINGS, transform)
+
+    private suspend fun patchRaw(
+        key: Preferences.Key<String>,
+        transform: (String?) -> String?,
+    ): Boolean {
+        ensureInitialized()
+        var applied = false
+        dataStore.edit { prefs ->
+            // edit{} 遇到并发写会用最新数据重跑本块，标志位必须每次重置，否则上一次尝试的结果会串味。
+            applied = false
+            val updated = transform(prefs[key])
+            if (updated != null) {
+                prefs[key] = updated
+                applied = true
+            }
+        }
+        return applied
+    }
+
     fun subagentSettingsFlow(): Flow<SubagentSettings> {
         ensureInitialized()
         return dataStore.data

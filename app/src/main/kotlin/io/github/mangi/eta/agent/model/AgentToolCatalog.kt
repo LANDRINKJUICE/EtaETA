@@ -28,6 +28,8 @@ internal object AgentToolCatalog {
          * 也仍会独立校验开关，形成双保险。
          */
         proactiveNotify: Boolean = true,
+        /** 后台任务失败自动唤醒开关：关掉时 terminal_job 不再宣称"失败会被接手"（审查 m7）。 */
+        jobWakeup: Boolean = true,
         capabilities: AgentToolCapabilities = AgentToolCapabilities(rootAvailable = true),
         localWebSearch: Boolean = true,
         disabledTools: Set<String> = emptySet(),
@@ -58,7 +60,7 @@ internal object AgentToolCatalog {
             if (selfTools) AgentSelfToolCatalog.appendTo(tools)
             if (terminalTools) {
                 AgentFileVisionToolCatalog.appendTo(tools)
-                AgentTerminalToolCatalog.appendTo(tools)
+                AgentTerminalToolCatalog.appendTo(tools, jobWakeup = jobWakeup)
                 AgentFileToolCatalog.appendTo(tools)
             }
         }).let { projected ->

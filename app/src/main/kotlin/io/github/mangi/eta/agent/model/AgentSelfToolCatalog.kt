@@ -102,7 +102,66 @@ internal object AgentSelfToolCatalog {
                 ),
             )
         appendModelTools(tools)
+        appendPrefTools(tools)
         appendSkillTools(tools)
+    }
+
+    /**
+     * 网页搜索与读取、语音与朗读、Linux 工具环境三类设置域。
+     *
+     * 与 `eta_set_config`（工具组开关）分开：那边的键是布尔开关，这边的键有类型、枚举、
+     * URL 与加密凭据，语义完全不同，合成一个工具会让 schema 说不清。
+     */
+    private fun appendPrefTools(tools: JSONArray) {
+        tools
+            .put(
+                AgentToolSchema.function(
+                    name = "eta_prefs_list",
+                    description = "列出 Eta 可管理的设置键（网页搜索与读取 / 语音与朗读 / Linux 工具环境）：每项的键名、类型、当前值、可选值、存储位置与说明。凭据类值已脱敏。可用 domain 只列某一个域（web / speech / linux）。",
+                    parameters = JSONObject()
+                        .put("type", "object")
+                        .put(
+                            "properties",
+                            JSONObject().put(
+                                "domain",
+                                JSONObject()
+                                    .put("type", "string")
+                                    .put("enum", JSONArray().put("web").put("speech").put("linux"))
+                                    .put("description", "可选，只列指定域。"),
+                            ),
+                        ),
+                ),
+            )
+            .put(
+                AgentToolSchema.function(
+                    name = "eta_prefs_get",
+                    description = "按 key 读取一个已登记的 Eta 设置键的当前值、类型、可选值与存储位置；凭据类返回脱敏值（前 4 后 4）。键名先用 eta_prefs_list 查。",
+                    parameters = JSONObject()
+                        .put("type", "object")
+                        .put("properties", JSONObject().put("key", JSONObject().put("type", "string")))
+                        .put("required", JSONArray().put("key")),
+                ),
+            )
+            .put(
+                AgentToolSchema.function(
+                    name = "eta_prefs_set",
+                    description = "写入一个已登记的 Eta 设置键（与设置页同一份存储），自动做类型校验并读回验证；凭据走加密仓库，返回脱敏确认值。只接受 eta_prefs_list 列出的键，传空串可清除凭据或文本值。服务地址、凭据、Linux 执行环境这几类键（eta_prefs_list 里 requires_confirmation=true）会先弹危险操作确认卡，等用户确认后才写入。",
+                    parameters = JSONObject()
+                        .put("type", "object")
+                        .put(
+                            "properties",
+                            JSONObject()
+                                .put("key", JSONObject().put("type", "string"))
+                                .put(
+                                    "value",
+                                    JSONObject()
+                                        .put("type", "string")
+                                        .put("description", "新值；布尔写 true/false，数字写数值字符串，枚举写可选值之一。"),
+                                ),
+                        )
+                        .put("required", JSONArray().put("key").put("value")),
+                ),
+            )
     }
 
     private fun appendModelTools(tools: JSONArray) {

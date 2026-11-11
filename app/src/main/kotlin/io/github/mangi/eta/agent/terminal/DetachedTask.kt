@@ -18,6 +18,10 @@ internal data class DetachedTask(
     val commandTask: Boolean = false,
     val description: String = "",
     val timeoutMs: Long = 0,
+    /** 盯梢任务：成功结束时也允许唤醒 Agent（见 [JobWakeupPolicy]）。 */
+    val watch: Boolean = false,
+    /** 由自动唤醒产生的 run 启动：其完成永不触发新的唤醒（防自增殖）。 */
+    val wakeupOrigin: Boolean = false,
     val completedAt: Long? = null,
     val exitCode: Int? = null,
     val endReason: String? = null,
@@ -58,6 +62,8 @@ internal fun DetachedTask.toRecordJson(): JSONObject = JSONObject()
     .put("command_task", commandTask)
     .put("description", description)
     .put("timeout_ms", timeoutMs)
+    .put("watch", watch)
+    .put("wakeup_origin", wakeupOrigin)
     .put("completed_at", completedAt ?: JSONObject.NULL)
     .put("exit_code", exitCode ?: JSONObject.NULL)
     .put("end_reason", endReason ?: JSONObject.NULL)
@@ -83,6 +89,8 @@ internal fun JSONObject.toDetachedTask(): DetachedTask = DetachedTask(
     commandTask = optBoolean("command_task", false),
     description = optString("description"),
     timeoutMs = optLong("timeout_ms", 0),
+    watch = optBoolean("watch", false),
+    wakeupOrigin = optBoolean("wakeup_origin", false),
     completedAt = if (isNull("completed_at")) null else getLong("completed_at"),
     exitCode = if (isNull("exit_code")) null else getInt("exit_code"),
     endReason = if (isNull("end_reason")) null else getString("end_reason"),
@@ -96,3 +104,21 @@ internal val DetachedTask.commandStatus: String get() = when {
     exitCode == 0 -> "completed"
     else -> "failed"
 }
+
+/**
+ * 转成 [JobWakeupPolicy] 的判定输入。
+ *
+ * 放在这里而不是判定侧：任务记录是唯一事实来源，字段名变化时编译器会在这里报错，
+ * 不会让某条判定悄悄退化成"永远不唤醒"。
+ */
+internal fun DetachedTask.toWakeupSignal(): JobWakeupPolicy.Signal = JobWakeupPolicy.Signal(
+    jobId = id,
+    description = description,
+    command = command,
+    cwd = cwd,
+    environment = environment.wireName,
+    exitCode = exitCode,
+    endReason = endReason,
+    watch = watch,
+    wakeupOrigin = wakeupOrigin,
+)

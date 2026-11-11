@@ -6,7 +6,11 @@ import org.json.JSONObject
 internal object AgentTerminalToolCatalog {
     val names = setOf("terminal", "terminal_job", "terminal_daemon")
 
-    fun appendTo(tools: JSONArray) {
+    /**
+     * @param jobWakeup 设置页"后台任务完成自动唤醒"开关的当前值。关掉时不能再宣告
+     *   "失败会自动被接手"，否则模型会把失败当成有人兜底而放任不管（审查 m7）。
+     */
+    fun appendTo(tools: JSONArray, jobWakeup: Boolean = true) {
         tools.put(
             AgentToolSchema.function(
                 name = "terminal",
@@ -26,6 +30,7 @@ internal object AgentTerminalToolCatalog {
             AgentToolSchema.function(
                 name = "terminal_job",
                 description = "启动可在本次回复结束后继续运行的后台命令。start 立即返回 job_id，完成或失败时发送系统通知；返回的 completion_notifications_enabled 表示当前通知是否可用。" +
+                    wakeupPolicy(jobWakeup) +
                     "list 查看任务，read 查看当前状态和日志，wait 在需要结果时等待，stop 终止任务。" +
                     "日志保存为文件，read 返回 output_path；预览截断时可用 read_file 分页读取完整日志。" +
                     "后台命令使用独立 Shell；不继承 terminal 会话。启动后可继续其他工作或回复用户，不必轮询等待。",
@@ -33,8 +38,13 @@ internal object AgentTerminalToolCatalog {
                     executionProperties()
                         .put("action", action("start", "list", "read", "wait", "stop"))
                         .put("command", text("start 要执行的完整命令。"))
-                        .put("description", text("可选的简短任务说明，用于列表和完成通知。"))
+                        .put("description", text("可选的简短任务说明，用于列表、完成通知与自动唤醒时的上下文。"))
                         .put("timeout_ms", integer("start 的命令运行上限，默认 600000 毫秒；0 表示不设超时。"))
+                        .put("watch", bool(if (jobWakeup) {
+                            "start 是否盯梢这条任务：默认 false，只在失败/超时/中断时才会自动唤醒；设为 true 后正常结束也会唤醒一轮 agent 查看结果。"
+                        } else {
+                            "start 是否盯梢这条任务：当前已关闭自动唤醒，该参数不会产生任何唤醒，只在任务记录里留痕。"
+                        }))
                         .put("job_id", text("start 或 list 返回的任务 ID；read、wait、stop 使用。"))
                         .put("active_only", bool("list 是否只返回运行中的任务，默认 true。"))
                         .put("max_bytes", integer("read 返回的日志尾部字节数，默认 16000，最多 65536；完整日志保存在 output_path。"))
@@ -58,6 +68,15 @@ internal object AgentTerminalToolCatalog {
                 ),
             ),
         )
+    }
+
+    /** "失败自动唤醒"的宣告片段：开关为开/关两套说法，避免模型对没人兜底的失败掉以轻心。 */
+    private fun wakeupPolicy(jobWakeup: Boolean): String = if (jobWakeup) {
+        "任务失败、超时或被中断时，Eta 会自动唤醒一轮 agent 来分析原因并处理（成功不打扰，watch=true 时成功也会唤醒）；" +
+            "从自动唤醒那一轮里新起的任务不会再次触发唤醒。"
+    } else {
+        "用户已关闭自动唤醒：任务失败、超时或被中断时不会有人接手，也不会发唤醒通知，需要自己用 list/read 或等下一轮查看结果；" +
+            "这次运行里不要假设失败会被别人处理。"
     }
 
     private fun executionProperties(): JSONObject = JSONObject()

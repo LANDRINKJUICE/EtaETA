@@ -124,6 +124,9 @@ internal fun toolDisplayNameResource(name: String): Int? = when (name) {
     "eta_skill_list" -> R.string.tool_eta_skill_list
     "eta_skill_set_enabled" -> R.string.tool_eta_skill_set_enabled
     "eta_skill_delete" -> R.string.tool_eta_skill_delete
+    "eta_prefs_list" -> R.string.tool_eta_prefs_list
+    "eta_prefs_get" -> R.string.tool_eta_prefs_get
+    "eta_prefs_set" -> R.string.tool_eta_prefs_set
     "set_alarm" -> R.string.tool_set_alarm
     "set_timer" -> R.string.tool_set_timer
     "device_status" -> R.string.tool_device_status

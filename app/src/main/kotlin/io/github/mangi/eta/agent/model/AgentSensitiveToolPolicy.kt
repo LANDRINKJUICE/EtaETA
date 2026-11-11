@@ -62,5 +62,8 @@ internal object AgentSensitiveToolPolicy {
         "eta_skill_list",
         "eta_skill_set_enabled",
         "eta_skill_delete",
+        "eta_prefs_list",
+        "eta_prefs_get",
+        "eta_prefs_set",
     )
 }

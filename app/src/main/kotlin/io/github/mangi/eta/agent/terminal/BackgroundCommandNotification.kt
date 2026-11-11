@@ -22,7 +22,8 @@ import io.github.mangi.eta.ui.MainActivity
  * 该通知的本地化留作后续与测试同步更新，不在此轮硬改。
  */
 internal object BackgroundCommandNotification {
-    private const val CHANNEL = "eta_background_commands"
+    /** 与自动唤醒通知共用同一条 channel：语义同属"后台命令结果"，避免多出一条用户要单独静音的 channel。 */
+    internal const val CHANNEL = "eta_background_commands"
     private const val NOTIFICATION_ID = 1124
 
     fun show(context: Context, task: DetachedTask) {
@@ -84,23 +85,34 @@ internal object BackgroundCommandNotification {
     }
 
     /** 与 DetachedTaskSupervisor 相同的 wire 路径映射，避免 App 进程读到不存在的容器路径。 */
-    private fun hostLogPath(task: DetachedTask): String {
+    internal fun hostLogPath(task: DetachedTask): String {
         val wire = task.logPath
         if (!task.environment.isLinux || !wire.startsWith("/workspace/daemon")) return wire
         val root = task.hostWorkspace?.let { "$it/daemon" } ?: "/data/local/tmp/eta/daemon"
         return root + wire.removePrefix("/workspace/daemon")
     }
 
-    /** 只读日志尾部 8KB，Linux 任务先映射到宿主路径；失败不影响通知。 */
-    private fun logTail(path: String): String = runCatching {
+    /** 通知里展示的日志尾部：默认只读 8KB、截最后 1200 字符。 */
+    private fun logTail(path: String): String = logTail(path, maxBytes = 8 * 1024, maxChars = 1_200)
+
+    /**
+     * 只读日志尾部；Linux 任务先映射到宿主路径。
+     *
+     * 上限由调用方给：通知只需要一小段预览，而自动唤醒要把最后 [JobWakeupPolicy.OUTPUT_TAIL_CHARS]
+     * 个字符贴进 prompt，两者共用同一份读取实现，避免两套截断语义漂移。读取失败返回空串。
+     */
+    internal fun logTail(task: DetachedTask, maxBytes: Int, maxChars: Int): String =
+        logTail(hostLogPath(task), maxBytes, maxChars)
+
+    private fun logTail(path: String, maxBytes: Int, maxChars: Int): String = runCatching {
         val file = java.io.File(path)
         if (!file.isFile || file.length() == 0L) return@runCatching ""
         java.io.RandomAccessFile(file, "r").use { reader ->
-            val start = (reader.length() - 8 * 1024).coerceAtLeast(0)
+            val start = (reader.length() - maxBytes.coerceAtLeast(1)).coerceAtLeast(0)
             reader.seek(start)
             val bytes = ByteArray((reader.length() - start).toInt())
             reader.readFully(bytes)
-            String(bytes, Charsets.UTF_8).takeLast(1200).trim()
+            String(bytes, Charsets.UTF_8).takeLast(maxChars.coerceAtLeast(1)).trim()
         }
     }.getOrDefault("")
 }

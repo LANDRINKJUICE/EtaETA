@@ -151,6 +151,13 @@ internal class AgentLocalTools(
      * 本次 run 是否由自动任务触发。无人值守的 run 里禁止再创建自动任务，避免任务自增殖（审查 M3②）。
      */
     private val scheduledRun: Boolean = false,
+    /**
+     * 本次 run 是否由后台任务失败后的自动唤醒触发。
+     *
+     * 唤醒 run 通常就是为了修复失败任务而存在的，它自己起的 terminal_job 必须被标记来源，
+     * 否则「失败 -> 唤醒 -> 唤醒 run 又起一个会失败的 job -> 再唤醒」会绕开所有防循环计数。
+     */
+    private val jobWakeupRun: Boolean = false,
     browserSession: AgentBrowserSession? = null,
 ) : AgentModelClient.ToolExecutor, AutoCloseable {
 
@@ -193,6 +200,7 @@ internal class AgentLocalTools(
             rootAvailable = rootAvailable,
         ),
         linuxSharedMountsProvider = { SharedFolderMounts.current() },
+        jobWakeupOrigin = jobWakeupRun,
     )
 
     /** 判定相对路径时使用的默认工作目录（本次运行的默认工作区）。 */
@@ -296,7 +304,12 @@ internal class AgentLocalTools(
             // 用户在聊天流里点选；任何"没等到明确允许"的分支都只会返回拒绝。
             val riskGate = toolRiskGate
             if (riskGate != null) {
-                when (val gate = riskGate(toolCall.name, args, approvalDefaultCwd)) {
+                // 闸门自身故障（含 release 包混淆后才可能出现的 NoClassDefFoundError）必须被收口成
+                // 一个可检索的拒绝码，而不是把每次工具调用都变成不透明的 TOOL_ERROR。
+                val decision = ToolExecutionGuard.check(toolCall.name) {
+                    riskGate(toolCall.name, args, approvalDefaultCwd)
+                }
+                when (val gate = decision) {
                     ToolExecutionDecision.Allow -> Unit
                     is ToolExecutionDecision.Reject -> return@runCatching textResult(
                         errorResult(
@@ -440,7 +453,10 @@ internal class AgentLocalTools(
                         is ActiveDisplayUnavailableException -> "DISPLAY_UNAVAILABLE"
                         else -> "TOOL_ERROR"
                     },
-                    message = throwable.message ?: throwable.javaClass.simpleName
+                    // 兜底：message 为空时不要只回一个混淆后的短类名（release 包 R8 之后形如 `wg5`，
+                    // 线上完全不可诊断）。这里固定带上工具名与完整类名，便于对照 mapping.txt。
+                    message = throwable.message?.takeIf(String::isNotBlank)
+                        ?: "工具 ${toolCall.name} 内部错误（无错误信息）：${throwable.javaClass.name}"
                 )
             )
         }.let { result ->

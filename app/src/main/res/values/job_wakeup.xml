@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  后台任务（terminal_job）失败后自动唤醒 Agent 的文案。
+  独立成文件而不塞进 strings.xml / notify_user.xml：那两处已有其它未提交轮次在改，独立文件避免同处冲突。
+-->
+<resources>
+    <!-- 设置开关 -->
+    <string name="settings_job_wakeup">Auto-handle failed background tasks</string>
+    <string name="settings_job_wakeup_summary">When a background command started from a chat or a scheduled task fails, times out or is interrupted, Eta wakes the agent with the task, its exit status and the tail of its output to diagnose and fix it. Success stays quiet; risky actions still wait for your confirmation.</string>
+
+    <!-- 唤醒通知 -->
+    <string name="job_wakeup_title">Eta is auto-handling a failed background task: %1$s</string>
+    <string name="job_wakeup_title_watch">Eta is handling a watched background task: %1$s</string>
+    <string name="job_wakeup_body_suffix">Waking the agent to find the cause and fix it; you will see the report here.</string>
+    <string name="job_wakeup_body_suffix_watch">The job finished as watched; waking the agent to look at the result.</string>
+    <string name="job_wakeup_chain_title">Background task keeps failing, auto-handling stopped: %1$s</string>
+    <string name="job_wakeup_chain_body">Handled automatically %1$d rounds without success, so Eta stopped waking the agent. Check the task log and handle it yourself.</string>
+    <string name="job_wakeup_reason_global_limit">Eta already auto-handled 2 background tasks in the last 10 minutes, so this one was skipped. Check the task log and handle it yourself.</string>
+    <string name="job_wakeup_status_exit">exit code %1$d</string>
+    <string name="job_wakeup_status_reason">ended: %1$s</string>
+    <!-- 终态（与"正在自动处理"同一通知 ID 原地更新） -->
+    <string name="job_wakeup_done_title">Background task auto-handled: %1$s</string>
+    <string name="job_wakeup_done_body">The agent finished this round. Open the conversation to see what it did.</string>
+    <string name="job_wakeup_failed_title">Auto-handling failed: %1$s</string>
+    <string name="job_wakeup_failed_body">This round ended in an error, so nothing is confirmed fixed. Open the conversation to see where it stopped.</string>
+    <string name="job_wakeup_timeout_title">Auto-handling timed out: %1$s</string>
+    <string name="job_wakeup_timeout_body">This round exceeded the time limit and was cancelled without a conclusion. Check the task log and handle it yourself.</string>
+    <string name="job_wakeup_skipped_title">Not auto-handled: %1$s</string>
+    <string name="job_wakeup_skipped_body">Eta could not start this round (execution was not allowed, or the loop guard was unavailable). Check the task log and handle it yourself.</string>
+
+    <string name="job_wakeup_subtext">Background task wakeup</string>
+    <string name="job_wakeup_unknown_subject">background command %1$s</string>
+
+    <!-- 归档会话标题（点击通知后进入的那条会话） -->
+    <string name="job_wakeup_archive_title">Auto-handling: %1$s</string>
+    <string name="job_wakeup_archive_user">A background command finished, so the agent was woken to handle it.</string>
+
+    <!-- 唤醒 run 的 prompt -->
+    <string name="job_wakeup_prompt_header">[Background task wakeup] The background command below just finished, and it did not succeed. You are woken automatically to take over.</string>
+    <string name="job_wakeup_prompt_tail_label">Tail of the task output:</string>
+    <string name="job_wakeup_prompt_truncated">…(earlier output omitted)&#10;</string>
+    <string name="job_wakeup_prompt_footer">No user is online right now: nothing here is confirmed by a human. Analyse the cause and fix it. Risky actions still go through the approval gate, and an unattended confirmation times out without executing - never report something as done when it was not executed. Report back briefly when you are done. If no action is needed, just say so in one or two sentences. Jobs you start from this run will not wake the agent again.</string>
+</resources>

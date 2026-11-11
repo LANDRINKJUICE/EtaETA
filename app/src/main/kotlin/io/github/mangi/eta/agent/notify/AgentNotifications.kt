@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.media.AudioAttributes
 import android.media.RingtoneManager
+import android.net.Uri
 import android.os.Build
 import io.github.mangi.eta.R
 import io.github.mangi.eta.ui.MainActivity
@@ -51,6 +52,9 @@ internal object AgentNotifications {
         const val SCHEDULED_CONTENT = 6_010
         const val BACKGROUND_COMMAND_CONTENT = 6_020
         const val ASSISTANT_SPEECH_STOP = 6_030
+        // 后台任务自动唤醒的两个 requestCode 不在这里：它必须按任务分散（见
+        // NotificationPolicy.jobWakeupRequestCode / jobWakeupActionRequestCode，
+        // 用固定值 + FLAG_UPDATE_CURRENT 会让多条通知的会话参数互相覆盖）。
     }
 
     /** 点击通知直达任务中心（可带 tab 名，默认 APPROVALS = 待确认区）；唯一来源见 [TaskCenterDeepLink]。 */
@@ -128,6 +132,36 @@ internal object AgentNotifications {
             .setAction(ACTION_OPEN_TASK_CENTER)
             .putExtra(EXTRA_TASK_CENTER_TAB, tab)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        return PendingIntent.getActivity(
+            context, requestCode, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+    }
+
+    /**
+     * 通知主体：打开按 [source] + [conversationKey] 归档的会话。
+     *
+     * 无人值守的 run（语音、外部助手、自动任务、后台任务唤醒）不在用户的会话列表里，
+     * 但结果会归档；这是唯一能"点通知直接看到那一轮到底做了什么"的通路，
+     * 与 [AgentRuntimeService.openEtaFromResult] 的归档入口语义一致。
+     *
+     * [distinctData]：给 Intent 一个唯一 data URI。requestCode 相同 + FLAG_UPDATE_CURRENT 时，
+     * PendingIntent 只按 (requestCode, action/data/type/class/category) 区分（extras 不参与），
+     * 多条通知会互相覆盖参数；调用方除按 key 派生 requestCode 外，再用 data 兜一层。
+     */
+    fun archivedConversationIntent(
+        context: Context,
+        requestCode: Int,
+        source: String,
+        conversationKey: String,
+        distinctData: String? = null,
+    ): PendingIntent {
+        val intent = Intent(context, MainActivity::class.java)
+            .setAction(MainActivity.ACTION_OPEN_ARCHIVED_CONVERSATION)
+            .putExtra(MainActivity.EXTRA_HANDOFF_SOURCE, source)
+            .putExtra(MainActivity.EXTRA_CONVERSATION_KEY, conversationKey)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        distinctData?.takeIf(String::isNotBlank)?.let { data -> intent.data = Uri.parse(data) }
         return PendingIntent.getActivity(
             context, requestCode, intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,

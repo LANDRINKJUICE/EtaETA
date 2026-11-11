@@ -19,6 +19,9 @@ import org.json.JSONObject
  *   Eta 内、各工具组开关与 MCP 服务器的实际情况，而不是靠猜。
  * - eta_get_config / eta_set_config / eta_set_tool_enabled / eta_mcp_* 让模型直接
  *   读写自身配置，不再要求用户到设置页手动操作，也不走 GUI 点击。
+ * - eta_prefs_list / eta_prefs_get / eta_prefs_set 覆盖工具组开关以外的设置域
+ *   （网页搜索与读取、语音与朗读、Linux 工具环境），键表与取值规则见 [AgentSelfPrefsSpec]，
+ *   执行侧在 [AgentSelfPrefsTools]，写入落在设置页同一份存储上。
  *
  * 写入范围有白名单：布尔开关仅限 [Prefs.Keys.LOCAL_AGENT_KEYS]（Eta Runtime 本地
  * 裁决、不依赖 LSPosed 的键）；单工具开关走 [Prefs.setToolEnabled] 既有实现；
@@ -34,7 +37,7 @@ internal object AgentSelfTools {
         "eta_mcp_upsert",
         "eta_mcp_delete",
         "eta_mcp_refresh",
-    ) + AgentModelTools.TOOL_NAMES + AgentSkillAdminTools.TOOL_NAMES
+    ) + AgentSelfPrefsTools.TOOL_NAMES + AgentModelTools.TOOL_NAMES + AgentSkillAdminTools.TOOL_NAMES
 
     private val SWITCH_LABELS = linkedMapOf(
         Prefs.Keys.AGENT_TERMINAL_TOOLS to "terminal/file",
@@ -51,6 +54,7 @@ internal object AgentSelfTools {
     fun execute(name: String, args: JSONObject, context: android.content.Context): String = when {
         name in AgentModelTools.TOOL_NAMES -> AgentModelTools.execute(name, args)
         name in AgentSkillAdminTools.TOOL_NAMES -> AgentSkillAdminTools.execute(name, args, context)
+        name in AgentSelfPrefsTools.TOOL_NAMES -> AgentSelfPrefsTools.execute(name, args, context)
         else -> executeSelf(name, args)
     }
 
@@ -99,6 +103,8 @@ internal object AgentSelfTools {
         append(
             "你可以用 eta_get_config / eta_set_config / eta_set_tool_enabled 直接读取和修改上述配置，" +
                 "用 eta_mcp_list / eta_mcp_upsert / eta_mcp_delete / eta_mcp_refresh 管理 MCP 服务器；" +
+                "网页搜索与读取、语音与朗读、Linux 工具环境这三类设置用 eta_prefs_list 查看可管理键，" +
+                "eta_prefs_get 读取单个键，eta_prefs_set 写入（白名单制、类型校验、写后读回验证，凭据读取脱敏）；" +
                 "若这些工具不在你的可用工具列表中，说明当前会话（如子智能体或角色会话）无权使用，不要尝试调用。" +
                 "关闭开关立即生效，开启从下一轮运行生效；不需要用户去设置页手动操作，也不要用 GUI 点击设置页代替。" +
                 "开关为 off 的工具组即使声明也无法执行；需要开启时经用户同意后用 eta_set_config 打开。",

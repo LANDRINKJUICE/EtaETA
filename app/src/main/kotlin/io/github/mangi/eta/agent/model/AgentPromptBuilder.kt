@@ -20,8 +20,12 @@ internal object AgentPromptBuilder {
         rootAvailable: Boolean = false,
         roleplayContext: RoleplayRunContext? = null,
         executionContext: TerminalExecutionContext? = null,
+        /** 后台任务失败自动唤醒开关：关掉时系统提示里不得再宣称"失败会被接手"（审查 m7）。 */
+        jobWakeupEnabled: Boolean = true,
     ): JSONArray {
-        val messages = buildSystemMessages(config, skillContext, memoryContext, rootAvailable, roleplayContext, executionContext)
+        val messages = buildSystemMessages(
+            config, skillContext, memoryContext, rootAvailable, roleplayContext, executionContext, jobWakeupEnabled,
+        )
         history.forEach { item ->
             runCatching { AgentConversationCodec.toJsonObject(item) }.getOrNull()?.let(messages::put)
         }
@@ -41,6 +45,8 @@ internal object AgentPromptBuilder {
         rootAvailable: Boolean,
         roleplayContext: RoleplayRunContext? = null,
         executionContext: TerminalExecutionContext? = null,
+        /** 后台任务失败自动唤醒开关；与工具 schema 的宣告必须同步（审查 m7）。 */
+        jobWakeupEnabled: Boolean = true,
     ): JSONArray {
         val messages = JSONArray()
         if (roleplayContext == null && config.systemPrompt.isNotBlank()) {
@@ -122,6 +128,11 @@ internal object AgentPromptBuilder {
                     rootInstructions(rootAvailable) +
                     "普通命令调用 terminal，只需 command；单次命令结束后进程会回收，不要用 & 起后台进程；持续 Shell 工作可 action=open 后用 session_id 复用，目录变化用会话内的 cd。" +
                     "希望回复后继续运行的命令使用 terminal_job：start 提交任务，完成时会通知用户；list/read 查看进度，确实依赖结果时再 wait，stop 终止。日志路径可用于分页读取完整输出。跨任务服务使用 terminal_daemon。" +
+                    (if (jobWakeupEnabled) {
+                        "任务失败、超时或被中断时 Eta 会自动唤醒一轮 agent 接手处理（成功不打扰，start 时传 watch=true 则成功也唤醒）；不要靠反复 wait 轮询长时间任务。"
+                    } else {
+                        "用户已关闭自动唤醒：任务失败不会被交给 agent 处理，需要自己用 list/read 或等下一轮查看结果；不要靠反复 wait 轮询长时间任务。"
+                    }) +
                     "后台服务仍可能退出、被系统回收或随设备重启结束，以实际状态为准。" +
                     "environment=android 操作 Android 宿主系统与设备（如 pm/cmd/am/dumpsys/settings/getprop/setprop/svc/appops/wm/input/logcat、查看 Android 进程、或在 Root 下检查 /data/data 应用私有目录），提供系统 Toybox（Root 下优先启用 Magisk/KernelSU/APatch 的 BusyBox ash），但无包管理器与完整开发运行时；" +
                     "environment=linux 使用设置中选定的完整 Linux 发行版，凡涉及代码开发、git 拉取/提交/diff、编写或运行 Python/Node.js/复杂 Shell 脚本、curl/jq/rg/fd/sqlite3 数据处理、安装依赖包、编译构建、APK 逆向分析或启动开发服务，终端与文件工具均应显式传 environment=\"linux\"。" +

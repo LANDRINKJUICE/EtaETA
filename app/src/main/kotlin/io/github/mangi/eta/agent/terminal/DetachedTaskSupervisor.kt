@@ -59,6 +59,8 @@ internal class DetachedTaskSupervisor(
         commandTask: Boolean = false,
         description: String = "",
         timeoutMs: Long = 0,
+        watch: Boolean = false,
+        wakeupOrigin: Boolean = false,
     ): DaemonStartResult {
         if (identity != "root" && identity != "user") return DaemonStartResult.Failed("INVALID_ARGUMENT", "执行身份无效")
         if (identity == "root" && !rootAvailable()) return DaemonStartResult.Failed("ROOT_REQUIRED", "Root 授权不可用")
@@ -73,7 +75,7 @@ internal class DetachedTaskSupervisor(
         }
         val id = (if (commandTask) "job_" else "dm_") + UUID.randomUUID().toString().take(8)
         val token = UUID.randomUUID().toString().replace("-", "")
-        if (commandTask) return startCommand(id, command, cwd, identity, environment, description, timeoutMs)
+        if (commandTask) return startCommand(id, command, cwd, identity, environment, description, timeoutMs, watch, wakeupOrigin)
         if (identity == "user") return startUserDaemon(id, token, command, cwd, environment)
         val wireDir = wireDaemonDir(environment)
         val wirePidFile = "$wireDir/$id.pid"
@@ -210,7 +212,8 @@ internal class DetachedTaskSupervisor(
     }
 
     private fun startCommand(id: String, command: String, cwd: String, identity: String,
-        environment: TerminalEnvironment, description: String, timeoutMs: Long): DaemonStartResult {
+        environment: TerminalEnvironment, description: String, timeoutMs: Long,
+        watch: Boolean, wakeupOrigin: Boolean): DaemonStartResult {
         val workspace = if (identity == "user") TerminalRuntime.userWorkspacePath else TerminalRuntime.ROOT_WORKSPACE_PATH
         val wireDir = when {
             environment.isLinux -> LINUX_DAEMON_DIR
@@ -231,7 +234,8 @@ internal class DetachedTaskSupervisor(
         }
         val task = DetachedTask(id, ownership.pid, ownership.token, command, cwd, identity, environment,
             logPath, System.currentTimeMillis(), LinuxEnvironmentPaths.backendOf(rootfsPath(environment)), workspace,
-            commandTask = true, description = description, timeoutMs = timeoutMs, isolatedGroup = ownership.isolatedGroup)
+            commandTask = true, description = description, timeoutMs = timeoutMs, isolatedGroup = ownership.isolatedGroup,
+            watch = watch, wakeupOrigin = wakeupOrigin)
         if (!synchronized(RECORDS_LOCK) { saveTasksLocked(loadTasksLocked() + task) }) {
             oneShotSupervisor.terminateAndReap(process)
             oneShotSupervisor.unregisterProcess(process)

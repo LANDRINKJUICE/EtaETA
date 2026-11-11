@@ -145,6 +145,16 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      # release 包经过 R8 混淆；mapping.txt 与 APK 同批归档，线上堆栈才可还原。
+      - name: 上传 Release mapping.txt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: eta-release-mapping
+          path: app/build/outputs/mapping/release/mapping.txt
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
+
   # 构建 job 持有签名 Secrets，写 Release 的权限单独放在这里，且只在发版标签上运行
   draft-release:
     name: 创建 Release 草稿

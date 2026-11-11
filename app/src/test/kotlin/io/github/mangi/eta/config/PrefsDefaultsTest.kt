@@ -32,6 +32,7 @@ class PrefsDefaultsTest {
                 Prefs.Keys.AGENT_MEMORY_DISTILL_ENABLED to false,
                 Prefs.Keys.AGENT_MEMORY_SEMANTIC_RECALL_ENABLED to false,
                 Prefs.Keys.AGENT_USAGE_STATS_ENABLED to true,
+                Prefs.Keys.AGENT_JOB_WAKEUP_ENABLED to true,
             ),
             Prefs.Keys.BOOLEAN_DEFAULTS,
         )
@@ -58,6 +59,7 @@ class PrefsDefaultsTest {
                 Prefs.Keys.AGENT_MEMORY_DISTILL_ENABLED,
                 Prefs.Keys.AGENT_MEMORY_SEMANTIC_RECALL_ENABLED,
                 Prefs.Keys.AGENT_USAGE_STATS_ENABLED,
+                Prefs.Keys.AGENT_JOB_WAKEUP_ENABLED,
             ),
             Prefs.Keys.LOCAL_AGENT_KEYS,
         )

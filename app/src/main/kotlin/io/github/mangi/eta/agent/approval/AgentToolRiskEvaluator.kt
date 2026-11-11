@@ -1,5 +1,7 @@
 package io.github.mangi.eta.agent.approval
 
+import io.github.mangi.eta.agent.self.AgentSelfPrefsRules
+import io.github.mangi.eta.agent.self.AgentSelfPrefsSpec
 import java.util.Locale
 import org.json.JSONObject
 
@@ -57,6 +59,7 @@ internal object AgentToolRiskEvaluator {
             "set_setting" -> analyzeSetting(args)
             "app_state_control" -> analyzeAppState(args)
             "schedule_task" -> analyzeScheduleTask(args)
+            "eta_prefs_set" -> analyzePrefsSet(args)
             else -> emptyList()
         }
         if (findings.isEmpty()) return ToolRiskVerdict.Safe
@@ -148,6 +151,32 @@ internal object AgentToolRiskEvaluator {
                 ToolRiskCategory.AGENT_SCHEDULED_TASK_CREATE,
                 ToolRiskLevel.MEDIUM,
                 "创建自动任务「${title.boundedRiskSubject()}」：$prompt",
+            ),
+        )
+    }
+
+    /**
+     * Agent 写入 Eta 自身设置（`eta_prefs_set`）。
+     *
+     * 只有"改了以后会发生什么"这件事需要用户点头的键才拦：服务地址（请求与凭据会发往新地址）、
+     * 凭据（写/清）、Linux 执行环境（所有终端命令换环境）。普通布尔/枚举（自动朗读、语音识别开关、
+     * 音色等）放行，否则每改一个小开关都要弹卡，用户会习惯性点同意。
+     *
+     * 判定规则与执行侧共用 [io.github.mangi.eta.agent.self.AgentSelfPrefsRules.confirmationReason]，
+     * 不存在"两处各写一套"的漂移；未登记的键交给执行侧按白名单拒绝，这里不制造额外噪音。
+     */
+    private fun analyzePrefsSet(args: JSONObject): List<RiskFinding> {
+        val key = args.optString("key").trim()
+        if (key.isEmpty()) return emptyList()
+        val spec = AgentSelfPrefsSpec.find(key) ?: return emptyList()
+        val reason = AgentSelfPrefsRules.confirmationReason(spec) ?: return emptyList()
+        val value = args.opt("value")?.let { if (it == JSONObject.NULL) "" else it.toString() }.orEmpty()
+        val shown = if (spec.secret) "（凭据，已隐藏）" else value.boundedRiskSubject()
+        return listOf(
+            RiskFinding(
+                ToolRiskCategory.AGENT_SETTINGS_WRITE,
+                ToolRiskLevel.MEDIUM,
+                "修改 Eta 设置 $key = $shown：$reason",
             ),
         )
     }

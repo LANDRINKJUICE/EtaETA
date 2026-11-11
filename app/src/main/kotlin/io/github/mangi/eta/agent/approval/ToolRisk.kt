@@ -89,6 +89,14 @@ internal enum class ToolRiskCategory(val wireValue: String) {
      * 因此单独成一类风险，确认卡的文案也单独说明。
      */
     AGENT_SCHEDULED_TASK_CREATE("agent_scheduled_task_create"),
+
+    /**
+     * Agent 写入 Eta 自身的敏感设置（服务地址、凭据、Linux 执行环境）。
+     *
+     * 这些键不会碰系统分区，但会改变"之后的请求往哪发、用谁的凭据、命令在哪个环境里跑"，
+     * 属于用户必须当面点头的一类；判定规则见 [io.github.mangi.eta.agent.self.AgentSelfPrefsRules.confirmationReason]。
+     */
+    AGENT_SETTINGS_WRITE("agent_settings_write"),
 }
 
 /** 单条命中记录：类别 + 等级 + 具体对象（路径、属性键、命令片段）。 */

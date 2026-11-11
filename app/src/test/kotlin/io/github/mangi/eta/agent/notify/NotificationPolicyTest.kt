@@ -83,6 +83,7 @@ class NotificationPolicyTest {
                 )
             }
         }
+        assertTrue(NotificationPolicy.reservedSegments().contains(9_602..9_651))
     }
 
     @Test
@@ -90,6 +91,19 @@ class NotificationPolicyTest {
         val id = NotificationPolicy.APPROVAL_PENDING_ID
         assertTrue(id in 9_300..9_349 == false)
         assertFalse((0 until 400).map { NotificationPolicy.proactiveId("k$it") }.contains(id))
+    }
+
+    @Test
+    fun `job wakeup ids land in their own segment and stay stable per job`() {
+        val existing = (1_107..1_108) + 1_124 + (4_203..4_204) + (9_000..9_290) + (9_300..9_349) +
+            9_400 + (9_500..9_501) + (9_600..9_601)
+        val ids = (0 until 400).map { NotificationPolicy.jobWakeupId("job_$it") }
+        ids.forEach { id ->
+            assertTrue("id=$id 应落在 9602..9651", id in 9_602..9_651)
+            assertFalse("id=$id 不得撞既有段", id in existing)
+        }
+        // 同一任务反复唤醒复用同一 ID（原地更新而非堆叠）。
+        assertEquals(NotificationPolicy.jobWakeupId("job_ab12"), NotificationPolicy.jobWakeupId("job_ab12"))
     }
 
     // ---- 优先级 / channel ----
@@ -413,5 +427,30 @@ class NotificationPolicyTest {
     fun `slow refresh interval is five seconds and still at least one second`() {
         assertEquals(5_000L, NotificationPolicy.SLOW_REFRESH_INTERVAL_MILLIS)
         assertTrue(NotificationPolicy.SLOW_REFRESH_INTERVAL_MILLIS >= NotificationPolicy.MIN_REFRESH_INTERVAL_MILLIS)
+    }
+
+    @Test
+    fun `job wakeup request codes stay in their own segments and never collide`() {
+        // 既有 requestCode：执行服务 20、执行结果 1107/1108、待确认 6001/6002、
+        // 自动任务 6010、后台命令 6020、语音停止 6030。
+        val existing = setOf(20, 1_107, 1_108, 6_001, 6_002, 6_010, 6_020, 6_030)
+        val bodies = mutableSetOf<Int>()
+        val actions = mutableSetOf<Int>()
+        (0 until 400).map { "job_$it" }.forEach { job ->
+            val body = NotificationPolicy.jobWakeupRequestCode(job)
+            val action = NotificationPolicy.jobWakeupActionRequestCode(job)
+            assertTrue("body=$body 应落在 6200..6249", body in 6_200..6_249)
+            assertTrue("action=$action 应落在 6250..6299", action in 6_250..6_299)
+            assertFalse("body=$body 不得撞既有段", body in existing)
+            assertFalse("action=$action 不得撞既有段", action in existing)
+            bodies += body
+            actions += action
+        }
+        // 两段不相交：同一条任务的主体与按钮共用一个 requestCode 会让 PendingIntent 互相覆盖。
+        assertTrue((6_200..6_249).intersect((6_250..6_299).toSet()).isEmpty())
+        assertTrue(bodies.none { it in 6_250..6_299 })
+        // 按任务分散：不同任务必须能落到不同 requestCode（固定值会让多条通知指向同一会话）。
+        assertTrue("bodies=$bodies", bodies.size > 1)
+        assertTrue("actions=$actions", actions.size > 1)
     }
 }

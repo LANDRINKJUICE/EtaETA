@@ -22,6 +22,9 @@ internal enum class AgentRunSource(val wireName: String) {
     /** 到点自动执行的自动任务（无人值守）。 */
     SCHEDULED("scheduled"),
 
+    /** 后台命令失败/超时后自动唤醒的一轮运行（无人值守）。 */
+    JOB_WAKEUP("job_wakeup"),
+
     /** 父 Agent 通过 subagent 工具发起的子运行。 */
     SUBAGENT("subagent"),
 
@@ -40,12 +43,14 @@ internal enum class AgentRunSource(val wireName: String) {
         private const val HANDOFF_AGENT_UI = "agent_ui"
         private const val HANDOFF_ETA_VOICE = "eta_voice"
         private const val HANDOFF_ETA_SCHEDULED_TASK = "eta_scheduled_task"
+        private const val HANDOFF_ETA_JOB_WAKEUP = "eta_job_wakeup"
 
         /** UI 侧没有 handoff 来源时按聊天处理：那是唯一有用户在看着的入口。 */
         fun fromHandoffSource(handoffSource: String?): AgentRunSource = when (handoffSource) {
             null, "", HANDOFF_AGENT_UI -> CHAT
             HANDOFF_ETA_VOICE -> VOICE
             HANDOFF_ETA_SCHEDULED_TASK -> SCHEDULED
+            HANDOFF_ETA_JOB_WAKEUP -> JOB_WAKEUP
             else -> EXTERNAL
         }
 

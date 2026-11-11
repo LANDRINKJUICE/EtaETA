@@ -427,6 +427,17 @@ private fun SettingsPageContent(
                         icon = Icons.Rounded.NotificationsActive,
                         iconTint = SettingsIconColors.Orange,
                     )
+                    CouiIconDivider()
+                    // 后台任务失败自动唤醒：terminal_job 失败/超时时起一轮 run 接手，默认开。
+                    SwitchPref(
+                        context = context,
+                        prefs = agentPrefs,
+                        title = stringResource(R.string.settings_job_wakeup),
+                        summary = stringResource(R.string.settings_job_wakeup_summary),
+                        key = Prefs.Keys.AGENT_JOB_WAKEUP_ENABLED,
+                        icon = Icons.Rounded.Refresh,
+                        iconTint = SettingsIconColors.Green,
+                    )
                 }
 
                 Group(title = stringResource(R.string.settings_context_extensions)) {
@@ -907,6 +918,16 @@ private fun SettingsPageContent(
                             key = Prefs.Keys.AGENT_PROACTIVE_NOTIFY_ENABLED,
                             icon = Icons.Rounded.NotificationsActive,
                             iconTint = SettingsIconColors.Orange,
+                        )
+                        CouiIconDivider()
+                        SwitchPref(
+                            context = context,
+                            prefs = agentPrefs,
+                            title = stringResource(R.string.settings_job_wakeup),
+                            summary = stringResource(R.string.settings_job_wakeup_summary),
+                            key = Prefs.Keys.AGENT_JOB_WAKEUP_ENABLED,
+                            icon = Icons.Rounded.Refresh,
+                            iconTint = SettingsIconColors.Green,
                         )
                     }
                 }

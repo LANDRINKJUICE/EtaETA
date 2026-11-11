@@ -463,6 +463,9 @@
   <string name="tool_eta_skill_list">列出技能</string>
   <string name="tool_eta_skill_set_enabled">开关技能</string>
   <string name="tool_eta_skill_delete">卸载技能</string>
+  <string name="tool_eta_prefs_list">列出设置键</string>
+  <string name="tool_eta_prefs_get">读取设置项</string>
+  <string name="tool_eta_prefs_set">修改设置项</string>
   <string name="tool_set_alarm">设置闹钟</string>
   <string name="tool_set_timer">设置计时器</string>
   <string name="tool_device_status">设备状态</string>
@@ -1583,6 +1586,7 @@
     <string name="tool_schedule_task_description">创建、查看、启停到点自动执行的 agent 任务。</string>
     <string name="tool_macro_record">录制宏</string>
     <string name="tool_macro_record_description">把你的屏幕操作录成可回放的 GUI 宏。</string>
+    <string name="approval_reason_agent_settings">这会修改 Eta 自身的设置：请求和凭据会被发往新的地址，或命令改在另一个环境里执行。</string>
     <string name="approval_reason_scheduled_task_create">这会创建一条自动任务：下面的指令将在你不在场的情况下，到点被自动执行。</string>
 
     <!-- 任务中心 -->
@@ -1642,6 +1646,7 @@
     <string name="task_center_source_chat">聊天</string>
     <string name="task_center_source_voice">语音助手</string>
     <string name="task_center_source_scheduled">自动任务</string>
+    <string name="task_center_source_job_wakeup">后台任务自动唤醒</string>
     <string name="task_center_source_subagent">子代理</string>
     <string name="task_center_source_distill">记忆沉淀</string>
     <string name="task_center_source_external">外部助手</string>

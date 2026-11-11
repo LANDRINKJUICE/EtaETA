@@ -451,6 +451,9 @@
   <string name="tool_eta_skill_list">列出技能</string>
   <string name="tool_eta_skill_set_enabled">開關技能</string>
   <string name="tool_eta_skill_delete">解除安裝技能</string>
+  <string name="tool_eta_prefs_list">列出設定鍵</string>
+  <string name="tool_eta_prefs_get">讀取設定項</string>
+  <string name="tool_eta_prefs_set">修改設定項</string>
   <string name="tool_set_alarm">設定鬧鐘</string>
   <string name="tool_set_timer">設定計時器</string>
   <string name="tool_device_status">裝置狀態</string>
@@ -1451,6 +1454,7 @@
     <string name="task_center_source_chat">聊天</string>
     <string name="task_center_source_voice">語音助理</string>
     <string name="task_center_source_scheduled">自動任務</string>
+    <string name="task_center_source_job_wakeup">後台任務自動喚醒</string>
     <string name="task_center_source_subagent">子代理</string>
     <string name="task_center_source_distill">記憶沉澱</string>
     <string name="task_center_source_external">外部助理</string>
@@ -1642,6 +1646,7 @@
     <string name="macro_recording_saved_summary_limit">已儲存為 %1$s，共 %2$d 個動作（跳過 %3$d 次密碼輸入）。錄製已達上限並自動停止。</string>
     <string name="macro_recording_no_actions">沒有可儲存的內容：這次沒有錄到可回放的動作。</string>
     <string name="macro_recording_saved_description">由螢幕錄製生成</string>
+    <string name="approval_reason_agent_settings">這會修改 Eta 自身的設定：請求和憑據會被發往新的位址，或指令改在另一個環境裡執行。</string>
     <string name="approval_reason_scheduled_task_create">這會建立一條自動任務：下面的指令將在你不在場的情況下，到點被自動執行。</string>
     <string name="tool_notify_user">主動提醒</string>
     <string name="tool_notify_user_description">後台任務或自動任務有值得關注的結果時，主動給你發一則系統通知。</string>

@@ -164,6 +164,9 @@ internal fun buildToolsState(context: Context): AgentToolsUiState =
                     ToolItemUi("eta_skill_list", "列出技能", "查看全部已安装技能及启用状态。"),
                     ToolItemUi("eta_skill_set_enabled", "开关技能", "启用或禁用已安装的技能。"),
                     ToolItemUi("eta_skill_delete", "卸载技能", "按 id 卸载技能；内置技能可能受保护。"),
+                    ToolItemUi("eta_prefs_list", "列出设置键", "查看网页搜索、语音、Linux 环境可管理的设置键与当前值；凭据已脱敏。"),
+                    ToolItemUi("eta_prefs_get", "读取设置项", "按 key 读取单个设置项的当前值、类型与可选值。"),
+                    ToolItemUi("eta_prefs_set", "修改设置项", "按 key 写入设置项（类型校验并读回验证），凭据走加密存储；服务地址、凭据、Linux 环境类键需先确认。"),
                 ),
             ),
             ToolGroupUi(

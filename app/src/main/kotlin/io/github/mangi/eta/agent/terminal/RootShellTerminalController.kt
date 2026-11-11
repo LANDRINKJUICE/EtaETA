@@ -17,6 +17,13 @@ internal class RootShellTerminalController(
     private val processSupervisor: ShellProcessSupervisor = ShellProcessSupervisor(),
     private val detachedSupervisor: DetachedTaskSupervisor? = null,
     private val backgroundJobs: BackgroundTerminalJobs? = null,
+    /**
+     * 本控制器所属 run 是否由自动唤醒产生。
+     *
+     * 唤醒 run 里新起的 terminal_job 会被打上来源标记，其完成不再触发新的唤醒（防自增殖）；
+     * 只有用户在聊天或自动任务里起的任务才可能唤醒 Agent。
+     */
+    private val jobWakeupOrigin: Boolean = false,
     private val linuxSharedMountsProvider: () -> List<SharedFolderMount> = { emptyList() },
     selectedLinuxEnvironmentProvider: () -> TerminalEnvironment = {
         TerminalEnvironment.ALPINE
@@ -84,7 +91,8 @@ internal class RootShellTerminalController(
                 val command = args.requiredText("command")
                 if (command.isBlank()) return errorJson("INVALID_ARGUMENT", "command 不能为空")
                 jobs.start(launcher, command, cwd, identity, environment,
-                    args.optString("description", "后台命令"), args.optLong("timeout_ms", 600_000))
+                    args.optString("description", "后台命令"), args.optLong("timeout_ms", 600_000),
+                    watch = args.optBoolean("watch", false), wakeupOrigin = jobWakeupOrigin)
             }
             "list" -> jobs.list(args.optBoolean("active_only", true))
             "read" -> jobs.read(args.requiredText("job_id"), args.optInt("max_bytes", 16_000))

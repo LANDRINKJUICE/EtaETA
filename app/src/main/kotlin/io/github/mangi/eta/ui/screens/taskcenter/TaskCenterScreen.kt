@@ -678,6 +678,7 @@ private fun sourceLabel(source: AgentRunSource): String = when (source) {
     AgentRunSource.CHAT -> stringResource(R.string.task_center_source_chat)
     AgentRunSource.VOICE -> stringResource(R.string.task_center_source_voice)
     AgentRunSource.SCHEDULED -> stringResource(R.string.task_center_source_scheduled)
+    AgentRunSource.JOB_WAKEUP -> stringResource(R.string.task_center_source_job_wakeup)
     AgentRunSource.SUBAGENT -> stringResource(R.string.task_center_source_subagent)
     AgentRunSource.DISTILL -> stringResource(R.string.task_center_source_distill)
     AgentRunSource.EXTERNAL -> stringResource(R.string.task_center_source_external)

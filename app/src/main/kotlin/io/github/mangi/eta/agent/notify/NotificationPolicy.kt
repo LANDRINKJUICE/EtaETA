@@ -28,6 +28,27 @@ internal object NotificationPolicy {
     private const val PROACTIVE_RANGE = 50
     /** 危险操作等待确认：常驻单条，数量变化时原地更新。 */
     const val APPROVAL_PENDING_ID = 9_400
+    /**
+     * 后台任务失败自动唤醒：9602..9651，按任务 id 散列。
+     *
+     * 紧跟既有 9600/9601（宏录制）之后取 50 个空位，避让 9000-9299、9300-9349、9400、
+     * 9500-9501、9600-9601 全部已占用区间；见 [reservedSegments]。
+     */
+    private const val JOB_WAKEUP_BASE = 9_602
+    private const val JOB_WAKEUP_RANGE = 50
+
+    /**
+     * 自动唤醒通知的 PendingIntent requestCode 段：6200..6249（点通知进会话）、
+     * 6250..6299（点按钮进任务中心）。
+     *
+     * **必须按任务分散**：PendingIntent 以 (requestCode, filterEquals(data/action/type/class/category))
+     * 区分，extras 不参与比较；同一个 requestCode + FLAG_UPDATE_CURRENT 会让后一条通知把前面
+     * 所有通知的会话参数覆盖成同一条——即多个任务的通知全部指向最后一个任务的会话。
+     * 段位避开既有 6001/6002/6010/6020/6030 与执行服务的 20。
+     */
+    private const val JOB_WAKEUP_REQUEST_BASE = 6_200
+    private const val JOB_WAKEUP_ACTION_REQUEST_BASE = 6_250
+    private const val JOB_WAKEUP_REQUEST_RANGE = 50
 
     /** 更新节流：常驻通知的"实时"状态不得比 1 秒更频繁，避免系统限流。 */
     const val MIN_REFRESH_INTERVAL_MILLIS = 1_000L
@@ -133,6 +154,23 @@ internal object NotificationPolicy {
         // Int.MIN_VALUE 取 abs 仍为负，先折叠到 Long 再取模。
         val nonNegative = kotlin.math.abs(hash.toLong())
         return PROACTIVE_BASE + (nonNegative % PROACTIVE_RANGE).toInt()
+    }
+
+    /** 后台任务自动唤醒通知：9602..9651，同一任务反复唤醒复用同一 ID。 */
+    fun jobWakeupId(jobId: String): Int = JOB_WAKEUP_BASE + (stableHash(jobId) % JOB_WAKEUP_RANGE)
+
+    /** 自动唤醒通知"点主体进会话"的 requestCode：6200..6249，按任务分散。 */
+    fun jobWakeupRequestCode(jobId: String): Int =
+        JOB_WAKEUP_REQUEST_BASE + (stableHash(jobId) % JOB_WAKEUP_REQUEST_RANGE)
+
+    /** 自动唤醒通知"打开任务中心"按钮的 requestCode：6250..6299，按任务分散。 */
+    fun jobWakeupActionRequestCode(jobId: String): Int =
+        JOB_WAKEUP_ACTION_REQUEST_BASE + (stableHash(jobId) % JOB_WAKEUP_REQUEST_RANGE)
+
+    /** 稳定散列到非负整数；Int.MIN_VALUE 取 abs 仍为负，先折叠到 Long 再取模。 */
+    private fun stableHash(key: String): Int {
+        val hash = key.fold(0) { acc, ch -> acc * 31 + ch.code }
+        return (kotlin.math.abs(hash.toLong()) % Int.MAX_VALUE).toInt()
     }
 
     /** 参数校验：标题必填（模型必须给一个能读懂的标题）。返回错误码或 null。 */
@@ -297,5 +335,6 @@ internal object NotificationPolicy {
     fun reservedSegments(): List<IntRange> = listOf(
         PROACTIVE_BASE until PROACTIVE_BASE + PROACTIVE_RANGE,
         APPROVAL_PENDING_ID..APPROVAL_PENDING_ID,
+        JOB_WAKEUP_BASE until JOB_WAKEUP_BASE + JOB_WAKEUP_RANGE,
     )
 }

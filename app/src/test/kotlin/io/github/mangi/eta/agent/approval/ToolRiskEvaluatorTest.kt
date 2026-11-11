@@ -4,6 +4,7 @@ import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.Timeout
@@ -488,6 +489,66 @@ class ToolRiskEvaluatorTest {
         assertFalse(terminal("ls /").toString().contains("NeedsConfirm"))
     }
 
+
+    // ── Agent 写入 Eta 自身设置（eta_prefs_set）─────────────────────────
+
+    @Test
+    fun prefsSetBlocksAddressCredentialAndEnvironmentKeys() {
+        val address = evaluate(
+            "eta_prefs_set",
+            """{"key":"web.custom_search_url","value":"http://127.0.0.1:8899/search"}""",
+        )
+        val addressVerdict = address as? ToolRiskVerdict.NeedsConfirm
+            ?: fail("服务地址类键必须走确认卡，实际：$address").let { return }
+        assertEquals(listOf(ToolRiskCategory.AGENT_SETTINGS_WRITE), addressVerdict.categories)
+        assertEquals(ToolRiskLevel.MEDIUM, addressVerdict.level)
+        assertTrue(addressVerdict.subject.contains("web.custom_search_url"))
+
+        listOf(
+            "web.deepseek_base_url",
+            "speech.minimax_tts_base_url",
+            "speech.oss_endpoint",
+        ).forEach { key ->
+            val verdict = evaluate("eta_prefs_set", """{"key":"$key","value":"https://example.com"}""")
+            assertTrue("$key 需要确认，实际：$verdict", verdict is ToolRiskVerdict.NeedsConfirm)
+        }
+
+        val credential = evaluate(
+            "eta_prefs_set",
+            """{"key":"speech.oss_access_key_secret","value":"super-secret-value"}""",
+        )
+        val credentialVerdict = credential as? ToolRiskVerdict.NeedsConfirm
+            ?: fail("凭据类键必须走确认卡，实际：$credential").let { return }
+        assertTrue(
+            "确认卡不允许回显凭据明文：${credentialVerdict.subject}",
+            !credentialVerdict.subject.contains("super-secret-value"),
+        )
+
+        val backend = evaluate("eta_prefs_set", """{"key":"linux.backend_debian","value":"proot"}""")
+        assertTrue(backend is ToolRiskVerdict.NeedsConfirm)
+        val distribution = evaluate("eta_prefs_set", """{"key":"linux.distribution","value":"debian"}""")
+        assertTrue(distribution is ToolRiskVerdict.NeedsConfirm)
+    }
+
+    @Test
+    fun prefsSetAllowsOrdinarySwitchesAndReads() {
+        // 普通布尔/枚举（自动朗读、音色、语音识别开关）不该每次都弹确认卡。
+        listOf(
+            """{"key":"speech.auto_speak","value":"true"}""",
+            """{"key":"speech.tts_provider","value":"QWEN"}""",
+            """{"key":"web.search_backend","value":"CUSTOM"}""",
+            """{"key":"speech.gemini_tts_style","value":"平静地朗读"}""",
+        ).forEach { args ->
+            assertEquals("普通开关不该被拦：$args", ToolRiskVerdict.Safe, evaluate("eta_prefs_set", args))
+        }
+        // 未登记的键交给执行侧按白名单拒绝，判定器不制造额外噪音。
+        assertEquals(
+            ToolRiskVerdict.Safe,
+            evaluate("eta_prefs_set", """{"key":"web.not_registered","value":"x"}"""),
+        )
+        assertEquals(ToolRiskVerdict.Safe, evaluate("eta_prefs_list", "{}"))
+        assertEquals(ToolRiskVerdict.Safe, evaluate("eta_prefs_get", """{"key":"web.custom_search_url"}"""))
+    }
 
     // ── 安全审查 payload 逐条回归 ─────────────────────────────────────
 

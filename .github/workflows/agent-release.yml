@@ -74,3 +74,23 @@ jobs:
           archive: false
           if-no-files-found: error
           retention-days: 14
+
+      # release 包经过 R8 混淆，没有 mapping.txt 就只能看到形如 wg5 的短类名（见 ToolExecutionGuard 注释）。
+      # 与 APK 同批归档，保证"拿到安装包就能还原线上堆栈"。
+      - name: 确认并上传 Release mapping
+        id: mapping
+        run: |
+          mapping="app/build/outputs/mapping/release/mapping.txt"
+          if [[ ! -s "$mapping" ]]; then
+            echo "::error::未生成 release mapping.txt，线上堆栈将无法还原。"
+            exit 1
+          fi
+          echo "mapping_path=$mapping" >> "$GITHUB_OUTPUT"
+      - name: 上传 Release mapping.txt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: eta-agent-release-mapping
+          path: ${{ steps.mapping.outputs.mapping_path }}
+          archive: false
+          if-no-files-found: error
+          retention-days: 14

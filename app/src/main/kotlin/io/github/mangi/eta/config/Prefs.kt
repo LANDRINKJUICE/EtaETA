@@ -74,6 +74,15 @@ internal object Prefs {
          */
         const val AGENT_PROACTIVE_NOTIFY_ENABLED = "agent_proactive_notify_enabled"
 
+        /**
+         * 后台任务完成自动唤醒：terminal_job 失败/超时结束时自动起一轮 agent run 处理，默认开启。
+         *
+         * 这个开关**必须**进 [BOOLEAN_DEFAULTS] 与 [LOCAL_AGENT_KEYS]：设置页的 SwitchPref、
+         * [isJobWakeupEnabled] 与 hook 侧回写要读到同一个默认值与同一份本地键集合，
+         * 否则关掉开关后系统托盘/远端配置仍按 true 处理，开关形同虚设（审查 m9）。
+         */
+        const val AGENT_JOB_WAKEUP_ENABLED = "agent_job_wakeup_enabled"
+
         /** 全部布尔开关及其默认值。 */
         val BOOLEAN_DEFAULTS: Map<String, Boolean> = mapOf(
             POWER_KEY_TAKEOVER to false,
@@ -99,6 +108,7 @@ internal object Prefs {
             AGENT_MEMORY_DISTILL_ENABLED to false,
             AGENT_MEMORY_SEMANTIC_RECALL_ENABLED to false,
             AGENT_USAGE_STATS_ENABLED to true,
+            AGENT_JOB_WAKEUP_ENABLED to true,
         )
 
         /** 由 Eta Runtime 最终裁决、不要求 Xposed 框架在线的开关。 */
@@ -117,6 +127,7 @@ internal object Prefs {
             AGENT_MEMORY_DISTILL_ENABLED,
             AGENT_MEMORY_SEMANTIC_RECALL_ENABLED,
             AGENT_USAGE_STATS_ENABLED,
+            AGENT_JOB_WAKEUP_ENABLED,
         )
     }
 
@@ -174,6 +185,16 @@ internal object Prefs {
      */
     fun isProactiveNotifyEnabled(): Boolean = runCatching {
         (localAgent ?: remote)?.getBoolean(Keys.AGENT_PROACTIVE_NOTIFY_ENABLED, true) ?: true
+    }.getOrDefault(true)
+
+    /**
+     * 后台任务完成自动唤醒开关：默认开启。
+     *
+     * 与 [isProactiveNotifyEnabled] 同一模式：读 localAgent prefs（与设置页 SwitchPref 同一份），
+     * 缺失按 true；框架 remote 不可用也不影响后台唤醒的裁决。
+     */
+    fun isJobWakeupEnabled(): Boolean = runCatching {
+        (localAgent ?: remote)?.getBoolean(Keys.AGENT_JOB_WAKEUP_ENABLED, true) ?: true
     }.getOrDefault(true)
 
     /** 读取本地 Agent 配置中的字符串（远端未必有同名键）；缺省返回 [default]。 */

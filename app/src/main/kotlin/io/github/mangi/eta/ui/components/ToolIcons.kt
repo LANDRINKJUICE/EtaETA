@@ -106,6 +106,7 @@ internal fun iconForTool(toolId: String): ImageVector = when (toolId) {
         Icons.Rounded.Tune
     "eta_skill_list", "eta_skill_set_enabled", "eta_skill_delete" ->
         Icons.Rounded.AutoAwesome
+    "eta_prefs_list", "eta_prefs_get", "eta_prefs_set" -> Icons.Rounded.Tune
     "release_gui" -> Icons.Rounded.Smartphone
     "present_to_user" -> Icons.AutoMirrored.Rounded.OpenInNew
     "ask_user" -> Icons.Rounded.HelpOutline

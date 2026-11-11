@@ -119,6 +119,9 @@ internal object AgentModelClient {
     ): ModelResponse.Text {
         config.validate()
         val initialCapabilities = capabilitiesProvider()
+        // 自动唤醒开关参与系统提示与 terminal_job 的 schema，两者都是请求前缀：
+        // 读一次作为本轮的基准值，只有它真的翻转时才整体重建（见 toolsForRound）。
+        var promptJobWakeup = Prefs.isJobWakeupEnabled()
         val messages = AgentPromptBuilder.buildInitialMessages(
             config,
             prompt,
@@ -129,6 +132,7 @@ internal object AgentModelClient {
             rootAvailable = initialCapabilities.rootAvailable,
             roleplayContext = roleplayContext,
             executionContext = executionContext,
+            jobWakeupEnabled = promptJobWakeup,
         )
         if (rewriteReply) {
             messages.put(messages.length() - 1, AgentConversationCodec.userTextMessage(
@@ -148,6 +152,7 @@ internal object AgentModelClient {
         // 旧 history 中的无效消息可能在组装时被跳过，系统边界不能由 history 条数倒推。
         val systemCount = AgentPromptBuilder.buildSystemMessages(
             config, skillContext, memoryContext, initialCapabilities.rootAvailable, roleplayContext, executionContext,
+            jobWakeupEnabled = promptJobWakeup,
         ).length()
         fun toolsFor(capabilities: AgentToolCapabilities): JSONArray {
             if (rewriteReply) return JSONArray()
@@ -165,6 +170,7 @@ internal object AgentModelClient {
                 conversationTools = roleplayContext == null,
                 // 开关关掉时连 schema 都不注入，模型不会去尝试一个必然被拒绝的工具。
                 proactiveNotify = Prefs.isProactiveNotifyEnabled(),
+                jobWakeup = promptJobWakeup,
                 capabilities = capabilities,
                 localWebSearch = !config.usesHostedWebSearch,
                 disabledTools = Prefs.disabledTools(),
@@ -184,19 +190,23 @@ internal object AgentModelClient {
             )
         )
         // 工具目录与系统提示都是请求前缀，按轮重算会让一次瞬时状态抖动废掉整段缓存。
-        // Root 授权真正变化时整体重建；其余能力只增不减：短暂不可用的工具仍保留，执行时自行报告错误码。
+        // Root 授权或"失败自动唤醒"开关真正变化时整体重建；其余能力只增不减：
+        // 短暂不可用的工具仍保留，执行时自行报告错误码。
         var promptRootAvailable = initialCapabilities.rootAvailable
         var publishedTools = tools
         fun toolsForRound(): JSONArray {
             val capabilities = capabilitiesProvider()
-            if (capabilities.rootAvailable != promptRootAvailable) {
+            val jobWakeupEnabled = Prefs.isJobWakeupEnabled()
+            if (capabilities.rootAvailable != promptRootAvailable || jobWakeupEnabled != promptJobWakeup) {
                 val systemMessages = AgentPromptBuilder.buildSystemMessages(
                     config, skillContext, memoryContext, capabilities.rootAvailable, roleplayContext, executionContext,
+                    jobWakeupEnabled = jobWakeupEnabled,
                 )
                 for (index in 0 until systemMessages.length()) {
                     messages.put(index, systemMessages.getJSONObject(index))
                 }
                 promptRootAvailable = capabilities.rootAvailable
+                promptJobWakeup = jobWakeupEnabled
                 publishedTools = toolsFor(capabilities)
                 return publishedTools
             }

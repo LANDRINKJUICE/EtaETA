@@ -246,6 +246,9 @@ internal class AgentRuntimeRunExecutor(
                 conversationToolsAllowed = roleplayContext == null,
                 scheduledRun = request.handoff?.source ==
                     io.github.mangi.eta.agent.runtime.AgentRuntimeWire.ETA_SCHEDULED_TASK_HANDOFF_SOURCE,
+                // 后台任务失败唤醒的 run：它起的 terminal_job 会被标记来源，完成时不再触发唤醒。
+                jobWakeupRun = request.handoff?.source ==
+                    io.github.mangi.eta.agent.runtime.AgentRuntimeWire.ETA_JOB_WAKEUP_HANDOFF_SOURCE,
                 screenshotExcludedPackages = {
                     entrySurfaceGuard?.consumeScreenshotExcludedPackages().orEmpty()
                 },

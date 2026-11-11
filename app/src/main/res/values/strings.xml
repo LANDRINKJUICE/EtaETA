@@ -470,6 +470,9 @@
   <string name="tool_eta_skill_list">List skills</string>
   <string name="tool_eta_skill_set_enabled">Toggle skill</string>
   <string name="tool_eta_skill_delete">Uninstall skill</string>
+  <string name="tool_eta_prefs_list">List Eta settings</string>
+  <string name="tool_eta_prefs_get">Read Eta setting</string>
+  <string name="tool_eta_prefs_set">Update Eta setting</string>
   <string name="tool_set_alarm">Set alarm</string>
   <string name="tool_set_timer">Set timer</string>
   <string name="tool_device_status">Device status</string>
@@ -1602,6 +1605,7 @@
     <string name="tool_schedule_task_description">Create, list, enable or cancel agent tasks that run automatically at a set time.</string>
     <string name="tool_macro_record">Record a macro</string>
     <string name="tool_macro_record_description">Record your own screen actions into a replayable GUI macro.</string>
+    <string name="approval_reason_agent_settings">This changes Eta's own settings: where requests and credentials go, or which environment commands run in.</string>
     <string name="approval_reason_scheduled_task_create">This creates a scheduled task: the instruction below will run automatically, without you present, at the time it was set for.</string>
 
     <!-- 任务中心 / Task center -->
@@ -1661,6 +1665,7 @@
     <string name="task_center_source_chat">Chat</string>
     <string name="task_center_source_voice">Voice assistant</string>
     <string name="task_center_source_scheduled">Scheduled task</string>
+    <string name="task_center_source_job_wakeup">Background task wakeup</string>
     <string name="task_center_source_subagent">Subagent</string>
     <string name="task_center_source_distill">Memory distillation</string>
     <string name="task_center_source_external">External assistant</string>

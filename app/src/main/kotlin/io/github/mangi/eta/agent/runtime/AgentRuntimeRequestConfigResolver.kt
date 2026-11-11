@@ -25,7 +25,9 @@ internal object AgentRuntimeRequestConfigResolver {
      */
     fun usesDefaultRuntimeConfig(request: AgentRuntimeWire.RunRequest): Boolean =
         request.handoff?.source == AgentRuntimeWire.ETA_VOICE_HANDOFF_SOURCE ||
-            request.handoff?.source == AgentRuntimeWire.ETA_SCHEDULED_TASK_HANDOFF_SOURCE
+            request.handoff?.source == AgentRuntimeWire.ETA_SCHEDULED_TASK_HANDOFF_SOURCE ||
+            // 后台任务唤醒同样没有用户在线：入口快照里的模型与凭据可能已经过期。
+            request.handoff?.source == AgentRuntimeWire.ETA_JOB_WAKEUP_HANDOFF_SOURCE
 
     /**
      * 只用 Runtime 侧的模型与凭据替换入口配置；工具开关保留入口请求的值，
