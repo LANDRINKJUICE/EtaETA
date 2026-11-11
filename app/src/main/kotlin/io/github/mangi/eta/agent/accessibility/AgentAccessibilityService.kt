@@ -201,12 +201,15 @@ class AgentAccessibilityService : AccessibilityService() {
         return false
     }
 
-    /** 由 [MacroRecorder] 打开\/关闭录制：只在录制期间把点击类事件与按键过滤打开。 */
+    /** 由 [MacroRecorder] 打开/关闭录制：只在录制期间把点击类事件与按键过滤打开。 */
     internal fun setMacroRecordingActive(active: Boolean) {
         if (macroRecordingActive == active) return
         macroRecordingActive = active
-        if (!active) macroTextSnapshots.clear()
-        mainHandler.post { applyMacroServiceInfo(active) }
+        // 与事件回调同线程清理，避免跨线程写 HashMap。
+        mainHandler.post {
+            if (!active) macroTextSnapshots.clear()
+            applyMacroServiceInfo(active)
+        }
     }
 
     /**
@@ -216,13 +219,13 @@ class AgentAccessibilityService : AccessibilityService() {
      * 所有改动都在录制边界上做，结束后逐位还原。
      */
     private fun applyMacroServiceInfo(active: Boolean) {
-        val base = runCatching { serviceInfo }.getOrNull() ?: return
-        val info = AccessibilityServiceInfo(base)
+        val info = runCatching { serviceInfo }.getOrNull() ?: return
         val clickTypes = AccessibilityEvent.TYPE_VIEW_CLICKED or AccessibilityEvent.TYPE_VIEW_LONG_CLICKED
+        // AccessibilityServiceInfo 没有公开拷贝构造，直接就地改字段后回设。
         info.eventTypes = if (active) {
-            base.eventTypes or clickTypes
+            info.eventTypes or clickTypes
         } else {
-            base.eventTypes and clickTypes.inv()
+            info.eventTypes and clickTypes.inv()
         }
         info.flags = if (active) {
             info.flags or AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS

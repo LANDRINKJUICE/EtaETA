@@ -205,7 +205,10 @@ internal object AgentMemoryContextBuilder {
     private fun extractCore(content: String): String {
         val range = extractCoreRange(content) ?: return ""
         val lines = content.split('\n')
-        return lines.subList(range.first - 1, range.last).joinToString("\n")
+        // 元数据注释行不进系统提示，与条目解析口径一致。
+        return lines.subList(range.first - 1, range.last)
+            .filter { AgentMemoryEntries.parseMetadataLine(it) == null }
+            .joinToString("\n")
     }
 
     private val HEADING = Regex("^#{1,2}\\s+.+$")
