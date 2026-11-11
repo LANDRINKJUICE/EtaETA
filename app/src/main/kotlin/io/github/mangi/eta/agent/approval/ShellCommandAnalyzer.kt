@@ -624,22 +624,31 @@ internal object ShellCommandAnalyzer {
         targets.forEach { target ->
             classifyWritePath(target, "删除", state)?.let(out::add)
             val wildcard = target.contains('*') || target.contains('?') || target.contains('[')
-            val prefixDepth = ProtectedPaths.normalize(target)
-                .split('/')
-                .count { it.isNotEmpty() }
-                .let { if (wildcard) it - 1 else it }
+            // 浅层通配符原按「路径段数 <=1」命中，把工作区里 cwd 已知的 `rm -rf build/` 下通配符清理也误判成 HIGH。收紧为：仅当「父路径受保护/属大范围目录」(broad) 或
+            // 「删除范围无法静态确认」(cwd 未知 / 含变量的相对通配符) 时才保守命中。
+            // 父路径判定见 ProtectedPaths.isBroadDeleteTarget；系统分区/启动链/外来应用目录写入
+            // 由 classifyWritePath 独立判定，完全不受影响。
+            // 关键：broad 必须建在「按 cwd 解析后」的目标上，不能用原始 token。
+            // 否则 `cd / && rm -rf *`、`cd /data && rm -rf ./*` 这类「原始 token 是相对通配符、
+            // 既不算 broad、resolvePath 又非 null」的组合会整类漏网（审查阻断项 1）。
+            val resolvedTarget = resolvePath(target, state)
+            val broad = ProtectedPaths.isBroadDeleteTarget(resolvedTarget ?: target)
+            // 变量 / 命令替换 / 花括号展开等形态 resolvePath 可能给出带通配符的非 null 值，
+            // 但删除范围仍无法静态确认，一律保守当作 unresolved。
+            val unresolvedRange = resolvedTarget == null ||
+                target.contains('$') || target.contains('`') || target.contains('{')
             when {
-                ProtectedPaths.isBroadDeleteTarget(target) && recursive -> out += RiskFinding(
+                broad && recursive -> out += RiskFinding(
                     ToolRiskCategory.DESTRUCTIVE_DELETE,
-                    if (ProtectedPaths.normalize(target) == "/") ToolRiskLevel.CRITICAL else ToolRiskLevel.HIGH,
+                    if (ProtectedPaths.normalize(resolvedTarget ?: target) == "/") ToolRiskLevel.CRITICAL else ToolRiskLevel.HIGH,
                     "递归删除 $target",
                 )
-                wildcard && recursive && prefixDepth <= 1 -> out += RiskFinding(
+                wildcard && recursive && (broad || unresolvedRange) -> out += RiskFinding(
                     ToolRiskCategory.DESTRUCTIVE_DELETE,
                     ToolRiskLevel.HIGH,
                     "通配符递归删除 $target",
                 )
-                wildcard && !recursive && prefixDepth <= 1 -> out += RiskFinding(
+                wildcard && !recursive && (broad || unresolvedRange) -> out += RiskFinding(
                     ToolRiskCategory.DESTRUCTIVE_DELETE,
                     ToolRiskLevel.MEDIUM,
                     "通配符删除 $target",

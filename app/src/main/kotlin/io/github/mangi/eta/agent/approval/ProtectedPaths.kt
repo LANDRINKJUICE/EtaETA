@@ -97,6 +97,11 @@ internal object ProtectedPaths {
         "/external_sd",
         "/system",
         "/vendor",
+        // 根下一级目录：Android 上 /etc、/bin、/lib、/sbin 多是 /system 的符号链接，
+        // /dev/* 会当场废掉当前会话。旧版靠"任意通配符都算 broad"顺带覆盖；收紧成
+        // "父路径受保护才算 broad"后必须显式补回，否则 rm -rf /etc/* 等会漏判成 SAFE。
+        "/etc", "/bin", "/lib", "/sbin", "/dev", "/proc", "/sys",
+        "/root", "/config", "/cache", "/acct", "/emulated", "/tmp",
     )
 
     /**
@@ -155,10 +160,39 @@ internal object ProtectedPaths {
         return systemDataPrefixes.any { matchesPrefix(normalized, it) }
     }
 
+    /**
+     * 是否属于「大范围删除」目标。
+     *
+     * 精确路径直接查 [broadDeleteTargets] 表。含通配符的目标不再一律算 broad：
+     * 原实现把 `rm -rf` 工作区深层子目录下的通配符清理、`rm -f *.log` 这类**深层工作区
+     * 清理**也判成 HIGH，是日常最频繁的误拦。现在只有当「通配符所在的父路径」本身落在
+     * 大范围目录 / 系统分区 / 启动链 / 系统数据里时才算 broad，例如：
+     * - `/data/data/` 下带通配符（父 `/data/data` 在 broad 表）→ 仍命中；
+     * - 根目录下带通配符（父为根 `/`）→ 仍命中；
+     * - `/workspace/.../build/` 下带通配符、相对目录的 `*.log` → 父不在任何保护表 → 放行。
+     * 收紧后 ShellCommandAnalyzer 仅剩 broad（父路径受保护）与 unresolvedRange（范围无法静态确认）
+     * 两个门槛；浅层通配符不再单独按段数命中，但父路径受保护时由本函数兜住。
+     * 系统分区 / 启动链 / 外来应用私有目录的写入判定完全不受影响。
+     */
     fun isBroadDeleteTarget(path: String): Boolean {
         val normalized = stripTrailingSlash(normalize(path))
         if (normalized in broadDeleteTargets) return true
-        return normalized.contains('*') || normalized.contains('?') || normalized.contains('[')
+        val hasWildcard = normalized.contains('*') || normalized.contains('?') || normalized.contains('[')
+        if (!hasWildcard) return false
+        // 取第一个含通配符的段之前的父路径；父路径为受保护/大范围目录时才算 broad。
+        // 先丢掉 split 产生的开头空段与 "." 段，否则绝对路径的 takeWhile 会在首段空串处立即停，
+        // 把 parent 错算成 "/"（会让任意含通配符路径都被误判成 broad）。
+        val parent = run {
+            val segments = normalized.split('/').filter { it.isNotEmpty() && it != "." }
+            val kept = segments.takeWhile { seg ->
+                !seg.contains('*') && !seg.contains('?') && !seg.contains('[')
+            }
+            val joined = kept.joinToString("/")
+            if (normalized.startsWith("/")) if (joined.isEmpty()) "/" else "/$joined" else joined
+        }
+        if (parent.isEmpty()) return false
+        return parent in broadDeleteTargets ||
+            isSystemPartition(parent) || isBootChain(parent) || isSystemData(parent)
     }
 
     /**

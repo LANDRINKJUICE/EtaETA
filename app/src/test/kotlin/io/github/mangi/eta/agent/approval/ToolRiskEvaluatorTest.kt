@@ -834,4 +834,87 @@ class ToolRiskEvaluatorTest {
             assertEquals("只读工具必须放行：$tool", ToolRiskVerdict.Safe, evaluate(tool, args))
         }
     }
+
+    // ── 误拦收紧：工作区深层通配符清理不再弹卡 ──
+    // 背景：判定整体偏紧，`rm -rf build/*` 原本命中 HIGH。
+    // 只收紧「通配符父路径不在保护表」这一类；曾尝试给「Eta 自管脚本」加白名单，审查发现
+    // 会造成「写脚本+执行」两步绕过脚本内容防线，已整体回退——脚本一律 INDIRECT。
+    // 系统分区/启动链/外来应用目录/间接执行判定逐字不动，收紧后另补回根下一级目录兜底。
+
+    @Test
+    fun deepWorkspaceWildcardDeleteIsSafe() {
+        // 深层工作区子目录下的通配符清理：父路径不在 any 保护表，不该算大范围删除。
+        assertSafe("rm -rf /workspace/eta-src/app/build/*")
+        assertSafe("rm -rf /data/local/tmp/eta/build/intermediates/*")
+        // 带明确 cwd 的深层工作区清理：解析后父路径在工作区，放行。
+        assertSafe("rm -rf build/*", defaultCwd = "/workspace/eta-src")
+        assertSafe("rm -f *.log", defaultCwd = "/workspace/eta-src/app/build")
+    }
+
+    @Test
+    fun protectedWildcardDeleteStillNeedsConfirm() {
+        // 收紧不能放过真正的破坏面：受保护/大范围目录下的通配符递归删除仍要拦。
+        assertCategory("rm -rf /data/data/*", ToolRiskCategory.DESTRUCTIVE_DELETE)
+        assertCategory("rm -rf /system/*", ToolRiskCategory.SYSTEM_PARTITION_WRITE)
+        assertCategory("rm -rf /", ToolRiskCategory.DESTRUCTIVE_DELETE)
+        assertCategory("rm -rf /sdcard/", ToolRiskCategory.DESTRUCTIVE_DELETE)
+        // 无 cwd 的根级相对通配符：无法静态确认删除范围，仍保守命中（不应误放行）。
+        assertCategory("rm -f *.log", ToolRiskCategory.DESTRUCTIVE_DELETE)
+    }
+
+    @Test
+    fun scriptsInWorkspaceStillNeedConfirm() {
+        // 审查阻断项 2：曾尝试给「Eta 自管工作区脚本」加白名单放行，但那样等于「写脚本+执行」
+        // 两步即可绕过脚本内容防线（内容完全不分析）。安全代价大于误拦代价，已回退：
+        // 脚本一律 INDIRECT，高频自用的 eta-cleanup.sh 用 allow_session 点一次整轮消音即可。
+        assertCategory("sh /workspace/脚本-Scripts/eta-cleanup.sh", ToolRiskCategory.INDIRECT_EXECUTION)
+        assertCategory("sh /data/local/tmp/eta/脚本-Scripts/eta-cleanup.sh", ToolRiskCategory.INDIRECT_EXECUTION)
+        assertCategory("bash /sdcard/Download/Eta/scripts/build.sh", ToolRiskCategory.INDIRECT_EXECUTION)
+        assertTrue(
+            ToolRiskCategory.INDIRECT_EXECUTION in confirm("sh eta-cleanup.sh", defaultCwd = "/workspace").categories,
+        )
+    }
+
+    @Test
+    fun externalScriptsStillNeedConfirm() {
+        // 外部来源 / 无法解析的脚本仍照旧弹 INDIRECT，不能因为加了白名单就整体放宽。
+        assertCategory("sh /tmp/x.sh", ToolRiskCategory.INDIRECT_EXECUTION)
+        assertCategory("bash ./install.sh", ToolRiskCategory.INDIRECT_EXECUTION)
+        assertCategory("source /sdcard/env.sh", ToolRiskCategory.INDIRECT_EXECUTION)
+        assertCategory("sh /sdcard/Download/not-eta/deploy.sh", ToolRiskCategory.INDIRECT_EXECUTION)
+    }
+
+    @Test
+    fun systemPartitionAndBootChainJudgementUnchanged() {
+        // 回归锚：本次收紧绝不能动系统分区/启动链/间接执行内联代码这些核心破坏面判定。
+        assertCategory("echo x > /system/build.prop", ToolRiskCategory.SYSTEM_PARTITION_WRITE)
+        assertCategory("dd if=x of=/dev/block/by-name/boot", ToolRiskCategory.BOOT_CHAIN_WRITE)
+        assertCategory("python3 -c \"open('/system/x','w')\"", ToolRiskCategory.INDIRECT_EXECUTION)
+        assertCategory("echo /data/adb/modules/x | xargs rm -rf", ToolRiskCategory.DESTRUCTIVE_DELETE)
+        assertCategory("perl -e 'unlink q(/system/x)'", ToolRiskCategory.INDIRECT_EXECUTION)
+    }
+
+    @Test
+    fun cdThenRelativeWildcardDeleteStillNeedsConfirm() {
+        // 审查阻断项 1：broad 必须建立在「按 cwd 解析后」的目标上。
+        // 「先 cd 到根/系统数据根，再用相对通配符清空」曾被收紧后的规则整类漏判成 SAFE。
+        assertCategory("cd / && rm -rf *", ToolRiskCategory.DESTRUCTIVE_DELETE)
+        assertCategory("cd / && rm -rf ./*", ToolRiskCategory.DESTRUCTIVE_DELETE)
+        assertCategory("cd /data && rm -rf *", ToolRiskCategory.DESTRUCTIVE_DELETE)
+        assertCategory("cd /data && rm -rf ./*", ToolRiskCategory.DESTRUCTIVE_DELETE)
+        assertCategory("cd /sdcard && rm -rf *", ToolRiskCategory.DESTRUCTIVE_DELETE)
+        // 变量 / 命令替换 / 花括号展开：删除范围无法静态确认，一律保守命中。
+        assertCategory("rm -rf /data/local/tmp/\$X/*", ToolRiskCategory.DESTRUCTIVE_DELETE)
+        assertCategory("rm -rf /data/{data,app}/*", ToolRiskCategory.DESTRUCTIVE_DELETE)
+    }
+
+    @Test
+    fun rootLevelDirectoryWildcardsStillNeedConfirm() {
+        // 收紧成「父路径受保护才算 broad」后，显式把根下一级目录补回 broad 表，
+        // 避免 /etc、/bin、/lib、/sbin（多为 /system 符号链接）、/dev 等漏判成 SAFE。
+        assertCategory("rm -rf /etc/*", ToolRiskCategory.DESTRUCTIVE_DELETE)
+        assertCategory("rm -rf /bin/*", ToolRiskCategory.DESTRUCTIVE_DELETE)
+        assertCategory("rm -rf /dev/*", ToolRiskCategory.DESTRUCTIVE_DELETE)
+        assertCategory("rm -rf /lib/*", ToolRiskCategory.DESTRUCTIVE_DELETE)
+    }
 }
