@@ -15,9 +15,9 @@ import io.github.mangi.eta.agent.approval.AgentApprovalCoordinator
  *
  * 只在 App 主进程安装（[io.github.mangi.eta.AppProcessPolicy] 判定），幂等。
  *
- * 后台弹卡接入后：前台已有聊天流卡片、后台兜底已有每张卡的行动通知时，这条汇总通知属于
- * 重复打扰，由 [io.github.mangi.eta.agent.approval.ApprovalAttentionPresenter] 通过
- * [setSuppressed] 抑制；只有当"行动通知不可用（权限/channel 被关）"或载体收起时才解除抑制，
+ * 后台弹卡接入后（方案 1 起）：前台与后台都会由 Presenter 发 eta_attention HIGH 行动通知，
+ * 这条 9400 汇总通知属于重复打扰，由 [io.github.mangi.eta.agent.approval.ApprovalAttentionPresenter]
+ * 通过 [setSuppressed] 抑制；只有当"行动通知不可用（权限/channel 被关）"或载体收起时才解除抑制，
  * 保证 9400 始终作为最后一道可见痕迹，不会出现"三条规则都满足却什么都看不到"。
  */
 internal object ApprovalNotificationBridge {

@@ -192,4 +192,46 @@ class AgentApprovalAttentionPolicyTest {
     fun `notification action limit is three`() {
         assertEquals(3, AgentApprovalAttentionPolicy.NOTIFICATION_ACTION_LIMIT)
     }
+
+    // ── 方案 1：前台也发 eta_attention 强通知，覆盖「前台但不在归属会话/在设置页」 ──
+
+    @Test
+    fun `foreground chat inline also emits attention notification`() {
+        // 用户实测：在别的会话 / 设置页时根本不知道触发了卡。前台不能只靠聊天流卡片 + 无声 9400。
+        assertTrue(
+            "前台 CHAT_INLINE 必须补发 HIGH 行动通知，否则停在别的页面会全盲等超时",
+            AgentApprovalAttentionPolicy.shouldEmitAttentionNotification(AgentApprovalSurface.CHAT_INLINE),
+        )
+    }
+
+    @Test
+    fun `notification fallback still emits attention notification`() {
+        assertTrue(
+            AgentApprovalAttentionPolicy.shouldEmitAttentionNotification(AgentApprovalSurface.NOTIFICATION),
+        )
+    }
+
+    @Test
+    fun `overlay and none do not double-emit attention notification`() {
+        // 悬浮层已把卡片送到眼前，再弹通知是重复打扰；没有待确认则什么都不发。
+        assertFalse(
+            AgentApprovalAttentionPolicy.shouldEmitAttentionNotification(AgentApprovalSurface.OVERLAY),
+        )
+        assertFalse(
+            AgentApprovalAttentionPolicy.shouldEmitAttentionNotification(AgentApprovalSurface.NONE),
+        )
+    }
+
+    @Test
+    fun `decide still routes foreground to chat inline`() {
+        // 方案 1 不改变「前台主载体仍是聊天流卡片」的裁决，只改执行层补发通知。
+        assertEquals(
+            AgentApprovalSurface.CHAT_INLINE,
+            AgentApprovalAttentionPolicy.decide(
+                etaInForeground = true,
+                pendingCount = 1,
+                overlayUsable = true,
+            ),
+        )
+    }
 }

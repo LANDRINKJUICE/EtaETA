@@ -23,8 +23,10 @@ import io.github.mangi.eta.core.AndroidAgentLogger
  * - [AgentForegroundTracker] 的前后台变化。
  *
  * 每次信号都重新裁决、收敛到一个且仅一个载体，绝不叠加：
- * - 前台：聊天流卡片为主；9400 汇总通知**不抑制**（用户可能停在别的会话/设置页，
- *   归属会话的卡片并不在屏上，9400 是"有 N 个操作等确认"的最后可见痕迹）；
+ * - 前台：聊天流卡片为主 + **eta_attention HIGH 强通知**（方案 1）。前台≠看得到卡片：
+ *   用户常停在别的会话/设置页，归属会话的卡片并不在屏上；原来仅靠 9400 无声汇总通知
+ *   （DEFAULT、不 heads-up）注意不到，现与后台一样发 heads-up 行动通知并抑制 9400 避免重复。
+ *   通知权限/channel 不可用时沿用既有降级，放行 9400 作为最后可见痕迹；
  * - 后台且悬浮层可用：悬浮层复用 [io.github.mangi.eta.ui.components.AgentApprovalRequestCard]；
  * - 悬浮层不可用（无权限 / 锁屏 / 加窗失败）：eta_attention heads-up 通知 + 决策按钮兜底；
  * - 没有待确认：全部收起。
@@ -126,10 +128,21 @@ internal object ApprovalAttentionPresenter {
 
             AgentApprovalSurface.CHAT_INLINE -> {
                 ApprovalAttentionOverlay.dismiss()
-                clearNotifications(ctx)
-                // G3：前台不抑制 9400。用户可能停在别的会话/设置页，归属会话的卡片并不在屏上；
-                // 9400 是「有 N 个操作等确认」的被动提醒，重复成本远低于"全盲等超时"。
-                ApprovalNotificationBridge.setSuppressed(ctx, false)
+                // 方案 1：前台≠看得到卡片。用户常停在别的会话 / 设置页 / 任务中心，归属会话的
+                // 卡片并不在屏上；原来只留 9400 无声汇总通知（IMPORTANCE_DEFAULT、不 heads-up、
+                // onlyAlertOnce），人盯着屏幕也注意不到，等于"全盲等超时"。
+                // 这里与后台一样发 eta_attention HIGH heads-up 行动通知（带直接决策按钮），
+                // 并抑制 9400 避免重复；showNotifications 内部会在通知权限/channel 不可用时
+                // 自动放行 9400 作为最后可见痕迹（沿用既有降级，不另造通路）。
+                //
+                // 注意：这里**不要先 clearNotifications**。showNotifications 自身就是幂等收敛器：
+                // 它撤掉不在 pending 里的旧 ID、复用仍存活卡的 ID 原地更新（onlyAlertOnce 生效）、
+                // 只给新卡分配新 ID；从后台切回前台同样收敛。若先 cancel 再 notify，同一 ID 的
+                // 通知会被当成"新通知"重新 heads-up + 响铃，多卡/连续决策时必现重复打扰（审查 S1）。
+                // shouldEmitAttentionNotification 在此恒 true，仅作为产品决定的纯逻辑锚点（有单测）。
+                if (AgentApprovalAttentionPolicy.shouldEmitAttentionNotification(surface)) {
+                    showNotifications(ctx, pending)
+                }
             }
 
             AgentApprovalSurface.OVERLAY -> {
