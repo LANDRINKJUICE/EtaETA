@@ -1600,6 +1600,7 @@
     <string name="settings_danger_tool_guard_title">危險操作確認</string>
     <string name="settings_danger_tool_guard_summary">系統分割槽與啟動鏈只可讀、只可複製；寫入以及其他不可逆的危險命令，執行前需要你在聊天流裡確認。</string>
     <string name="approval_danger_title">確認危險操作</string>
+    <string name="approval_intent_label">目的：</string>
     <string name="approval_ask_title">Agent 需要你決定</string>
     <string name="approval_danger_operation">操作原文</string>
     <string name="approval_danger_why">為什麼需要確認</string>

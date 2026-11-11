@@ -198,6 +198,15 @@ internal fun AgentApprovalRequestCard(
         }
 
         if (danger) {
+            // 需求 4：模型提供的「意图 / 你要干什么」，显示在命令原文上方。
+            // intent 为空（模型没填）时不显示这一行，卡片退回只显示命令 + 风险理由的现状。
+            if (request.intent.isNotBlank()) {
+                Text(
+                    text = stringResource(R.string.approval_intent_label) + request.intent,
+                    style = MiuixTheme.textStyles.body1,
+                    color = colors.onSurface,
+                )
+            }
             ApprovalSectionLabel(stringResource(R.string.approval_danger_operation))
             Box(
                 modifier = Modifier

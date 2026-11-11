@@ -20,6 +20,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.unit.dp
@@ -33,11 +34,13 @@ import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.itos.coui.effect.LocalCouiContourGlowEnabled
 import io.github.mangi.eta.agent.accessibility.AgentAccessibilityService
+import io.github.mangi.eta.core.AndroidAgentLogger
 import io.github.mangi.eta.data.model.AppearanceSettings
 import io.github.mangi.eta.data.repository.AppearanceSettingsRepository
 import io.github.mangi.eta.ui.app.AgentAppTheme
 import io.github.mangi.eta.ui.components.AgentApprovalRequestCard
 import top.yukonga.miuix.kmp.squircle.LocalSquircleEnabled
+import kotlin.math.roundToInt
 
 /**
  * 后台审批卡的悬浮层载体。
@@ -72,6 +75,17 @@ internal object ApprovalAttentionOverlay {
     /** 复用主线程 Handler（与 ApprovalAttentionPresenter 同口径），避免每次切焦点都 new。主线程访问。 */
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    /**
+     * 浮窗卡片可见高度上限（dp）：[ApprovalCardContent] 里 Column 的 `heightIn(max = ...)` 与
+     * 窗口高度 clamp 共用同一个常量，保证「窗口 height === 可绘制内容盒高度」精确相等——
+     * 不裁切卡片底边、也不在卡片下方留一条会吞触摸的透明死区。长命令超过它时卡片内部
+     * verticalScroll 滚动，窗口高度保持这个值。
+     *
+     * 注意：该处的 `verticalScroll` 会给子节点无限高约束，onSizeChanged 回报的是「自然内容
+     * 高度」（可能超过本上限），所以窗口层必须 clamp 到本上限，不能照单写回。
+     */
+    private const val CARD_MAX_HEIGHT_DP = 520
+
     private class Attached(
         val windowManager: WindowManager,
         val view: ComposeView,
@@ -79,6 +93,8 @@ internal object ApprovalAttentionOverlay {
         val lifecycle: LifecycleRegistry,
         val requestId: String,
         val requestState: MutableState<AgentApprovalRequest>,
+        /** 窗口高度 clamp 上限（px），构造时算好，不依赖窗口已添加、无事后赋值时序。 */
+        val maxHeightPx: Int,
     ) {
         /** 加窗时的初始 flags 基准（含 FLAG_NOT_FOCUSABLE）；每次切焦点从它派生，避免失败后基准被改脏。 */
         val baseFlags: Int = params.flags
@@ -88,6 +104,13 @@ internal object ApprovalAttentionOverlay {
 
         /** 窗口是否曾进入过可聚焦态；用于 detach 时判断是否需要主动收键盘 / 清焦点。主线程访问。 */
         var everFocusable: Boolean = false
+
+        /**
+         * 已成功收敛到窗口 params.height 的卡片内容高度（px）。首次为
+         * [ApprovalOverlaySizingPolicy.HEIGHT_UNSET]（对应 WRAP_CONTENT），由内容 onSizeChanged
+         * 驱动收敛；去抖用，避免同尺寸反复 updateViewLayout。主线程访问。
+         */
+        var appliedHeightPx: Int = ApprovalOverlaySizingPolicy.HEIGHT_UNSET
     }
 
     @Volatile
@@ -128,6 +151,10 @@ internal object ApprovalAttentionOverlay {
             owner.onCreate()
 
             val requestState = mutableStateOf(request)
+            // 记录最后一次内容实测高度：若首帧 onSizeChanged 在 attached 赋值前就发生（被
+            // applyHeight 的 `attached ?: return` 丢掉），建窗后补一次 applyHeight 兜底，
+            // 避免「首帧回调丢失 → 窗口停在 WRAP_CONTENT → BUG 1 静默复发」。主线程读写。
+            var pendingHeightPx = ApprovalOverlaySizingPolicy.HEIGHT_UNSET
             val composeView = ComposeView(overlayContext).apply {
                 setViewTreeLifecycleOwner(owner)
                 setViewTreeSavedStateRegistryOwner(owner)
@@ -138,6 +165,14 @@ internal object ApprovalAttentionOverlay {
                         // 浮窗专属：composer 展开时临时去掉 FLAG_NOT_FOCUSABLE 让 BasicTextField
                         // 拿到焦点、IME 能弹出；收起/消失时还原，不吞下层 App 的返回手势。
                         overlayComposerHost = { active -> setFocusable(active) },
+                        // BUG 1：把内容实测高度收敛成窗口 height，让窗口 frame 精确贴合卡片。
+                        // 否则 MATCH_PARENT × WRAP_CONTENT 的系统浮窗会被 WMS 撑成近整屏，
+                        // FLAG_NOT_TOUCH_MODAL 没有「窗口外」可穿透，卡片外整屏触摸全被吞。
+                        // 带上 requestId 做归属校验，避免迟到的 post 把上一张卡的高度套到新窗口。
+                        onCardHeightChanged = { heightPx ->
+                            pendingHeightPx = heightPx
+                            applyHeight(request.id, heightPx)
+                        },
                         onDecide = { optionId, freeText ->
                             // 决策落地：先把浮窗还原成不可聚焦（收键盘 / 还焦点），再 resolve。
                             // 否则窗口在收起动画期间仍持有输入焦点，会遮挡下层 App。
@@ -173,7 +208,13 @@ internal object ApprovalAttentionOverlay {
 
             val ok = runCatching { wm.addView(composeView, params) }.isSuccess
             if (ok) {
-                attached = Attached(wm, composeView, params, owner.lifecycleRegistry, request.id, requestState)
+                attached = Attached(
+                    wm, composeView, params, owner.lifecycleRegistry, request.id, requestState,
+                    maxHeightPx = clampHeightPx(overlayContext, wm, params.y),
+                )
+                // 兜底：首帧回调若早于 attached 赋值被丢弃，这里用记录值补一次收敛。
+                val recorded = pendingHeightPx
+                if (recorded > 0) applyHeight(request.id, recorded)
             } else {
                 runCatching { wm.removeViewImmediate(composeView) }
                 owner.onDestroy()
@@ -242,6 +283,57 @@ internal object ApprovalAttentionOverlay {
         }
     }
 
+    /**
+     * BUG 1 修复：把窗口 height 从 WRAP_CONTENT 收敛成卡片内容的实测高度，让窗口 frame
+     * 精确贴合卡片，卡片下方重新成为 FLAG_NOT_TOUCH_MODAL 的「窗口外」区域而允许触摸穿透。
+     *
+     * 与 [setFocusable] 共用同一个 [Attached.params]：两者分别只改 height 与
+     * flags/softInputMode，互不覆盖；都先快照再 updateViewLayout，失败回滚到快照，
+     * 保证单次失败不把窗口状态改脏。[ApprovalOverlaySizingPolicy.shouldApplyHeight] 去抖，
+     * 同尺寸不重复写、避免 WMS 反复重新布局。从 Compose 主线程回调调用，非主线程 post。
+     *
+     * 归属校验：[expectedRequestId] 必须与当前 [Attached.requestId] 一致才写，避免迟到的
+     * post 把上一张卡的高度套到新建的窗口上。
+     *
+     * @param expectedRequestId 发起该次测量的卡片 request id。
+     * @param measuredHeightPx 卡片内容的自然实测高度（px）：onSizeChanged 挂在 verticalScroll
+     *   内层，回报的是不受 [CARD_MAX_HEIGHT_DP] 约束的自然内容高度，可能超过可见上限，
+     *   因此必须经 [ApprovalOverlaySizingPolicy.targetHeightPx] clamp 后才能作为窗口高度。
+     */
+    private fun applyHeight(expectedRequestId: String, measuredHeightPx: Int) {
+        // 局部函数用裸 return（赋值局部 lambda 没有隐式标签，return@apply 会编译失败）。
+        fun applyNow() {
+            val current = attached ?: return
+            if (current.requestId != expectedRequestId) return
+            if (!current.view.isAttachedToWindow) return
+            // 先把实测值（可能是 verticalScroll 内层的自然高度 / 整屏 EXACTLY 约束下的回报）
+            // clamp 成合法窗口目标高度。
+            val target = ApprovalOverlaySizingPolicy.targetHeightPx(measuredHeightPx, current.maxHeightPx)
+            if (!ApprovalOverlaySizingPolicy.shouldApplyHeight(current.appliedHeightPx, target)) return
+            val lp = current.params
+            val snapshotHeight = lp.height
+            lp.height = target
+            val exception = runCatching {
+                current.windowManager.updateViewLayout(current.view, lp)
+            }.exceptionOrNull()
+            if (exception == null) {
+                current.appliedHeightPx = target
+            } else {
+                // 失败：回滚到快照，下次尺寸变化会重试；窗口状态与基准保持一致。
+                lp.height = snapshotHeight
+                AndroidAgentLogger.error(
+                    "Approval overlay height apply failed",
+                    exception,
+                )
+            }
+        }
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            runCatching { applyNow() }
+        } else {
+            mainHandler.post { runCatching { applyNow() } }
+        }
+    }
+
     /** 清掉附着在该浮窗上的输入焦点与 IME；可重复调用。 */
     private fun hideKeyboard(current: Attached) {
         runCatching { current.view.clearFocus() }
@@ -261,6 +353,38 @@ internal object ApprovalAttentionOverlay {
         runCatching { current.windowManager.removeViewImmediate(current.view) }
         // 派发 ON_DESTROY 让 DisposeOnViewTreeLifecycleDestroyed 真正销毁 composition + 收集器。
         runCatching { current.lifecycle.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY) }
+    }
+
+    /**
+     * 窗口高度 clamp 上限（px）：取「卡片可见上限 [CARD_MAX_HEIGHT_DP]」与「屏幕可用高度」
+     * 的较小值，保证竖屏精确贴合、横屏/小屏也不超出显示区（否则窗口等于整屏，又没窗口外
+     * 可穿透区，BUG 1 在横屏复发）。屏幕尺寸取不到时退回卡片上限，density 恒为设备密度、不会 <=0。
+     *
+     * @param windowTopY 窗口顶部 y（状态栏∪挖孔 inset，见 [statusBarHeightPx]）。
+     */
+    private fun clampHeightPx(context: Context, wm: WindowManager, windowTopY: Int): Int {
+        val density = context.resources.displayMetrics.density
+        // roundToInt 与 Compose 的 dp->px 舍入对齐，避免 1px 裁切 / 1px 透明死区。
+        val cardMax = (CARD_MAX_HEIGHT_DP * density).roundToInt()
+        val bottomMargin = (24 * density).roundToInt()
+        val screenHeight = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            runCatching { wm.currentWindowMetrics.bounds.height() }.getOrDefault(0)
+        } else {
+            @Suppress("DEPRECATION")
+            runCatching {
+                val point = android.graphics.Point()
+                wm.defaultDisplay?.getRealSize(point)
+                point.y
+            }.getOrDefault(0)
+        }
+        val available = screenHeight - windowTopY - bottomMargin
+        val minUsable = (120 * density).roundToInt()
+        // 可用区太小时（极端小屏/大 inset）直接退回卡片上限，绝不把窗口放大到超过可用区。
+        return if (available >= minUsable) {
+            minOf(cardMax, available)
+        } else {
+            cardMax
+        }
     }
 
     private fun statusBarHeightPx(context: Context, wm: WindowManager): Int {
@@ -284,6 +408,7 @@ internal object ApprovalAttentionOverlay {
     private fun ApprovalCardContent(
         requestState: MutableState<AgentApprovalRequest>,
         overlayComposerHost: (Boolean) -> Unit,
+        onCardHeightChanged: (Int) -> Unit,
         onDecide: (String, String?) -> Unit,
     ) {
         val appearance by AppearanceSettingsRepository.settingsFlow()
@@ -302,8 +427,13 @@ internal object ApprovalAttentionOverlay {
                 androidx.compose.foundation.layout.Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 520.dp)
+                        .heightIn(max = CARD_MAX_HEIGHT_DP.dp)
                         .verticalScroll(rememberScrollState())
+                        // onSizeChanged 必须放在 verticalScroll 内层（回报自然内容高度，不会被当前
+                        // 窗口高度反向钳住形成「设小后永远长不回去」的棘轮），同时放在 padding
+                        // 之前（回报值含上下 padding，窗口 height 与可绘制内容盒精确相等，不裁
+                        // 卡片底边、也不留吞触摸的透明死区）。把实测高度回报窗口层收敛 params.height。
+                        .onSizeChanged { size -> onCardHeightChanged(size.height) }
                         .padding(horizontal = 8.dp, vertical = 4.dp),
                 ) {
                     AgentApprovalRequestCard(

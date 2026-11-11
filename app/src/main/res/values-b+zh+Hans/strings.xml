@@ -1478,6 +1478,7 @@
     <string name="settings_danger_tool_guard_title">危险操作确认</string>
     <string name="settings_danger_tool_guard_summary">系统分区与启动链只可读、只可复制；写入以及其他不可逆的危险命令，执行前需要你在聊天流里确认。</string>
     <string name="approval_danger_title">确认危险操作</string>
+    <string name="approval_intent_label">目的：</string>
     <string name="approval_ask_title">Agent 需要你决定</string>
     <string name="approval_danger_operation">操作原文</string>
     <string name="approval_danger_why">为什么需要确认</string>

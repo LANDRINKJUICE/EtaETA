@@ -37,11 +37,19 @@ internal class AgentToolApprovalGate(
         if (grants.isGranted(conversationId, toolName, verdict.findings)) {
             return ToolExecutionDecision.Allow
         }
+        // 模型调工具时可带一个可选意图字段：规整成单行、按码点安全截断后带进确认卡，
+        // 让用户不只看到命令原文与风险理由，还知道 Agent 为什么想做它。没填 / 超长 / 含换行
+        // 都安全降级（见 ApprovalIntentPolicy，防止模型用换行伪造额外风险理由、切坏 emoji）。
+        val intent = ApprovalIntentPolicy.normalize(
+            args.optString("intent"),
+            ApprovalIntentPolicy.CARD_MAX_CHARS,
+        )
         val request = coordinator.dangerRequest(
             verdict = verdict,
             runId = runId,
             conversationId = conversationId,
             timeoutMillis = approvalTimeoutMillis,
+            intent = intent,
         )
         return when (val outcome = coordinator.await(request, isAborted = { !isRunActive() })) {
             is AgentApprovalOutcome.Decided -> {

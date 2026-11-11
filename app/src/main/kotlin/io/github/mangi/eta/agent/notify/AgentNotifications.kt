@@ -285,6 +285,17 @@ internal object AgentNotifications {
         // 通知正文必须带上风险理由，不能只放命令原文就给一键放行按钮：把 findings 的 detail
         // 拼进来，用户不打开 App 也能看到为什么危险。同时截断，避免整段原始命令上锁屏/通知栏。
         val body = buildList {
+            // 需求 4：危险卡把模型提供的「你要干什么」放在命令原文之前，
+            // 让用户在通知里也能一眼看到目的，而不只看到命令与风险理由。
+            // 通知正文预算（160 字）比卡片小，意图单独用更短上限，避免把命令原文挤出可见正文
+            // （这条通知自带一键放行按钮，命令原文是放行时最该看的信息）。见 ApprovalIntentPolicy。
+            if (danger) {
+                val intentPolicy = io.github.mangi.eta.agent.approval.ApprovalIntentPolicy
+                val shortIntent = intentPolicy.normalize(request.intent, intentPolicy.NOTIFICATION_MAX_CHARS)
+                if (intentPolicy.shouldShow(shortIntent)) {
+                    add(context.getString(R.string.approval_intent_label) + shortIntent)
+                }
+            }
             add(if (danger) request.subject else request.question.ifBlank { request.explanation })
             if (danger) {
                 request.findings.forEach { finding ->

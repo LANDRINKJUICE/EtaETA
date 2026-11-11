@@ -65,6 +65,8 @@ internal class AgentApprovalCoordinator(
         runId: String,
         conversationId: String?,
         timeoutMillis: Long = AGENT_APPROVAL_TIMEOUT_MILLIS,
+        /** 模型提供的一句简短中文意图；见 [AgentApprovalRequest.intent]。默认空，向后兼容所有调用点。 */
+        intent: String = "",
     ): AgentApprovalRequest {
         val created = clock()
         val allowSession = verdict.level != ToolRiskLevel.CRITICAL && !conversationId.isNullOrBlank()
@@ -75,6 +77,7 @@ internal class AgentApprovalCoordinator(
             conversationId = conversationId,
             runId = runId,
             subject = verdict.subject,
+            intent = intent,
             findings = verdict.findings,
             options = AgentApprovalOption.dangerOptions(allowSession = allowSession),
             allowFreeText = true,

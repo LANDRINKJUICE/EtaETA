@@ -16,6 +16,13 @@ internal data class AgentApprovalRequest(
     val runId: String,
     /** Agent 想做什么：命令、路径或操作原文。 */
     val subject: String,
+    /**
+     * 模型提供的一句简短中文「意图 / 目的」：说明 Agent 为什么想执行这个操作，
+     * 在危险确认卡的命令原文上方显示，让用户知道「你要干什么」而不只看得到命令与风险理由。
+     * 由 [AgentToolApprovalGate] 从工具参数的可选 `intent` 字段读入；模型没填时为空，
+     * 卡片退回现状（只显示命令 + 风险理由），是诚实降级。
+     */
+    val intent: String = "",
     /** 危险卡的风险说明；询问卡为空。 */
     val findings: List<RiskFinding> = emptyList(),
     /** 询问卡的问题。 */

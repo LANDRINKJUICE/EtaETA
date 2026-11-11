@@ -37,6 +37,31 @@ class AgentApprovalCoordinatorTest {
         AgentApprovalOption("option_2", AgentApprovalOptionKind.Choice, "工作群"),
     )
 
+    // ── 需求 4：危险卡「意图 / 你要干什么」透传 ──
+
+    @Test
+    fun dangerRequestCarriesModelIntentIntoTheRequest() {
+        val coordinator = coordinator()
+        val request = coordinator.dangerRequest(
+            verdict(), "run-intent-1", "conv-1",
+            intent = "想读取 build.prop 里的系统版本号来排查兼容性",
+        )
+        assertEquals("想读取 build.prop 里的系统版本号来排查兼容性", request.intent)
+        // 其它字段不受影响，卡片照常组装。
+        assertEquals("terminal", request.toolName)
+        assertEquals(AgentApprovalKind.ToolRisk, request.kind)
+        assertTrue(request.options.isNotEmpty())
+    }
+
+    @Test
+    fun dangerRequestWithoutIntentDefaultsToEmptyForBackwardCompatibility() {
+        // 模型忘填 intent：退回现状（卡片不显示这一行），所有既有调用点零改动。
+        val coordinator = coordinator()
+        val request = coordinator.dangerRequest(verdict(), "run-intent-2", "conv-1")
+        assertEquals("", request.intent)
+        assertTrue(request.intent.isBlank())
+    }
+
     @Test
     fun decisionArrivingBeforeTheDeadlineResumesTheWaiter() {
         val coordinator = coordinator()

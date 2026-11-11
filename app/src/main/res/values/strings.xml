@@ -1497,6 +1497,7 @@
     <string name="settings_danger_tool_guard_title">Confirm risky operations</string>
     <string name="settings_danger_tool_guard_summary">Read-only or copy-only access to system partitions and the boot chain, plus other destructive commands, needs your confirmation in the chat before it runs.</string>
     <string name="approval_danger_title">Confirm risky operation</string>
+    <string name="approval_intent_label">"Purpose: "</string>
     <string name="approval_ask_title">The agent needs your decision</string>
     <string name="approval_danger_operation">Operation</string>
     <string name="approval_danger_why">Why this needs confirmation</string>
