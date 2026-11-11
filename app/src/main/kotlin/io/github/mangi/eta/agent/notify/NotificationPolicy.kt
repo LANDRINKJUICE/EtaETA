@@ -38,6 +38,29 @@ internal object NotificationPolicy {
     private const val JOB_WAKEUP_RANGE = 50
 
     /**
+     * 危险审批卡的后台行动通知：9660..9999，按审批 id 散列，同一张卡原地更新。
+     *
+     * 为什么不是复用 9400：9400 是「N 个操作等待确认」的单条汇总通知（被动提醒，只有“去确认”
+     * 一个动作）；这里每条审批一张卡、带最多 3 个直接决策按钮，语义与生命周期都不同，
+     * 混用会让汇总通知被单张卡覆盖掉。段位紧跟 9602..9651 之后取 340 个空位，
+     * 避让已占用的全部区间（见 [reservedSegments]）。
+     */
+    private const val APPROVAL_ATTENTION_BASE = 9_660
+    /** 放宽到 340 槽：同时待确认的卡通常个位数，hash 撞 ID 概率已极低；Presenter 仍做占用检测兜底。 */
+    private const val APPROVAL_ATTENTION_RANGE = 340
+
+    /**
+     * 审批通知按钮的 PendingIntent requestCode：6400..6699，按 (审批 id, 选项 id) 派生。
+     *
+     * 必须按选项分散：PendingIntent 只按 (requestCode, filterEquals) 区分，extras 不参与比较；
+     * 同一条通知里的按钮若共用一个 requestCode + FLAG_UPDATE_CURRENT，后建的那个会把前面的参数
+     * 覆盖掉——三个按钮就都会变成“拒绝”（或都变成允许）。段位避开 6001、6002、6010、6020、6030、
+     * 自动唤醒的 6200..6299 与执行服务的 20。
+     */
+    private const val APPROVAL_ACTION_REQUEST_BASE = 6_400
+    private const val APPROVAL_ACTION_REQUEST_RANGE = 300
+
+    /**
      * 自动唤醒通知的 PendingIntent requestCode 段：6200..6249（点通知进会话）、
      * 6250..6299（点按钮进任务中心）。
      *
@@ -166,6 +189,32 @@ internal object NotificationPolicy {
     /** 自动唤醒通知"打开任务中心"按钮的 requestCode：6250..6299，按任务分散。 */
     fun jobWakeupActionRequestCode(jobId: String): Int =
         JOB_WAKEUP_ACTION_REQUEST_BASE + (stableHash(jobId) % JOB_WAKEUP_REQUEST_RANGE)
+
+    /** 单卡场景的兼容 hash（Presenter 多卡时用 [allocateApprovalNotificationId] 占用检测分配）。 */
+    fun approvalAttentionId(requestId: String): Int =
+        APPROVAL_ATTENTION_BASE + (stableHash(requestId) % APPROVAL_ATTENTION_RANGE)
+
+    /** 行动通知 ID 段起点与宽度：Presenter 做碰撞占用检测时按此分配，避免两张卡 hash 到同一 ID。 */
+    fun approvalAttentionBase(): Int = APPROVAL_ATTENTION_BASE
+    fun approvalAttentionRange(): Int = APPROVAL_ATTENTION_RANGE
+
+    /**
+     * 在 [approvalAttentionBase]..base+range 段内分配一个未被 [used] 占用的 ID（纯函数，可单测）。
+     *
+     * [used] 必须包含**本轮已经分配出去的** ID，否则同一轮里出现的多张卡会都拿到 base，
+     * 后一条 notify 覆盖前一条。段满时回退到 base（宁可覆盖也不越界）。
+     */
+    fun allocateApprovalNotificationId(used: Collection<Int>): Int {
+        for (offset in 0 until APPROVAL_ATTENTION_RANGE) {
+            val id = APPROVAL_ATTENTION_BASE + offset
+            if (id !in used) return id
+        }
+        return APPROVAL_ATTENTION_BASE
+    }
+
+    /** 审批通知按钮的 requestCode：6400..6699，按 (审批 id, 选项 id) 分散，互不覆盖。 */
+    fun approvalActionRequestCode(requestId: String, optionId: String): Int =
+        APPROVAL_ACTION_REQUEST_BASE + (stableHash("$requestId|$optionId") % APPROVAL_ACTION_REQUEST_RANGE)
 
     /** 稳定散列到非负整数；Int.MIN_VALUE 取 abs 仍为负，先折叠到 Long 再取模。 */
     private fun stableHash(key: String): Int {
@@ -336,5 +385,6 @@ internal object NotificationPolicy {
         PROACTIVE_BASE until PROACTIVE_BASE + PROACTIVE_RANGE,
         APPROVAL_PENDING_ID..APPROVAL_PENDING_ID,
         JOB_WAKEUP_BASE until JOB_WAKEUP_BASE + JOB_WAKEUP_RANGE,
+        APPROVAL_ATTENTION_BASE until APPROVAL_ATTENTION_BASE + APPROVAL_ATTENTION_RANGE,
     )
 }

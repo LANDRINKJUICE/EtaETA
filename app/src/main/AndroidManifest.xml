@@ -215,6 +215,11 @@
             android:name=".agent.tool.MacroRecordingReceiver"
             android:exported="false" />
 
+        <!-- 后台审批通知的直接决策按钮；显式广播 + exported=false，外部 App 无法伪造放行。 -->
+        <receiver
+            android:name=".agent.approval.ApprovalAttentionReceiver"
+            android:exported="false" />
+
         <provider
             android:name=".agent.accessibility.AgentAccessibilityHealthProvider"
             android:authorities="io.github.mangi.eta.accessibility.health"

@@ -94,6 +94,86 @@ class NotificationPolicyTest {
     }
 
     @Test
+    fun `approval attention ids land in their own segment and stay stable per request`() {
+        val existing = (1_107..1_108) + 1_124 + (4_203..4_204) + (9_000..9_290) + (9_300..9_349) +
+            9_400 + (9_500..9_501) + (9_600..9_601) + (9_602..9_651)
+        val ids = (0 until 400).map { NotificationPolicy.approvalAttentionId("approval-$it") }
+        ids.forEach { id ->
+            assertTrue("id=$id 应落在 9660..9999", id in 9_660..9_999)
+            assertFalse("id=$id 不得撞既有段", id in existing)
+        }
+        assertEquals(
+            NotificationPolicy.approvalAttentionId("approval-42"),
+            NotificationPolicy.approvalAttentionId("approval-42"),
+        )
+        assertTrue(NotificationPolicy.reservedSegments().contains(9_660..9_999))
+    }
+
+    @Test
+    fun `approval attention base and range cover the whole 9660 to 9999 segment`() {
+        assertEquals(9_660, NotificationPolicy.approvalAttentionBase())
+        assertEquals(340, NotificationPolicy.approvalAttentionRange())
+        // hash 分布本身不均匀（连续 requestId 会聚集），所以多卡时的 ID 唯一性由
+        // ApprovalAttentionPresenter 的占用检测分配保证，而不是靠 hash 段宽度。这里只钉住
+        // 所有 id 都落在段内、且 base/range 与分配器口径一致。
+        val ids = (0 until 400).map { NotificationPolicy.approvalAttentionId("approval-$it") }
+        ids.forEach { id ->
+            assertTrue(
+                "id=$id 应落在 base..base+range",
+                id in NotificationPolicy.approvalAttentionBase() until
+                    NotificationPolicy.approvalAttentionBase() + NotificationPolicy.approvalAttentionRange(),
+            )
+        }
+        // 分配器从 base 起、跨度 range，恰好覆盖整段。
+        assertEquals(
+            NotificationPolicy.approvalAttentionBase() + NotificationPolicy.approvalAttentionRange() - 1,
+            9_999,
+        )
+    }
+
+    @Test
+    fun `allocateApprovalNotificationId gives distinct ids within one refresh round`() {
+        // 复现 S1：同一轮里出现两张新卡，used 必须把本轮已分配的也算进去，否则都拿到 base。
+        val used = mutableSetOf<Int>()
+        val a = NotificationPolicy.allocateApprovalNotificationId(used)
+        used += a
+        val b = NotificationPolicy.allocateApprovalNotificationId(used)
+        used += b
+        assertTrue("a/b 必须都落在段内", a in 9_660..9_999 && b in 9_660..9_999)
+        assertNotEquals("同一轮两张卡不能共用一个通知 ID", a, b)
+        assertTrue("分配结果必须计入 used", used.containsAll(listOf(a, b)))
+    }
+
+    @Test
+    fun `allocateApprovalNotificationId skips all used slots and never leaves the segment`() {
+        val base = NotificationPolicy.approvalAttentionBase()
+        val range = NotificationPolicy.approvalAttentionRange()
+        // 前 5 个槽被占，应从第 6 个开始分配。
+        val used = (base until base + 5).toSet()
+        assertEquals(base + 5, NotificationPolicy.allocateApprovalNotificationId(used))
+        // 段满：回退到 base，绝不越界。
+        val full = (base until base + range).toSet()
+        assertEquals(base, NotificationPolicy.allocateApprovalNotificationId(full))
+    }
+
+    @Test
+    fun `approval action request codes are distinct per option and per request`() {
+        val codes = listOf(
+            NotificationPolicy.approvalActionRequestCode("a1", "allow_once"),
+            NotificationPolicy.approvalActionRequestCode("a1", "allow_session"),
+            NotificationPolicy.approvalActionRequestCode("a1", "deny"),
+            NotificationPolicy.approvalActionRequestCode("a2", "allow_once"),
+        )
+        codes.forEach { code -> assertTrue("requestCode=$code 应落在 6400..6699", code in 6_400..6_699) }
+        // 同一张卡的三个按钮必须不同，否则 FLAG_UPDATE_CURRENT 会互相覆盖 extras。
+        assertEquals(3, codes.take(3).toSet().size)
+        assertEquals(
+            NotificationPolicy.approvalActionRequestCode("a1", "allow_once"),
+            codes[0],
+        )
+    }
+
+    @Test
     fun `job wakeup ids land in their own segment and stay stable per job`() {
         val existing = (1_107..1_108) + 1_124 + (4_203..4_204) + (9_000..9_290) + (9_300..9_349) +
             9_400 + (9_500..9_501) + (9_600..9_601)

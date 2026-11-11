@@ -259,4 +259,125 @@ internal object AgentNotifications {
                 ?.cancel(NotificationPolicy.APPROVAL_PENDING_ID)
         }
     }
+
+    /**
+     * 后台审批卡的行动通知（悬浮层不可用时的兜底，见
+     * [io.github.mangi.eta.agent.approval.AgentApprovalAttentionPolicy] 规则 3）。
+     *
+     * 与 9400 汇总通知不同：每张卡一条、走 eta_attention HIGH channel（heads-up + 提示音），
+     * 带最多 [AgentApprovalAttentionPolicy] 裁决出的直接决策按钮；用户不打开 App 就能放行/拒绝。
+     * 决策按钮走显式广播 [io.github.mangi.eta.agent.approval.ApprovalAttentionReceiver]，
+     * 最终仍落到 Coordinator.resolve 单一入口。
+     */
+    fun showApprovalAttention(
+        context: Context,
+        request: io.github.mangi.eta.agent.approval.AgentApprovalRequest,
+        notificationId: Int,
+    ) {
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return
+        ensureChannels(context)
+        val policy = io.github.mangi.eta.agent.approval.AgentApprovalAttentionPolicy
+        val actions = policy.notificationActions(request)
+        val danger = request.kind == io.github.mangi.eta.agent.approval.AgentApprovalKind.ToolRisk
+        val title = context.getString(
+            if (danger) R.string.approval_danger_title else R.string.approval_ask_title,
+        )
+        // 通知正文必须带上风险理由，不能只放命令原文就给一键放行按钮：把 findings 的 detail
+        // 拼进来，用户不打开 App 也能看到为什么危险。同时截断，避免整段原始命令上锁屏/通知栏。
+        val body = buildList {
+            add(if (danger) request.subject else request.question.ifBlank { request.explanation })
+            if (danger) {
+                request.findings.forEach { finding ->
+                    finding.detail.takeIf { it.isNotBlank() }?.let { add(it) }
+                }
+            }
+        }.filter { it.isNotBlank() }
+            .joinToString("\n")
+            .let { raw ->
+                if (raw.length > MAX_APPROVAL_BODY_CHARS) {
+                    raw.take(MAX_APPROVAL_BODY_CHARS) + "..."
+                } else {
+                    raw
+                }
+            }
+            .ifBlank { title }
+
+        // 点通知主体：打开任务中心待确认区（在那里有完整的聊天流卡片与自由输入）。
+        val open = taskCenterIntent(context, RequestCodes.APPROVAL_CONTENT)
+        val notification = builder(context, NotificationPolicy.CHANNEL_ATTENTION)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setStyle(Notification.BigTextStyle().bigText(body))
+            .setContentIntent(open)
+            .setAutoCancel(false)
+            .setOnlyAlertOnce(true)
+            .setCategory(Notification.CATEGORY_REMINDER)
+            // 敏感操作原文不上锁屏：只显示标题，解锁后才看得到正文与风险理由。
+            .setVisibility(Notification.VISIBILITY_PRIVATE)
+            .apply {
+                actions.forEach { optionId ->
+                    val label = actionLabel(context, request, optionId)
+                    val requestCode = NotificationPolicy.approvalActionRequestCode(request.id, optionId)
+                    // 显式广播给 exported=false 的接收者：外部 App 无法伪造替用户放行。
+                    // 关键：给 Intent 一个按 (审批 id, 选项 id) 唯一的 data，使其进入
+                    // filterEquals。PendingIntent 只按 (requestCode, filterEquals) 区分，
+                    // extras 不参与比较；仅靠窄散列段分 requestCode 会碰撞，导致 FLAG_UPDATE_CURRENT
+                    // 把后一个按钮的 requestId/optionId 覆盖到前一个，出现「点 A 卡放行 B 卡」。
+                    val intent = io.github.mangi.eta.agent.approval.ApprovalAttentionReceiver
+                        .decideIntent(context, request.id, optionId)
+                        .setData(android.net.Uri.parse("eta://eta.approval/${request.id}/$optionId"))
+                    val pending = PendingIntent.getBroadcast(
+                        context,
+                        requestCode,
+                        intent,
+                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                    )
+                    addAction(Notification.Action.Builder(null, label, pending).build())
+                }
+                // 选项过多或只有自由输入：放不下按钮，给一个"打开处理"直达任务中心。
+                if (policy.needsOpenAction(request)) {
+                    addAction(
+                        Notification.Action.Builder(
+                            null,
+                            context.getString(R.string.notify_action_review),
+                            taskCenterIntent(context, RequestCodes.APPROVAL_ACTION),
+                        ).build(),
+                    )
+                }
+            }
+            .build()
+        runCatching { manager.notify(notificationId, notification) }
+    }
+
+    /**
+     * 按钮文案：询问卡用模型给的 option.label（否则 N 个按钮全是同一个"去处理"，用户不知道在选什么）；
+     * 危险卡的内置选项复用聊天流已有的 option 字符串资源，保证三语一致、不自造一套。
+     */
+    private fun actionLabel(
+        context: Context,
+        request: io.github.mangi.eta.agent.approval.AgentApprovalRequest,
+        optionId: String,
+    ): String {
+        val custom = request.options.firstOrNull { it.id == optionId }?.label.orEmpty()
+        if (custom.isNotBlank()) return custom
+        val res = when (optionId) {
+            io.github.mangi.eta.agent.approval.AgentApprovalOption.ALLOW_ONCE ->
+                R.string.approval_option_allow_once
+            io.github.mangi.eta.agent.approval.AgentApprovalOption.ALLOW_SESSION ->
+                R.string.approval_option_allow_session
+            io.github.mangi.eta.agent.approval.AgentApprovalOption.DENY ->
+                R.string.approval_option_deny
+            else -> R.string.notify_action_review
+        }
+        return context.getString(res)
+    }
+
+    /** 通知正文上限：命令原文可能含路径/URL/口令，不整段上锁屏或通知栏。 */
+    private const val MAX_APPROVAL_BODY_CHARS = 160
+
+    fun cancelApprovalAttention(context: Context, notificationId: Int) {
+        runCatching {
+            context.getSystemService(NotificationManager::class.java)?.cancel(notificationId)
+        }
+    }
 }

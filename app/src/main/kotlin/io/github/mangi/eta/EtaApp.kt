@@ -56,6 +56,9 @@ class EtaApp : Application(), XposedServiceHelper.OnServiceListener {
         // 主动沟通 / 待确认通知的 channel 与监听：只在主进程装一次，幂等。
         AgentNotifications.ensureChannels(this)
         ApprovalNotificationBridge.install(this)
+        // 后台审批卡：前后台判定 + 悬浮层 / 通知兜底编排，只在主进程装一次，幂等。
+        io.github.mangi.eta.agent.approval.AgentForegroundTracker.install(this)
+        io.github.mangi.eta.agent.approval.ApprovalAttentionPresenter.install(this)
         TerminalRuntime.initialize(this)
         RootAccess.initialize(this)
         applicationScope.launch { TerminalRuntime.backgroundJobs(this@EtaApp).resume() }
