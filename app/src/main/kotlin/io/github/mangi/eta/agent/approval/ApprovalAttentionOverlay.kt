@@ -3,6 +3,8 @@ package io.github.mangi.eta.agent.approval
 import android.content.Context
 import android.graphics.PixelFormat
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
@@ -56,7 +58,10 @@ import top.yukonga.miuix.kmp.squircle.LocalSquircleEnabled
  * - 异常边界：建 View / setContent / addView 全程 runCatching，失败返回 false 让 Presenter 降级到通知；
  *   AgentAppTheme 会碰 platformDynamicColors/COUI 主题，个别 ROM 抛错不能把主线程带崩。
  * - 焦点：默认 FLAG_NOT_FOCUSABLE，不抢用户当前 App 的输入焦点、不吞返回手势；
- *   因此悬浮层定位为「快速点选决策」，需要填自由文本/纠正说明时由通知主体或任务中心的聊天流卡片承接。
+ *   仅当用户点开自由输入 composer 时，临时去掉该 flag 并改用 SOFT_INPUT_ADJUST_PAN 让
+ *   `BasicTextField` 拿到焦点、IME 弹出（见 `setFocusable`）；composer 收起 / 决策 / 载体消失
+ *   立刻还原。纯逻辑判定见 [ApprovalOverlayFocusPolicy]，窗口切换仿
+ *   `AgentRuntimeService` 的 capsule 输入模式。
  * - 布局：y 用状态栏∪挖孔 inset（与既有浮窗一致），内容加 verticalScroll + 最大高度，长命令也能滚到底部按钮。
  *
  * @return 是否成功 addView。false 表示建窗失败，调用方必须据此降级到通知兜底
@@ -64,13 +69,26 @@ import top.yukonga.miuix.kmp.squircle.LocalSquircleEnabled
  */
 internal object ApprovalAttentionOverlay {
 
+    /** 复用主线程 Handler（与 ApprovalAttentionPresenter 同口径），避免每次切焦点都 new。主线程访问。 */
+    private val mainHandler = Handler(Looper.getMainLooper())
+
     private class Attached(
         val windowManager: WindowManager,
         val view: ComposeView,
+        val params: WindowManager.LayoutParams,
         val lifecycle: LifecycleRegistry,
         val requestId: String,
         val requestState: MutableState<AgentApprovalRequest>,
-    )
+    ) {
+        /** 加窗时的初始 flags 基准（含 FLAG_NOT_FOCUSABLE）；每次切焦点从它派生，避免失败后基准被改脏。 */
+        val baseFlags: Int = params.flags
+
+        /** 当前窗口是否处于「可聚焦」态（composer 可见、IME 可用）。主线程访问。 */
+        var focusable: Boolean = ApprovalOverlayFocusPolicy.INITIAL_FOCUSABLE
+
+        /** 窗口是否曾进入过可聚焦态；用于 detach 时判断是否需要主动收键盘 / 清焦点。主线程访问。 */
+        var everFocusable: Boolean = false
+    }
 
     @Volatile
     private var attached: Attached? = null
@@ -117,7 +135,13 @@ internal object ApprovalAttentionOverlay {
                 setContent {
                     ApprovalCardContent(
                         requestState = requestState,
+                        // 浮窗专属：composer 展开时临时去掉 FLAG_NOT_FOCUSABLE 让 BasicTextField
+                        // 拿到焦点、IME 能弹出；收起/消失时还原，不吞下层 App 的返回手势。
+                        overlayComposerHost = { active -> setFocusable(active) },
                         onDecide = { optionId, freeText ->
+                            // 决策落地：先把浮窗还原成不可聚焦（收键盘 / 还焦点），再 resolve。
+                            // 否则窗口在收起动画期间仍持有输入焦点，会遮挡下层 App。
+                            setFocusable(composerActive = false, decisionConsumed = true)
                             val resolved = AgentApprovalCoordinator.shared.resolve(request.id, optionId, freeText)
                             // resolve 内部把 pending 清空，Presenter 的监听会收起载体；这里只做一次
                             // 兜底刷新，避免极端时序下窗口残留。决策失败（卡片已失效）也不重试。
@@ -149,7 +173,7 @@ internal object ApprovalAttentionOverlay {
 
             val ok = runCatching { wm.addView(composeView, params) }.isSuccess
             if (ok) {
-                attached = Attached(wm, composeView, owner.lifecycleRegistry, request.id, requestState)
+                attached = Attached(wm, composeView, params, owner.lifecycleRegistry, request.id, requestState)
             } else {
                 runCatching { wm.removeViewImmediate(composeView) }
                 owner.onDestroy()
@@ -165,9 +189,75 @@ internal object ApprovalAttentionOverlay {
 
     fun isShowing(): Boolean = synchronized(this) { attached != null }
 
+    /**
+     * 切换窗口焦点模式：有明确输入意图时 focusable=true，去掉 FLAG_NOT_FOCUSABLE 并改用
+     * SOFT_INPUT_ADJUST_PAN，让卡片里的 `BasicTextField` 拿到焦点、IME 能弹出；意图消失/决策/
+     * 消失时还原成不可聚焦 + 主动收键盘，把输入焦点还给下层 App、不吞返回手势。
+     *
+     * 与 `AgentRuntimeService.setCapsuleInputMode` 同一套 updateViewLayout 模式。从 Compose
+     * 回调（主线程）调用，非主线程时 post 到主线程执行。幂等：状态未变时不重复改布局。
+     */
+    private fun setFocusable(composerActive: Boolean, decisionConsumed: Boolean = false) {
+        val focusable = ApprovalOverlayFocusPolicy.shouldBeFocusable(composerActive, decisionConsumed)
+        val applyFocusMode = {
+            val current = attached
+            if (current != null && current.focusable != focusable) {
+                val lp = current.params
+                // 从加窗时的基准 flags 派生，绝不就地拿 lp.flags 当基准：
+                // updateViewLayout 失败时 lp 不会被写脏，窗口状态与基准始终一致（G4）。
+                val nextFlags = if (focusable) {
+                    current.baseFlags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
+                } else {
+                    current.baseFlags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                }
+                val nextSoftInputMode = if (focusable) {
+                    WindowManager.LayoutParams.SOFT_INPUT_ADJUST_PAN
+                } else {
+                    WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING
+                }
+                val snapshotFlags = lp.flags
+                val snapshotSoftInputMode = lp.softInputMode
+                lp.flags = nextFlags
+                lp.softInputMode = nextSoftInputMode
+                val ok = runCatching {
+                    current.windowManager.updateViewLayout(current.view, lp)
+                }.isSuccess
+                if (ok) {
+                    current.focusable = focusable
+                    if (focusable) current.everFocusable = true
+                    // true -> false：主动清焦点 + 收键盘。放在这里而不是只依赖 detachLocked，
+                    // 因为决策路径会先把 focusable 改成 false 再 dismiss（G2）。
+                    if (!focusable && current.everFocusable) hideKeyboard(current)
+                } else {
+                    // 失败：回滚 lp 到快照，focusable 不变，下次 composer 变化会重试。
+                    lp.flags = snapshotFlags
+                    lp.softInputMode = snapshotSoftInputMode
+                }
+            }
+        }
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            runCatching { applyFocusMode() }
+        } else {
+            mainHandler.post { runCatching { applyFocusMode() } }
+        }
+    }
+
+    /** 清掉附着在该浮窗上的输入焦点与 IME；可重复调用。 */
+    private fun hideKeyboard(current: Attached) {
+        runCatching { current.view.clearFocus() }
+        runCatching {
+            val imm = current.view.context
+                .getSystemService(Context.INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager
+            imm?.hideSoftInputFromWindow(current.view.windowToken, 0)
+        }
+    }
+
     private fun detachLocked() {
         val current = attached ?: return
         attached = null
+        // 先收键盘再拆窗：曾可聚焦的窗口上 IME 可能附着，直接 removeView 会留残影/焦点。
+        // 用 everFocusable 而非 focusable 作判据——决策路径可能已把 focusable 复位（G2）。
+        if (current.everFocusable) hideKeyboard(current)
         runCatching { current.windowManager.removeViewImmediate(current.view) }
         // 派发 ON_DESTROY 让 DisposeOnViewTreeLifecycleDestroyed 真正销毁 composition + 收集器。
         runCatching { current.lifecycle.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY) }
@@ -193,6 +283,7 @@ internal object ApprovalAttentionOverlay {
     @Composable
     private fun ApprovalCardContent(
         requestState: MutableState<AgentApprovalRequest>,
+        overlayComposerHost: (Boolean) -> Unit,
         onDecide: (String, String?) -> Unit,
     ) {
         val appearance by AppearanceSettingsRepository.settingsFlow()
@@ -218,6 +309,7 @@ internal object ApprovalAttentionOverlay {
                     AgentApprovalRequestCard(
                         request = request,
                         onDecide = onDecide,
+                        overlayComposerHost = overlayComposerHost,
                     )
                 }
             }
