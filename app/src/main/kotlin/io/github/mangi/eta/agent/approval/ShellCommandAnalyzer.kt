@@ -940,7 +940,7 @@ internal object ShellCommandAnalyzer {
 
     private val ASSIGNMENT = Regex("^([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
 
-    private val VARIABLE_REFERENCE = Regex("\\$\\{([A-Za-z_][A-Za-z0-9_]*)}|\\$([A-Za-z_][A-Za-z0-9_]*)")
+    private val VARIABLE_REFERENCE by lazy { Regex("\\$\\{([A-Za-z_][A-Za-z0-9_]*)\\}|\\$([A-Za-z_][A-Za-z0-9_]*)") }
 
     private fun substitute(text: String, state: ShellState): String {
         if (!text.contains('$') || state.variables.isEmpty()) return text

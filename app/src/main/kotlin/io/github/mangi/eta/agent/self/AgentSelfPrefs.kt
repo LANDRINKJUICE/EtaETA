@@ -122,9 +122,9 @@ internal object AgentSelfPrefsRules {
     const val MASK_FULL_HIDE_BELOW = 16
 
     /** 与 `SpeechProtocol` 的运行期 bucket 规则一致：3~63 位小写字母/数字/短横线，首尾为字母或数字。 */
-    val OSS_BUCKET_PATTERN = Regex("[a-z0-9][a-z0-9-]{1,61}[a-z0-9]")
+    val OSS_BUCKET_PATTERN by lazy { Regex("[a-z0-9][a-z0-9-]{1,61}[a-z0-9]") }
 
-    private val PLACEHOLDER = Regex("\\{\\{[A-Za-z0-9_]+}}")
+    private val PLACEHOLDER by lazy { Regex("\\{\\{[A-Za-z0-9_]+\\}\\}") }
     private val URL_SCHEMES = listOf("http://", "https://")
 
     /**
