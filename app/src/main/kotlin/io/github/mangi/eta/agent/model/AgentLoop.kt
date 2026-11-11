@@ -5,6 +5,8 @@ import io.github.mangi.eta.agent.runtime.AgentRunController
 import io.github.mangi.eta.agent.runtime.AgentTokenUsage
 import io.github.mangi.eta.agent.roleplay.RoleplayRunContext
 import io.github.mangi.eta.agent.subagent.AgentSubagentToolCatalog
+import io.github.mangi.eta.agent.usage.UsageAttribution
+import io.github.mangi.eta.agent.usage.UsageTelemetry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -39,6 +41,8 @@ internal class AgentLoop(
     private val onTranscript: (List<AgentModelClient.ConversationMessage>) -> Unit = {},
     private val purpose: ProviderRequestPurpose = ProviderRequestPurpose.CHAT,
     private val roleplayContext: RoleplayRunContext? = null,
+    /** 用量归因；null 表示本次循环不参与统计（例如语音改写等内部旁路）。 */
+    private val usageAttribution: UsageAttribution? = null,
     initialSupplementIndex: Int = 0,
 ) {
     data class Result(
@@ -66,6 +70,49 @@ internal class AgentLoop(
     private var supplementIndex = initialSupplementIndex
 
     fun contextSnapshot(): AgentContextSnapshot? = context.snapshot()
+
+    /**
+     * 记录一次已完成 provider 请求的用量。
+     *
+     * 口径：
+     * - prompt/completion 优先取服务端 usage；缺字段（含端点报 0）时按字符数估算并打 `estimated`；
+     * - 字符数通过惰性 lambda 传入，只有真的需要估算时才会遍历消息，正常路径零额外开销；
+     * - 不含任何 prompt/回复正文，只有计数与归类字段。
+     */
+    private fun recordUsage(
+        roundUsage: AgentTokenUsage?,
+        contextInputTokens: Int?,
+        requestMessages: JSONArray,
+        assistantMessage: JSONObject,
+        reasoningChars: Int,
+    ) {
+        val attribution = usageAttribution ?: return
+        UsageTelemetry.recordModelRound(
+            attribution = attribution,
+            purpose = purpose.name,
+            providerId = config.providerId,
+            providerName = config.providerName,
+            model = config.model,
+            promptTokens = roundUsage?.inputTokens ?: contextInputTokens,
+            completionTokens = roundUsage?.outputTokens,
+            cachedTokens = roundUsage?.cachedTokens,
+            promptChars = { estimateRequestChars(requestMessages) },
+            completionChars = assistantMessage.optString("content").length + reasoningChars,
+        )
+    }
+
+    /** 估算 prompt 字符数：只累加文本与工具调用参数，跳过 JSON 结构开销。 */
+    private fun estimateRequestChars(messages: JSONArray): Int {
+        var total = 0
+        for (index in 0 until messages.length()) {
+            val message = messages.optJSONObject(index) ?: continue
+            total += message.optString("content").length
+            total += message.optString("reasoning_content").length
+            total += message.optString("name").length
+            total += message.optJSONArray("tool_calls")?.toString()?.length ?: 0
+        }
+        return total
+    }
 
     private fun appendMessage(message: JSONObject) {
         messages.put(message)
@@ -221,6 +268,14 @@ internal class AgentLoop(
             if (!accumulatedUsage.isEmpty) {
                 onEvent(AgentEvent.UsageReceived(round = round, usage = accumulatedUsage))
             }
+            // 用量埋点：一次 provider 请求一条记录；内部自行吞掉所有异常，绝不影响本轮结果。
+            recordUsage(
+                roundUsage = roundUsage,
+                contextInputTokens = roundInputTokens,
+                requestMessages = requestMessages,
+                assistantMessage = assistantMessage,
+                reasoningChars = assistantReasoning.length,
+            )
 
             if (toolCalls.isNotEmpty()) {
                 val outcomes = executeToolBatch(round, toolCalls, providerResponse.stopReason)

@@ -27,6 +27,11 @@ class PrefsDefaultsTest {
                 Prefs.Keys.AGENT_AUTO_COMPACTION_ENABLED to true,
                 Prefs.Keys.AGENT_SUBAGENT_ENABLED to true,
                 Prefs.Keys.AGENT_VIRTUAL_DISPLAY_ENABLED to true,
+                Prefs.Keys.AGENT_DANGER_TOOL_GUARD to true,
+                Prefs.Keys.AGENT_MEMORY_RELEVANCE_ENABLED to true,
+                Prefs.Keys.AGENT_MEMORY_DISTILL_ENABLED to false,
+                Prefs.Keys.AGENT_MEMORY_SEMANTIC_RECALL_ENABLED to false,
+                Prefs.Keys.AGENT_USAGE_STATS_ENABLED to true,
             ),
             Prefs.Keys.BOOLEAN_DEFAULTS,
         )
@@ -48,6 +53,11 @@ class PrefsDefaultsTest {
                 Prefs.Keys.AGENT_AUTO_COMPACTION_ENABLED,
                 Prefs.Keys.AGENT_SUBAGENT_ENABLED,
                 Prefs.Keys.AGENT_VIRTUAL_DISPLAY_ENABLED,
+                Prefs.Keys.AGENT_DANGER_TOOL_GUARD,
+                Prefs.Keys.AGENT_MEMORY_RELEVANCE_ENABLED,
+                Prefs.Keys.AGENT_MEMORY_DISTILL_ENABLED,
+                Prefs.Keys.AGENT_MEMORY_SEMANTIC_RECALL_ENABLED,
+                Prefs.Keys.AGENT_USAGE_STATS_ENABLED,
             ),
             Prefs.Keys.LOCAL_AGENT_KEYS,
         )

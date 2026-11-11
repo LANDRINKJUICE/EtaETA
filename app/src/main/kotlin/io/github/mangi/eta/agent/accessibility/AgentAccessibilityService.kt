@@ -22,10 +22,12 @@ import android.os.HandlerThread
 import android.os.Looper
 import android.os.PersistableBundle
 import android.os.SystemClock
+import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityServiceInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import io.github.mangi.eta.agent.device.ScrollAxis
 import io.github.mangi.eta.agent.device.ScrollAxisContract
@@ -35,6 +37,9 @@ import io.github.mangi.eta.agent.device.ScrollEvidence
 import io.github.mangi.eta.agent.device.ScrollEvidenceContract
 import io.github.mangi.eta.agent.device.ScrollMovementSource
 import io.github.mangi.eta.agent.device.RootScrollMotionContract
+import io.github.mangi.eta.agent.tool.MacroRecorder
+import io.github.mangi.eta.agent.tool.RecordedAction
+import io.github.mangi.eta.agent.tool.RecordedKind
 import io.github.mangi.eta.core.AndroidAgentLogger
 import java.util.ArrayDeque
 import java.util.concurrent.ArrayBlockingQueue
@@ -96,6 +101,16 @@ class AgentAccessibilityService : AccessibilityService() {
     @Volatile
     private var serviceToken = SERVICE_TOKENS.incrementAndGet()
 
+    /** 宏录制开关：只有录制期间才把点击、输入、滚动与按键转成宏动作，平时零开销。 */
+    @Volatile
+    private var macroRecordingActive = false
+
+    /** 每个输入框上一次的完整文本，用来把 TYPE_VIEW_TEXT_CHANGED 折算成"新增的字符"。 */
+    private val macroTextSnapshots = HashMap<String, String>()
+
+    @Volatile
+    private var macroProgressNotifiedAtMillis = 0L
+
     override fun onServiceConnected() {
         serviceToken = SERVICE_TOKENS.incrementAndGet()
         instance = this
@@ -122,7 +137,14 @@ class AgentAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        when (event?.eventType) {
+        if (event == null) return
+        // 录制是旁路观察：先按需记录，再走原有的窗口\/滚动事件维护逻辑。
+        if (macroRecordingActive) {
+            runCatching { captureMacroEvent(event) }
+            // 达到步数/时长上限时主动收尾（审查 m2），内部先做廉价判断，未到上限直接返回。
+            runCatching { MacroRecorder.enforceLimits(applicationContext) }
+        }
+        when (event.eventType) {
             AccessibilityEvent.TYPE_WINDOWS_CHANGED,
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
                 if (
@@ -147,6 +169,213 @@ class AgentAccessibilityService : AccessibilityService() {
     }
 
     override fun onInterrupt() = Unit
+
+    /**
+     * 录制期间的按键旁路。
+     *
+     * 只在录制中且是白名单按键（返回\/回车\/最近任务）时记录，并且**永远返回 false**：
+     * 不消费事件，用户原本的按键行为不会因为录制发生任何变化。
+     */
+    override fun onKeyEvent(event: KeyEvent): Boolean {
+        if (macroRecordingActive && event.action == KeyEvent.ACTION_UP && event.repeatCount == 0) {
+            val button = when (event.keyCode) {
+                KeyEvent.KEYCODE_BACK -> "BACK"
+                KeyEvent.KEYCODE_ENTER,
+                KeyEvent.KEYCODE_NUMPAD_ENTER,
+                KeyEvent.KEYCODE_DPAD_CENTER,
+                -> "ENTER"
+                KeyEvent.KEYCODE_APP_SWITCH -> "RECENTS"
+                else -> null
+            }
+            if (button != null) {
+                MacroRecorder.capture(
+                    RecordedAction(
+                        kind = RecordedKind.KEY,
+                        atMillis = SystemClock.elapsedRealtime(),
+                        button = button,
+                    ),
+                )
+                notifyMacroProgress()
+            }
+        }
+        return false
+    }
+
+    /** 由 [MacroRecorder] 打开\/关闭录制：只在录制期间把点击类事件与按键过滤打开。 */
+    internal fun setMacroRecordingActive(active: Boolean) {
+        if (macroRecordingActive == active) return
+        macroRecordingActive = active
+        if (!active) macroTextSnapshots.clear()
+        mainHandler.post { applyMacroServiceInfo(active) }
+    }
+
+    /**
+     * 运行期调整服务能力：
+     * - 点击\/长按事件默认不在事件掩码里（平时不需要，能省掉大量回调）；
+     * - 按键过滤需要 FLAG_REQUEST_FILTER_KEY_EVENTS + 配置里的 canRequestFilterKeyEvents。
+     * 所有改动都在录制边界上做，结束后逐位还原。
+     */
+    private fun applyMacroServiceInfo(active: Boolean) {
+        val base = runCatching { serviceInfo }.getOrNull() ?: return
+        val info = AccessibilityServiceInfo(base)
+        val clickTypes = AccessibilityEvent.TYPE_VIEW_CLICKED or AccessibilityEvent.TYPE_VIEW_LONG_CLICKED
+        info.eventTypes = if (active) {
+            base.eventTypes or clickTypes
+        } else {
+            base.eventTypes and clickTypes.inv()
+        }
+        info.flags = if (active) {
+            info.flags or AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS
+        } else {
+            info.flags and AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS.inv()
+        }
+        runCatching { serviceInfo = info }
+    }
+
+    /** 录制中的事件捕获：只读节点信息，不做任何动作，也不改界面。 */
+    private fun captureMacroEvent(event: AccessibilityEvent) {
+        when (event.eventType) {
+            AccessibilityEvent.TYPE_VIEW_CLICKED,
+            AccessibilityEvent.TYPE_VIEW_LONG_CLICKED,
+            -> {
+                val source = runCatching { event.source }.getOrNull() ?: return
+                try {
+                    // 密码框里的点击不记录（避免把"密码键盘上的操作"写成可回放的宏）。
+                    if (source.isPassword) return
+                    val bounds = Rect()
+                    source.getBoundsInScreen(bounds)
+                    if (bounds.isEmpty) return
+                    val label = source.text?.toString().orEmpty()
+                        .ifBlank { source.contentDescription?.toString().orEmpty() }
+                        .take(MACRO_TARGET_TEXT_MAX_CHARS)
+                    MacroRecorder.capture(
+                        RecordedAction(
+                            kind = if (event.eventType == AccessibilityEvent.TYPE_VIEW_LONG_CLICKED) {
+                                RecordedKind.LONG_PRESS
+                            } else {
+                                RecordedKind.TAP
+                            },
+                            atMillis = SystemClock.elapsedRealtime(),
+                            x = bounds.centerX(),
+                            y = bounds.centerY(),
+                            targetText = label,
+                            targetDesc = source.contentDescription?.toString().orEmpty()
+                                .take(MACRO_TARGET_TEXT_MAX_CHARS),
+                        ),
+                    )
+                    notifyMacroProgress()
+                } finally {
+                    runCatching { source.recycle() }
+                }
+            }
+
+            AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED -> {
+                val source = runCatching { event.source }.getOrNull() ?: return
+                try {
+                    val sensitive = runCatching { source.isPassword }.getOrDefault(false) ||
+                        runCatching { event.isPassword }.getOrDefault(false)
+                    val viewId = source.viewIdResourceName.orEmpty()
+                    val key = "${event.windowId}:${source.uniqueId}:$viewId"
+                    if (sensitive) {
+                        // 审查 m3：密码框**连读都不读**——不取 text、不写快照，只留一条占位计数，
+                        // 保证密码一个字符都不会进入内存或磁盘。
+                        macroTextSnapshots[key] = ""
+                        MacroRecorder.capture(
+                            RecordedAction(
+                                kind = RecordedKind.TEXT,
+                                atMillis = SystemClock.elapsedRealtime(),
+                                text = "",
+                                sensitive = true,
+                            ),
+                        )
+                        notifyMacroProgress()
+                        return
+                    }
+                    val current = source.text?.toString().orEmpty()
+                    val previous = macroTextSnapshots[key].orEmpty()
+                    macroTextSnapshots[key] = current
+                    val appended = when {
+                        current.isEmpty() -> ""
+                        current.startsWith(previous) -> current.substring(previous.length)
+                        // 整体替换（清空重写、粘贴覆盖）：按新内容整段记录。
+                        else -> current
+                    }
+                    if (appended.isEmpty()) return
+                    MacroRecorder.capture(
+                        RecordedAction(
+                            kind = RecordedKind.TEXT,
+                            atMillis = SystemClock.elapsedRealtime(),
+                            text = appended,
+                            sensitive = false,
+                            targetText = viewId.take(MACRO_TARGET_TEXT_MAX_CHARS),
+                            targetDesc = runCatching { source.hintText?.toString().orEmpty() }
+                                .getOrDefault("")
+                                .take(MACRO_TARGET_TEXT_MAX_CHARS),
+                        ),
+                    )
+                    notifyMacroProgress()
+                } finally {
+                    runCatching { source.recycle() }
+                }
+            }
+
+            AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
+                val deltaX = event.scrollDeltaX
+                val deltaY = event.scrollDeltaY
+                if (deltaX == 0 && deltaY == 0) return
+                val source = runCatching { event.source }.getOrNull()
+                val bounds = Rect()
+                val centerX: Int
+                val centerY: Int
+                if (source != null) {
+                    try {
+                        source.getBoundsInScreen(bounds)
+                    } finally {
+                        runCatching { source.recycle() }
+                    }
+                    centerX = if (bounds.isEmpty) 0 else bounds.centerX()
+                    centerY = if (bounds.isEmpty) 0 else bounds.centerY()
+                } else {
+                    centerX = 0
+                    centerY = 0
+                }
+                // 方向语义需要真机核对：原始 delta 落一条节流日志，配合归一化的取反规则排查。
+                AndroidAgentLogger.debug {
+                    "Macro record scroll: window=${event.windowId} deltaX=$deltaX deltaY=$deltaY " +
+                        "anchor=$centerX,$centerY"
+                }
+                MacroRecorder.capture(
+                    RecordedAction(
+                        kind = RecordedKind.SCROLL,
+                        atMillis = SystemClock.elapsedRealtime(),
+                        x = centerX,
+                        y = centerY,
+                        deltaX = deltaX,
+                        deltaY = deltaY,
+                        // 审查 M6：按窗口分组，避免把两个窗口的滚动拼成一次手势。
+                        windowId = event.windowId,
+                    ),
+                )
+                notifyMacroProgress()
+            }
+        }
+    }
+
+    /** 节流刷新"正在录制"通知里的步数，避免每帧都发通知。 */
+    private fun notifyMacroProgress() {
+        val now = SystemClock.elapsedRealtime()
+        if (now - macroProgressNotifiedAtMillis < MACRO_PROGRESS_NOTIFY_INTERVAL_MS) return
+        macroProgressNotifiedAtMillis = now
+        MacroRecorder.refreshNotification(applicationContext)
+    }
+
+    /**
+     * Eta 自己派发动作时短暂关闭录制捕获：否则"Agent 点了一下"会被录成"用户点了一下"。
+     */
+    private fun suppressMacroCapture(durationMillis: Long) {
+        if (!macroRecordingActive) return
+        MacroRecorder.suppressFor(durationMillis)
+    }
 
     /**
      * 一次观察只查询目标显示屏，窗口、包名与节点来自同一次选窗。
@@ -1081,6 +1310,7 @@ class AgentAccessibilityService : AccessibilityService() {
         )
 
     fun globalActionResult(name: String): NodeActionResult {
+        suppressMacroCapture(600L)
         val action = when (name.uppercase()) {
             "BACK" -> GLOBAL_ACTION_BACK
             "HOME" -> GLOBAL_ACTION_HOME
@@ -1449,6 +1679,7 @@ class AgentAccessibilityService : AccessibilityService() {
         cursor: Int,
         connectionToken: Long,
     ): NodeActionResult {
+        suppressMacroCapture(800L)
         val setTextArgs = Bundle().apply {
             putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
         }
@@ -2055,6 +2286,8 @@ class AgentAccessibilityService : AccessibilityService() {
         if (instance !== this || connectionToken != serviceToken || Thread.currentThread().isInterrupted) {
             return NodeActionResult.failure("SERVICE_RECONNECTED", "无障碍连接已失效，手势未执行")
         }
+        // 自己派发的手势不算用户操作：录制期间短暂抑制捕获，避免宏里混入 Agent 的动作。
+        suppressMacroCapture(durationMs + 600L)
         if (Looper.myLooper() == Looper.getMainLooper()) {
             return NodeActionResult.failure(
                 "GESTURE_NOT_DISPATCHED",
@@ -2649,6 +2882,8 @@ class AgentAccessibilityService : AccessibilityService() {
                 SCROLL_VERIFY_TIMEOUT_MS
         private const val SCROLL_EVENT_QUEUE_CAPACITY = 1
         private const val MAX_SCROLL_SIGNALS = 64
+        private const val MACRO_TARGET_TEXT_MAX_CHARS = 80
+        private const val MACRO_PROGRESS_NOTIFY_INTERVAL_MS = 1_000L
 
         private val GESTURE_CALLBACK_THREAD = HandlerThread("agent-gesture-callback").apply {
             isDaemon = true

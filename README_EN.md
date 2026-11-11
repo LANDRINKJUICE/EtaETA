@@ -181,6 +181,7 @@ These implementation notes are currently in Chinese:
 - [Agent Runtime](docs/AGENT_RUNTIME.md): the agent loop, providers, steering, transcripts, and result recovery.
 - [HyperOS system entry points](docs/HYPEROS_SYSTEM_ENTRY.md): power-button and Circle to Search integration, requirements, and validation coverage.
 - [Native terminal components](docs/TERMINAL_NATIVE.md): PTY and PRoot components, and rebuilding the bundled source.
+- [UI design guide](docs/UI_DESIGN_GUIDE.md): COUI/Miuix component pairing, spacing, typography and wording rules; read before touching any screen.
 
 ## Pull Requests and Contributing
 

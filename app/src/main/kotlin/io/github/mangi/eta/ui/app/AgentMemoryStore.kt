@@ -4,11 +4,14 @@ import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import io.github.mangi.eta.EtaApp
 import io.github.mangi.eta.R
 import io.github.mangi.eta.agent.memory.AgentMemoryContextBuilder
+import io.github.mangi.eta.config.Prefs
 import io.github.mangi.eta.core.AndroidAgentLogger
 import io.github.mangi.eta.core.safeLogType
 import io.github.mangi.eta.data.repository.AgentMemoryRepository
+import io.github.mangi.eta.data.repository.AgentMemorySnapshot
 import io.github.mangi.eta.data.repository.RuntimeConfigRepository
 import io.github.mangi.eta.ui.model.AgentMemoryUiState
 import kotlinx.coroutines.CoroutineScope
@@ -25,6 +28,15 @@ internal class AgentMemoryStore(
 
     private var hasLoadedOnce = false
 
+    private data class Loaded(
+        val snapshot: AgentMemorySnapshot,
+        val enabled: Boolean,
+        val coreBudgetChars: Int,
+        val relevanceEnabled: Boolean,
+        val distillationEnabled: Boolean,
+        val semanticRecallEnabled: Boolean,
+    )
+
     var memoryState by mutableStateOf(AgentMemoryUiState())
         private set
 
@@ -35,23 +47,32 @@ internal class AgentMemoryStore(
         scope.launch(Dispatchers.IO) {
             runCatching {
                 val snapshot = AgentMemoryRepository.snapshot()
-                val enabled = AgentMemoryRepository.isEnabled()
                 val contextWindow = RuntimeConfigRepository.currentRuntimeConfig()?.contextWindow
-                Triple(snapshot, enabled, AgentMemoryContextBuilder.coreBudgetChars(contextWindow))
+                Loaded(
+                    snapshot = snapshot,
+                    enabled = AgentMemoryRepository.isEnabled(),
+                    coreBudgetChars = AgentMemoryContextBuilder.coreBudgetChars(contextWindow),
+                    relevanceEnabled = Prefs.isEnabled(Prefs.Keys.AGENT_MEMORY_RELEVANCE_ENABLED),
+                    distillationEnabled = Prefs.isEnabled(Prefs.Keys.AGENT_MEMORY_DISTILL_ENABLED),
+                    semanticRecallEnabled = Prefs.isEnabled(Prefs.Keys.AGENT_MEMORY_SEMANTIC_RECALL_ENABLED),
+                )
             }.fold(
-                onSuccess = { (snapshot, enabled, coreBudget) ->
+                onSuccess = { loaded ->
                     withContext(Dispatchers.Main) {
                         val keepDraft = hasLoadedOnce && memoryState.hasUnsavedChanges
-                        val nextDraft = if (keepDraft) memoryState.draft else snapshot.content
-                        val nextBytes = if (keepDraft) memoryState.draftBytes else snapshot.byteSize
+                        val nextDraft = if (keepDraft) memoryState.draft else loaded.snapshot.content
+                        val nextBytes = if (keepDraft) memoryState.draftBytes else loaded.snapshot.byteSize
                         hasLoadedOnce = true
                         memoryState = AgentMemoryUiState(
-                            enabled = enabled,
+                            enabled = loaded.enabled,
                             isLoading = false,
                             draft = nextDraft,
-                            savedContent = snapshot.content,
+                            savedContent = loaded.snapshot.content,
                             draftBytes = nextBytes,
-                            coreBudgetChars = coreBudget,
+                            coreBudgetChars = loaded.coreBudgetChars,
+                            relevanceEnabled = loaded.relevanceEnabled,
+                            distillationEnabled = loaded.distillationEnabled,
+                            semanticRecallEnabled = loaded.semanticRecallEnabled,
                             notice = memoryState.notice,
                         )
                     }
@@ -68,6 +89,47 @@ internal class AgentMemoryStore(
                     }
                 },
             )
+        }
+    }
+
+    /** 一期相关性注入开关。 */
+    fun setRelevanceEnabled(enabled: Boolean) {
+        applyAgentSwitch(Prefs.Keys.AGENT_MEMORY_RELEVANCE_ENABLED, enabled) { state ->
+            state.copy(relevanceEnabled = enabled)
+        }
+    }
+
+    /** 三期自动沉淀开关（默认关闭，会多消耗一次模型回合）。 */
+    fun setDistillationEnabled(enabled: Boolean) {
+        applyAgentSwitch(Prefs.Keys.AGENT_MEMORY_DISTILL_ENABLED, enabled) { state ->
+            state.copy(distillationEnabled = enabled)
+        }
+    }
+
+    /** 四期语义检索开关（默认关闭；不可用时自动回退关键词检索）。 */
+    fun setSemanticRecallEnabled(enabled: Boolean) {
+        applyAgentSwitch(Prefs.Keys.AGENT_MEMORY_SEMANTIC_RECALL_ENABLED, enabled) { state ->
+            state.copy(semanticRecallEnabled = enabled)
+        }
+    }
+
+    private fun applyAgentSwitch(
+        key: String,
+        enabled: Boolean,
+        apply: (AgentMemoryUiState) -> AgentMemoryUiState,
+    ) {
+        // commit 会同步落盘，放到 IO 线程；框架可用时一并回写远端，让 hook 侧读到一致的值。
+        scope.launch(Dispatchers.IO) {
+            val saved = Prefs.setAgentSwitch(key, enabled, EtaApp.serviceInstance)
+            withContext(Dispatchers.Main) {
+                memoryState = if (saved) {
+                    apply(memoryState.copy(notice = null))
+                } else {
+                    memoryState.copy(
+                        notice = appContext.getString(R.string.state_ui_memory_switch_failed_to_save_83b5d6),
+                    )
+                }
+            }
         }
     }
 

@@ -7,6 +7,7 @@ import androidx.core.content.IntentCompat
 import io.github.mangi.eta.agent.voice.EtaAssistantOverlayService
 import io.github.mangi.eta.ui.app.ArchivedConversationRequest
 import io.github.mangi.eta.ui.voice.ACTION_SPEECH_SETTINGS
+import io.github.mangi.eta.ui.navigation.TaskCenterDeepLink
 
 data class IncomingShareRequest(
     val uris: List<String> = emptyList(),
@@ -21,9 +22,14 @@ internal data class MainActivityLaunchRequests(
     val sharedContent: IncomingShareRequest? = null,
     val speechSettings: Boolean = false,
     val terminal: Boolean = false,
+    val taskCenterTab: String? = null,
 ) {
     fun accept(intent: Intent?): MainActivityLaunchRequests = when (intent?.action) {
         MainActivity.ACTION_OPEN_TERMINAL -> copy(terminal = true)
+        TaskCenterDeepLink.ACTION_OPEN_TASK_CENTER -> TaskCenterDeepLink.resolveTab(
+            action = intent.action,
+            rawTab = intent.getStringExtra(TaskCenterDeepLink.EXTRA_TASK_CENTER_TAB),
+        )?.let { tab -> copy(taskCenterTab = tab) } ?: this
         ACTION_SPEECH_SETTINGS -> copy(speechSettings = true)
         MainActivity.ACTION_OPEN_CONVERSATION_ID -> copy(
             conversationId = intent.nonBlankExtra(MainActivity.EXTRA_CONVERSATION_ID),
@@ -61,6 +67,7 @@ internal data class MainActivityLaunchRequests(
             }
             putBoolean("speech_settings", speechSettings)
             putBoolean("terminal", terminal)
+            putString("task_center_tab", taskCenterTab)
         })
     }
 
@@ -94,6 +101,7 @@ internal data class MainActivityLaunchRequests(
                 } else null,
                 speechSettings = saved.getBoolean("speech_settings"),
                 terminal = saved.getBoolean("terminal"),
+                taskCenterTab = saved.getString("task_center_tab"),
             )
         }
     }

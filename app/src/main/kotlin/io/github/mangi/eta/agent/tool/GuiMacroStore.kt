@@ -8,7 +8,8 @@ import org.json.JSONObject
 
 /**
  * GUI 宏：命名保存的 gesture_batch 动作序列，支持 {{参数}} 占位。
- * 文件为 JSON：{"name":"...","description":"...","actions":[...]}，与 gesture_batch 的 actions 完全一致。
+ * 文件为 JSON：{"name":"...","description":"...","source":"agent|recording","actions":[...]}，
+ * 其中 actions 与 gesture_batch 的 actions 完全一致；source 缺省按 agent 处理，旧文件无需迁移。
  */
 internal object GuiMacroStore {
     private fun dir(): File = File(TerminalRuntime.userWorkspacePath, "gui-macros")
@@ -32,7 +33,8 @@ internal object GuiMacroStore {
                     JSONObject()
                         .put("name", file.nameWithoutExtension)
                         .put("description", doc?.optString("description").orEmpty())
-                        .put("actions", doc?.optJSONArray("actions")?.length() ?: 0),
+                        .put("actions", doc?.optJSONArray("actions")?.length() ?: 0)
+                        .put("source", doc?.optString("source").orEmpty().ifBlank { SOURCE_AGENT }),
                 )
             }
         }
@@ -40,7 +42,17 @@ internal object GuiMacroStore {
 
     const val MAX_ACTIONS = 50
 
-    fun save(name: String, description: String, actions: JSONArray, overwrite: Boolean = false): JSONObject {
+    /** 宏的来源标记：模型显式保存，或用户录制后生成。 */
+    const val SOURCE_AGENT = "agent"
+    const val SOURCE_RECORDING = "recording"
+
+    fun save(
+        name: String,
+        description: String,
+        actions: JSONArray,
+        overwrite: Boolean = false,
+        source: String = SOURCE_AGENT,
+    ): JSONObject {
         require(actions.length() in 1..MAX_ACTIONS) { "宏动作数需为 1..$MAX_ACTIONS" }
         val target = file(name)
         require(overwrite || !target.exists()) { "宏已存在；确认覆盖时传 overwrite=true" }
@@ -48,10 +60,12 @@ internal object GuiMacroStore {
         val doc = JSONObject()
             .put("name", name.trim().lowercase(Locale.ROOT))
             .put("description", description)
+            .put("source", source)
             .put("actions", actions)
         target.writeText(doc.toString(2))
         return JSONObject().put("ok", true).put("name", doc.getString("name"))
             .put("path", target.absolutePath).put("actions", actions.length())
+            .put("source", source)
     }
 
     fun load(name: String): JSONObject? {

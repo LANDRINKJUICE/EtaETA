@@ -7,16 +7,38 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import io.github.mangi.eta.R
+import io.github.mangi.eta.agent.notify.AgentNotifications
 import io.github.mangi.eta.ui.MainActivity
 
+/**
+ * 后台命令/守护任务的结果通知。
+ *
+ * 审查改进（在不动既有断言的前提下）：
+ * - 补一个"打开任务中心"动作，结果不再只有"点主体进终端"一条路；
+ * - 点击/动作统一走 [AgentNotifications]，channel 名改为本地化资源（与其它通知保持同一套语义）。
+ *
+ * 说明：状态标题与正文沿用原有中文文案——既有 Robolectric 测试
+ * `BackgroundCommandNotificationTest` 精确断言了这些字面值，改名会破坏基线；
+ * 该通知的本地化留作后续与测试同步更新，不在此轮硬改。
+ */
 internal object BackgroundCommandNotification {
     private const val CHANNEL = "eta_background_commands"
     private const val NOTIFICATION_ID = 1124
 
     fun show(context: Context, task: DetachedTask) {
-        val manager = context.getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(NotificationChannel(CHANNEL, "后台命令结果", NotificationManager.IMPORTANCE_DEFAULT))
-        val open = PendingIntent.getActivity(context, 0,
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return
+        manager.createNotificationChannel(
+            NotificationChannel(
+                CHANNEL,
+                context.getString(R.string.background_command_channel),
+                NotificationManager.IMPORTANCE_DEFAULT,
+            ).apply {
+                description = context.getString(R.string.background_command_channel_description)
+            },
+        )
+        val open = PendingIntent.getActivity(
+            context,
+            AgentNotifications.RequestCodes.BACKGROUND_COMMAND_CONTENT,
             Intent(context, MainActivity::class.java).setAction(MainActivity.ACTION_OPEN_TERMINAL),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val title = when (task.commandStatus) {
@@ -26,8 +48,7 @@ internal object BackgroundCommandNotification {
             "interrupted" -> "后台命令已中断"
             else -> "后台命令执行失败"
         }
-        val notification = Notification.Builder(context, CHANNEL)
-            .setSmallIcon(R.drawable.ic_notification)
+        val notification = AgentNotifications.builder(context, CHANNEL)
             .setContentTitle(title)
             .setContentText(task.description.ifBlank { "在终端的后台任务中查看状态和日志" })
             .setSubText(buildString {
@@ -51,6 +72,13 @@ internal object BackgroundCommandNotification {
             .setContentIntent(open)
             .setAutoCancel(true)
             .setOnlyAlertOnce(true)
+            .addAction(
+                Notification.Action.Builder(
+                    null,
+                    context.getString(R.string.notify_action_open_task_center),
+                    AgentNotifications.taskCenterIntent(context, NOTIFICATION_ID + 1, "RUNNING"),
+                ).build(),
+            )
             .build()
         if (manager.areNotificationsEnabled()) manager.notify(task.id, NOTIFICATION_ID, notification)
     }

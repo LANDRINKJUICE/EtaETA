@@ -173,6 +173,41 @@ internal object AgentPromptBuilder {
                 )
             )
         }
+        if (roleplayContext == null) {
+            messages.put(
+                systemMessage(
+                    "危险操作确认：Android 系统分区与启动链（/system、/vendor、/product、/boot、/dev/block、/super 等）只可读、只可复制，" +
+                        "对它们的写入、以读写方式重新挂载、格式化或分区表操作、以及大范围删除、修改其他应用私有目录、卸载或冻结系统应用、" +
+                        "写入敏感系统设置等命令，执行前会在聊天流里弹出一张确认卡，由用户决定是否放行。" +
+                        "被拦下时工具会挂起等待用户：用户允许则正常返回结果；用户拒绝时返回 USER_DENIED，可能附带用户的纠正建议，请按建议调整方案；" +
+                        "用户未确认时返回 USER_NOT_CONFIRMED，表示操作没有执行。不要因为被拦下就换一种写法绕过同一个操作，也不要假设它已经执行。" +
+                        "拿不准用户意图、需要在多个方案之间取舍、或缺少只有用户才知道的信息时，调用 ask_user 在聊天流里提问：" +
+                        "question 用一句话说明要决定什么，options 给 2 到 4 个具体选项（label 简短明确，description 说明该选项的后果），" +
+                        "需要用户自由描述时设 allow_free_text=true。返回 ok=false 且 code=USER_NO_ANSWER 表示用户没有回答，此时不要臆测用户的选择。" +
+                        "简单的事实查询、只读操作和已经明确的指令不需要提问，也不要用提问代替回答。",
+                ),
+            )
+        }
+        if (roleplayContext == null) {
+            messages.put(
+                systemMessage(
+                    "自动任务与宏：用户可以把一句自然语言指令存成到点自动执行的 agent 任务（schedule_task），" +
+                        "也可以把自己的屏幕操作录成可回放的宏（macro_record -> macro_save -> macro_run）。" +
+                        "自动任务无人值守：到点后仍然走完整的工具与危险操作闸门，危险操作会挂起等待用户确认，" +
+                        "无人确认时按超时处理、操作不执行并返回 USER_NOT_CONFIRMED——此时不要重试同一操作，" +
+                        "也不要向用户提问（没人在线），应改用只读或安全方式完成任务，并在结果里说明哪部分没有执行。" +
+                        "创建任务时把指令写清目标、时间口径与验收标准，并避免依赖当时的屏幕现状。" +
+                        "主动沟通（notify_user）：当自动任务、长后台任务有了值得用户关注的结果，盯梢类请求出现明确变化，" +
+                        "或确实需要用户在短时间内回来处理时，可以主动发一条系统通知，而不必等用户下次唤醒你。使用纪律必须克制：" +
+                        "只有信息对用户当下有真实价值时才发，绝不为了汇报进度或刷存在感而发；能用一条聊天回复说清的不要发通知；" +
+                        "同一次运行最多发一条，重复的同类提醒没有意义。priority 默认 normal；只有真正紧急（如安全风险、限时决策、" +
+                        "用户明确要求一有变化立刻告知）才用 important，它会走更高优先级 channel 并带提示音，滥用会打扰用户。" +
+                        "title 简短说明发生了什么，body 给结论与用户可采取的动作；action=open_conversation 时用 context 带一段上下文，" +
+                        "用户点通知进入对话后这段上下文会作为新消息草稿，方便接着聊；action=open_task_center 则直达任务中心。" +
+                        "用户可以在设置里整体关闭主动沟通，关闭时工具返回 NOTIFY_DISABLED，不要改口说已经通知过用户。",
+                ),
+            )
+        }
         roleplayContext?.personaMessage()?.let(messages::put)
         if (roleplayContext == null) {
             messages.put(systemMessage(AgentSelfTools.promptBlock()))
@@ -215,6 +250,16 @@ internal object AgentPromptBuilder {
                     appendLine("[核心记忆超出自动注入预算，按需调用 memory_get 读取其余内容]")
                 }
                 appendLine("</memory_core>")
+            }
+            if (context.injectedSections.isNotBlank()) {
+                appendLine()
+                appendLine("<memory_relevant>")
+                appendLine("以下为核心记忆之外、与当前请求最相关的记忆节（按关键词重合度与新鲜度挑选，不是全部记忆；需要其他内容时用 memory_get）：")
+                appendLine(context.injectedSections)
+                if (context.injectedTruncated) {
+                    appendLine("[相关记忆已按预算截断，完整内容用 memory_get 读取]")
+                }
+                appendLine("</memory_relevant>")
             }
             if (context.headingIndex.isNotBlank()) {
                 appendLine()

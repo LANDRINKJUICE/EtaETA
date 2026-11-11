@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 主動溝通（notify_user）與通知靈動化新增文案：繁體中文。 -->
+<resources>
+    <string name="notify_channel_proactive">Agent 主動提醒</string>
+    <string name="notify_channel_proactive_desc">後台任務有了值得你關注的結果時，Agent 主動發出的通知；也包括「有操作在等確認」的提醒。</string>
+    <string name="notify_channel_attention">緊急 Agent 提醒</string>
+    <string name="notify_channel_attention_desc">只用於真正緊急的主動提醒：更高優先級並帶提示音。單獨關掉不影響普通提醒。</string>
+
+    <string name="notify_default_title">Agent 提醒</string>
+
+    <string name="notify_action_open_task_center">開啟任務中心</string>
+    <string name="notify_action_review">去確認</string>
+    <string name="notify_action_view_result">檢視結果</string>
+
+    <string name="notify_approval_title">%1$d 個操作等待你確認</string>
+    <string name="notify_approval_body">%1$d 個操作 Agent 已暫停執行。開啟任務中心決定是否放行。</string>
+
+    <string name="notify_elapsed_format">%1$d 秒</string>
+    <string name="notify_stage_running">執行中</string>
+    <string name="notify_stage_starting">正在啟動</string>
+
+    <string name="settings_proactive_notify">主動通知</string>
+    <string name="settings_proactive_notify_summary">允許 Agent 在後台任務或自動任務產生值得關注的結果時主動發通知。預設克制發送；緊急提醒是獨立 channel。</string>
+    <string name="background_command_channel">後台命令結果</string>
+    <string name="background_command_channel_description">後台終端命令或守護服務結束時顯示結果。</string>
+    <string name="assistant_speech_channel">助理語音</string>
+    <string name="assistant_speech_channel_description">僅在助理浮窗聆聽或朗讀期間顯示。</string>
+    <string name="assistant_speech_running_note">僅在助理浮窗可見時執行</string>
+</resources>

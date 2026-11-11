@@ -194,6 +194,7 @@ Eta 先从现有 Android 上的模型、上下文与工具做起。真正落地�
 - [Agent Runtime](docs/AGENT_RUNTIME.md)：Agent Loop、Provider、steering、transcript 与结果恢复。
 - [HyperOS 系统入口](docs/HYPEROS_SYSTEM_ENTRY.md)：电源键、一圈即搜的适配条件与验证边界。
 - [终端原生组件](docs/TERMINAL_NATIVE.md)：PTY、PRoot 及随包源码的构建方式。
+- [UI 设计规范](docs/UI_DESIGN_GUIDE.md)：COUI/Miuix 双界面组件对应、间距/字号/文案约定与禁忌清单，改动界面前必读。
 
 ## 关于 PR 与贡献
 

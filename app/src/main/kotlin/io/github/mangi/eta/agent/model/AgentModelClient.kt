@@ -3,6 +3,7 @@ package io.github.mangi.eta.agent.model
 import io.github.mangi.eta.agent.runtime.AgentEvent
 import io.github.mangi.eta.agent.runtime.AgentRunController
 import io.github.mangi.eta.agent.memory.AgentMemoryContext
+import io.github.mangi.eta.agent.usage.UsageAttribution
 import io.github.mangi.eta.agent.skill.SkillContext
 import io.github.mangi.eta.agent.roleplay.RoleplayRunContext
 import io.github.mangi.eta.config.Prefs
@@ -111,6 +112,7 @@ internal object AgentModelClient {
         rewriteReply: Boolean = false,
         assistantScreenContext: String = "",
         toolFilter: ((JSONArray) -> JSONArray)? = null,
+        usageAttribution: UsageAttribution? = null,
         onContextSnapshot: (AgentContextSnapshot) -> Unit = {},
         onTranscript: (List<ConversationMessage>) -> Unit = {},
         onEvent: (AgentEvent) -> Unit = {}
@@ -160,6 +162,9 @@ internal object AgentModelClient {
                 memoryTools = memoryContext.enabled,
                 memoryWritable = roleplayContext == null,
                 selfTools = roleplayContext == null,
+                conversationTools = roleplayContext == null,
+                // 开关关掉时连 schema 都不注入，模型不会去尝试一个必然被拒绝的工具。
+                proactiveNotify = Prefs.isProactiveNotifyEnabled(),
                 capabilities = capabilities,
                 localWebSearch = !config.usesHostedWebSearch,
                 disabledTools = Prefs.disabledTools(),
@@ -236,6 +241,7 @@ internal object AgentModelClient {
             roleplayContext = roleplayContext,
             initialSupplementIndex = initialSupplementIndex,
             toolsForRound = ::toolsForRound,
+            usageAttribution = usageAttribution,
         )
         val result = try {
             if (compactOnly) loop.compactOnly() else loop.run()

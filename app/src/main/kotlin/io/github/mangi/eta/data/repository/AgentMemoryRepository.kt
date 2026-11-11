@@ -2,10 +2,12 @@ package io.github.mangi.eta.data.repository
 
 import android.content.Context
 import android.util.AtomicFile
+import io.github.mangi.eta.agent.memory.AgentMemorySemanticIndex
 import io.github.mangi.eta.data.datastore.SettingsDataStore
 import java.io.File
 import java.io.IOException
 import java.security.MessageDigest
+import java.time.LocalDate
 import kotlinx.coroutines.flow.Flow
 
 internal data class AgentMemorySnapshot(
@@ -65,6 +67,8 @@ internal class AgentMemoryException(
 /** 单一 MEMORY.md 的有界、原子文件存储。 */
 internal class AgentMemoryStore(
     rootDir: File,
+    /** 元数据时间戳来源；测试注入固定日期，运行时取当天。 */
+    private val today: () -> LocalDate = { LocalDate.now() },
 ) {
     private val memoryDir = File(rootDir, DIRECTORY_NAME)
     private val atomicFile = AtomicFile(File(memoryDir, FILE_NAME))
@@ -72,6 +76,11 @@ internal class AgentMemoryStore(
 
     fun snapshot(): AgentMemorySnapshot = synchronized(lock) {
         snapshotLocked()
+    }
+
+    /** 解析全文为结构化节；旧文件没有元数据注释时得到无元数据条目。 */
+    fun entries(): List<AgentMemoryEntry> = synchronized(lock) {
+        AgentMemoryEntries.parse(snapshotLocked().content)
     }
 
     fun read(
@@ -95,7 +104,9 @@ internal class AgentMemoryStore(
         }
         val updated = when (mutation) {
             is AgentMemoryMutation.ReplaceRange -> replaceRange(current, mutation)
-            is AgentMemoryMutation.Append -> append(current, mutation.content)
+            is AgentMemoryMutation.Append ->
+                append(current, AgentMemoryEntries.stampSections(mutation.content, today()))
+
             is AgentMemoryMutation.UpsertSection -> upsertSection(current, mutation)
             is AgentMemoryMutation.Clear -> ""
         }
@@ -215,7 +226,7 @@ internal class AgentMemoryStore(
         }
         val level = heading.takeWhile { it == '#' }.length
         val lines = snapshot.content.memoryLines().toMutableList()
-        val section = listOf(heading) + mutation.content.memoryLines()
+
         // 只把围栏代码块之外的行当作标题候选，避免正文里的 '# 注释' 被误判为节边界。
         val headingCandidates = headingLineIndexes(lines)
         val starts = headingCandidates.filter { lines[it].trim() == heading }
@@ -227,7 +238,9 @@ internal class AgentMemoryStore(
         }
         val start = starts.firstOrNull() ?: -1
         if (start < 0) {
-            return append(snapshot, section.joinToString("\n"))
+            val appended = listOf(heading) +
+                AgentMemoryEntries.stampSection(heading, mutation.content, today()).memoryLines()
+            return append(snapshot, appended.joinToString("\n"))
         }
         // 节的结束位置：下一个同级或更高级标题。
         val end = headingCandidates.firstOrNull { index ->
@@ -236,6 +249,15 @@ internal class AgentMemoryStore(
             val lineLevel = line.takeWhile { it == '#' }.length
             lineLevel in 1..level && line.getOrNull(lineLevel) == ' '
         } ?: lines.size
+        // 替换同一标题时继承已有元数据：id 与 created 属于这一节的历史，不能被覆盖。
+        val previous = AgentMemoryEntries
+            .parse(lines.subList(start, end).joinToString("\n"))
+            .firstOrNull()
+            ?.metadata
+        val section = listOf(heading) +
+            AgentMemoryEntries
+                .stampSection(heading, mutation.content, today(), previous)
+                .memoryLines()
         lines.subList(start, end).clear()
         lines.addAll(start, section)
         return lines.joinToString("\n")
@@ -381,6 +403,8 @@ internal object AgentMemoryRepository {
         if (!::store.isInitialized) {
             store = AgentMemoryStore(context.applicationContext.filesDir)
         }
+        // 四期向量缓存与记忆文件同目录；未启用语义检索时不会产生任何文件。
+        AgentMemorySemanticIndex.init(context.applicationContext.filesDir)
     }
 
     fun snapshot(): AgentMemorySnapshot {
@@ -405,6 +429,12 @@ internal object AgentMemoryRepository {
     fun replaceAll(content: String): AgentMemorySnapshot {
         ensureInitialized()
         return store.replaceAll(content)
+    }
+
+    /** 结构化节视图，供相关性注入与语义检索共用。 */
+    fun entries(): List<AgentMemoryEntry> {
+        ensureInitialized()
+        return store.entries()
     }
 
     fun enabledFlow(): Flow<Boolean> = SettingsDataStore.memoryEnabledFlow()

@@ -17,6 +17,17 @@ internal object AgentToolCatalog {
         memoryTools: Boolean = false,
         memoryWritable: Boolean = true,
         selfTools: Boolean = true,
+        /**
+         * 是否公开"会话级工具"（ask_user / schedule_task / macro_record）。角色会话为 false：
+         * 这三件工具都会把用户拉回现实交互或写入持久状态，与沉浸式角色会话冲突（审查 M4）。
+         */
+        conversationTools: Boolean = true,
+        /**
+         * 是否公开主动沟通工具（notify_user）。用户在设置里关掉"主动通知"时为 false：
+         * 既不注入 schema（模型不会尝试调用），执行侧 [io.github.mangi.eta.agent.notify.NotifyUserTool]
+         * 也仍会独立校验开关，形成双保险。
+         */
+        proactiveNotify: Boolean = true,
         capabilities: AgentToolCapabilities = AgentToolCapabilities(rootAvailable = true),
         localWebSearch: Boolean = true,
         disabledTools: Set<String> = emptySet(),
@@ -25,6 +36,8 @@ internal object AgentToolCatalog {
             AgentContextAppToolCatalog.appendTo(tools)
             AgentGestureToolCatalog.appendTo(tools)
             AgentBatchToolCatalog.appendTo(tools)
+            AgentScheduleToolCatalog.appendTo(tools)
+            AgentNotifyToolCatalog.appendIf(tools, proactiveNotify)
             AgentTextSystemToolCatalog.appendTo(tools)
             AgentDeviceToolCatalog.appendTo(
                 tools,
@@ -49,12 +62,17 @@ internal object AgentToolCatalog {
                 AgentFileToolCatalog.appendTo(tools)
             }
         }).let { projected ->
-            if (disabledTools.isEmpty()) {
+            val visible = if (conversationTools) {
                 projected
             } else {
+                ToolCatalogVisibility.filter(projected, ToolCatalogVisibility.ROLEPLAY_HIDDEN_TOOL_NAMES)
+            }
+            if (disabledTools.isEmpty()) {
+                visible
+            } else {
                 JSONArray().also { filtered ->
-                    for (index in 0 until projected.length()) {
-                        val tool = projected.getJSONObject(index)
+                    for (index in 0 until visible.length()) {
+                        val tool = visible.getJSONObject(index)
                         val name = tool.getJSONObject("function").getString("name")
                         if (Prefs.isToolEnabledInSet(name, disabledTools)) {
                             filtered.put(tool)

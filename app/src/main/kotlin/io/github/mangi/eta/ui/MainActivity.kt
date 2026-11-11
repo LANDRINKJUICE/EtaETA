@@ -20,6 +20,7 @@ import io.github.mangi.eta.core.AndroidAgentLogger
 import io.github.mangi.eta.data.model.AppearanceThemeMode
 import io.github.mangi.eta.data.repository.AppearanceSettingsRepository
 import io.github.mangi.eta.ui.app.AgentAppRoot
+import io.github.mangi.eta.ui.navigation.TaskCenterDeepLink
 import io.github.mangi.eta.ui.app.AgentAppTheme
 import io.github.mangi.eta.ui.app.PredictiveBackController
 import io.github.mangi.eta.ui.app.installStartupSplash
@@ -83,6 +84,11 @@ class MainActivity : ComponentActivity() {
                         },
                         openSpeechSettings = launchRequests.speechSettings,
                         openTerminal = launchRequests.terminal,
+                        openTaskCenterTab = launchRequests.taskCenterTab,
+                        onTaskCenterOpened = {
+                            launchRequests = launchRequests.copy(taskCenterTab = null)
+                            intent?.action = null
+                        },
                         onTerminalOpened = {
                             launchRequests = launchRequests.copy(terminal = false)
                             intent?.action = null
@@ -188,6 +194,9 @@ class MainActivity : ComponentActivity() {
             private set
 
         const val ACTION_OPEN_TERMINAL = "io.github.mangi.eta.action.OPEN_TERMINAL"
+        /** 主动沟通 / 待确认通知点击直达任务中心指定分区；字符串唯一来源见 [TaskCenterDeepLink]。 */
+        const val ACTION_OPEN_TASK_CENTER = TaskCenterDeepLink.ACTION_OPEN_TASK_CENTER
+        const val EXTRA_TASK_CENTER_TAB = TaskCenterDeepLink.EXTRA_TASK_CENTER_TAB
         /** 运行浮层的结果卡片回到本体：App 发起的 run 带会话 ID，直接打开该会话。 */
         const val ACTION_OPEN_CONVERSATION_ID = "io.github.mangi.eta.action.OPEN_CONVERSATION_ID"
         const val EXTRA_CONVERSATION_ID = "io.github.mangi.eta.extra.CONVERSATION_ID"

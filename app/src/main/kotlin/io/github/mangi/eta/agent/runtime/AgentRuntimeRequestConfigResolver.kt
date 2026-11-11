@@ -19,8 +19,13 @@ internal object AgentRuntimeRequestConfigResolver {
     fun requiresRuntimeConfig(request: AgentRuntimeWire.RunRequest): Boolean =
         usesDefaultRuntimeConfig(request) || ProviderAuthModes.isOAuth(request.config.authMode)
 
+    /**
+     * 入口没有自己的模型选择时使用 Runtime 侧当前配置：语音入口与自动任务都属于这一类。
+     * 自动任务在后台独立跑，用户不可能为它单独选模型，强行沿用入口快照会用到过期配置。
+     */
     fun usesDefaultRuntimeConfig(request: AgentRuntimeWire.RunRequest): Boolean =
-        request.handoff?.source == AgentRuntimeWire.ETA_VOICE_HANDOFF_SOURCE
+        request.handoff?.source == AgentRuntimeWire.ETA_VOICE_HANDOFF_SOURCE ||
+            request.handoff?.source == AgentRuntimeWire.ETA_SCHEDULED_TASK_HANDOFF_SOURCE
 
     /**
      * 只用 Runtime 侧的模型与凭据替换入口配置；工具开关保留入口请求的值，

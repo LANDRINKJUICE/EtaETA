@@ -85,6 +85,9 @@ import com.itos.coui.text.CouiTextKind
 import com.itos.coui.text.Text as CouiText
 import com.itos.coui.theme.CouiTheme
 import io.github.mangi.eta.R
+import io.github.mangi.eta.agent.approval.AgentApprovalCoordinator
+import io.github.mangi.eta.agent.approval.AgentApprovalRequest
+import io.github.mangi.eta.agent.approval.ResolvedApproval
 import io.github.mangi.eta.agent.browser.BrowserSessionSnapshot
 import io.github.mangi.eta.data.model.AppearanceUiStyle
 import io.github.mangi.eta.data.model.ReasoningEffort
@@ -191,6 +194,8 @@ internal fun AgentChatBody(
     onLoadEarlierMessages: () -> Unit = {},
     onHistoryViewportChanged: (Boolean) -> Unit = {},
     isDrawerOpen: Boolean = false,
+    /** 当前会话 id：确认卡按会话过滤，避免切换会话时看到别的会话的待确认操作。 */
+    conversationId: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val scrollState = rememberLazyListState(initialFirstVisibleItemIndex = messages.size + if (hasEarlierMessages) 1 else 0)
@@ -233,6 +238,35 @@ internal fun AgentChatBody(
     }
     var sentFromKeyboard by remember { mutableStateOf(false) }
     var keepBottomAnchored by rememberSaveable { mutableStateOf(true) }
+
+    // 危险操作确认卡与 Agent 询问卡直接消费 Runtime 侧发布的等待列表；决策通过同一个单例回填，
+    // 工具执行线程随即恢复，因此这里不需要经过消息存储或事件回放。
+    val approvalCoordinator = AgentApprovalCoordinator.shared
+    val approvalPending by approvalCoordinator.pending.collectAsState()
+    val approvalResolved by approvalCoordinator.resolved.collectAsState()
+    var approvalNowMillis by remember { mutableStateOf(0L) }
+    LaunchedEffect(approvalResolved) {
+        while (approvalResolved.isNotEmpty()) {
+            approvalNowMillis = System.nanoTime() / 1_000_000
+            kotlinx.coroutines.delay(1_000)
+        }
+    }
+    val visibleApprovalRequests = remember(approvalPending, conversationId) {
+        approvalPending.filter { request ->
+            conversationId == null ||
+                request.conversationId == null ||
+                request.conversationId == conversationId
+        }
+    }
+    val visibleResolvedApprovals = remember(approvalResolved, approvalNowMillis, conversationId) {
+        approvalResolved.filter { resolved ->
+            val matchesConversation = conversationId == null ||
+                resolved.request.conversationId == null ||
+                resolved.request.conversationId == conversationId
+            matchesConversation &&
+                approvalNowMillis - resolved.resolution.atMillis in 0L..APPROVAL_FEEDBACK_VISIBLE_MILLIS
+        }
+    }
 
     LaunchedEffect(isStreaming) {
         if (isStreaming && sentFromKeyboard) {
@@ -314,6 +348,11 @@ internal fun AgentChatBody(
             historyLoadState = historyLoadState,
             onLoadEarlierMessages = onLoadEarlierMessages,
             onHistoryViewportChanged = onHistoryViewportChanged,
+            approvalRequests = visibleApprovalRequests,
+            resolvedApprovals = visibleResolvedApprovals,
+            onApprovalDecide = { requestId, optionId, freeText ->
+                approvalCoordinator.resolve(requestId, optionId, freeText)
+            },
             modifier = modifier,
         )
     }
@@ -373,6 +412,9 @@ private fun AgentChatScaffold(
     historyLoadState: ConversationHistoryLoadState,
     onLoadEarlierMessages: () -> Unit,
     onHistoryViewportChanged: (Boolean) -> Unit,
+    approvalRequests: List<AgentApprovalRequest>,
+    resolvedApprovals: List<ResolvedApproval>,
+    onApprovalDecide: (requestId: String, optionId: String, freeText: String?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val surfaceColor = MiuixTheme.colorScheme.surface
@@ -462,6 +504,9 @@ private fun AgentChatScaffold(
                 historyLoadState = historyLoadState,
                 onLoadEarlierMessages = onLoadEarlierMessages,
                 onHistoryViewportChanged = onHistoryViewportChanged,
+                approvalRequests = approvalRequests,
+                resolvedApprovals = resolvedApprovals,
+                onApprovalDecide = onApprovalDecide,
                 modifier = Modifier
                     .fillMaxSize()
                     .then(if (frostEnabled) Modifier.layerBackdrop(messageBackdrop) else Modifier),
@@ -480,6 +525,12 @@ internal fun AgentConversationMessages(
     keepBottomAnchored: Boolean,
     onBottomAnchorChanged: (Boolean) -> Unit,
     assistantOverlay: Boolean = false,
+    /** 等待用户确认的危险操作/询问卡，作为聊天流尾部的条目渲染。 */
+    approvalRequests: List<AgentApprovalRequest> = emptyList(),
+    /** 刚完成的决策，用于短暂回显"已允许/已拒绝"。 */
+    resolvedApprovals: List<ResolvedApproval> = emptyList(),
+    onApprovalDecide: (requestId: String, optionId: String, freeText: String?) -> Unit =
+        { _, _, _ -> },
     onSuggestionClick: (String) -> Unit = {},
     onRunTraceClick: () -> Unit = {},
     onOpenBrowser: () -> Unit = {},
@@ -537,7 +588,8 @@ internal fun AgentConversationMessages(
             }
     }
     val earlierMessagesItemCount = if (hasEarlierMessages) 1 else 0
-    val bottomItemIndex = timelineEntries.size + earlierMessagesItemCount
+    val approvalItemCount = approvalRequests.size + resolvedApprovals.size
+    val bottomItemIndex = timelineEntries.size + earlierMessagesItemCount + approvalItemCount
     val isUserDragging by scrollState.interactionSource.collectIsDraggedAsState()
     val isAtBottom by remember(scrollState) {
         derivedStateOf { !scrollState.canScrollForward }
@@ -593,6 +645,13 @@ internal fun AgentConversationMessages(
             snapshotFlow { !scrollState.canScrollForward }.first { it }
             isBottomSettling = false
         }
+    }
+
+    // 确认卡出现在聊天流末尾：用户停在底部时自动把它带进视野，否则只保留未读提示。
+    val approvalIds = remember(approvalRequests) { approvalRequests.map { it.id } }
+    LaunchedEffect(approvalIds, keepBottomAnchored) {
+        if (approvalIds.isEmpty() || !keepBottomAnchored) return@LaunchedEffect
+        runCatching { scrollState.animateScrollToItem(bottomItemIndex) }
     }
 
     val historyPaging = rememberChatHistoryPaging(
@@ -834,6 +893,35 @@ internal fun AgentConversationMessages(
                         )
                     }
                 }
+            }
+            items(
+                items = resolvedApprovals,
+                key = { resolved -> "approval-resolved-${resolved.request.id}" },
+                contentType = { "approval-resolved" },
+            ) { resolved ->
+                AgentApprovalResolvedChip(
+                    resolved = resolved,
+                    modifier = Modifier.animateItem(
+                        fadeInSpec = tween(durationMillis = 180),
+                        fadeOutSpec = tween(durationMillis = 160),
+                    ),
+                )
+            }
+            items(
+                items = approvalRequests,
+                key = { request -> "approval-request-${request.id}" },
+                contentType = { "approval-request" },
+            ) { request ->
+                AgentApprovalRequestCard(
+                    request = request,
+                    onDecide = { optionId, freeText ->
+                        onApprovalDecide(request.id, optionId, freeText)
+                    },
+                    modifier = Modifier.animateItem(
+                        fadeInSpec = tween(durationMillis = 200),
+                        fadeOutSpec = tween(durationMillis = 140),
+                    ),
+                )
             }
             item(key = ChatBottomSentinelKey) {
                 Spacer(

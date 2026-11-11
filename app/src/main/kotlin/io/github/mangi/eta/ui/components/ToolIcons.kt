@@ -29,6 +29,7 @@ import androidx.compose.material.icons.rounded.EditNote
 import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.FindReplace
 import androidx.compose.material.icons.rounded.FolderOpen
+import androidx.compose.material.icons.rounded.HelpOutline
 import androidx.compose.material.icons.rounded.Hub
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Insights
@@ -56,8 +57,8 @@ import androidx.compose.material.icons.rounded.Smartphone
 import androidx.compose.material.icons.rounded.SwapVert
 import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material.icons.rounded.TouchApp
-import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.TravelExplore
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.WebAsset
 import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -67,6 +68,8 @@ internal fun iconForTool(toolId: String): ImageVector = when (toolId) {
     "click", "tap", "tap_element" -> Icons.Rounded.AdsClick
     "gesture_batch" -> Icons.Rounded.AdsClick
     "macro_list", "macro_save", "macro_run", "macro_delete" -> Icons.Rounded.Hub
+    "macro_record" -> Icons.Rounded.RadioButtonChecked
+    "schedule_task" -> Icons.Rounded.Alarm
     "tap_area" -> Icons.Rounded.MyLocation
     "long_press", "long_press_element" -> Icons.Rounded.TouchApp
     "swipe" -> Icons.Rounded.OpenWith
@@ -104,6 +107,7 @@ internal fun iconForTool(toolId: String): ImageVector = when (toolId) {
         Icons.Rounded.AutoAwesome
     "release_gui" -> Icons.Rounded.Smartphone
     "present_to_user" -> Icons.AutoMirrored.Rounded.OpenInNew
+    "ask_user" -> Icons.Rounded.HelpOutline
     "press_key" -> Icons.Rounded.KeyboardCommandKey
     "open_system_panel" -> Icons.Rounded.WebAsset
     "read_image" -> Icons.Rounded.Image

@@ -72,6 +72,19 @@ sealed interface AppRoute : NavKey {
     @Serializable
     data object Memory : AppRoute
 
+    /** 到点自动执行的 agent 任务列表；现在作为任务中心的「自动任务」分区呈现。 */
+    @Serializable
+    data object ScheduledTasks : AppRoute
+
+    /**
+     * 任务中心：待确认、自动任务、运行中/后台、宏与用量的总览页。
+     *
+     * [tab] 只保存 [io.github.mangi.eta.ui.model.TaskCenterTab] 的名字（空串表示默认分区）；
+     * 用字符串而不是枚举，避免导航序列化与 UI 枚举互相绑定。
+     */
+    @Serializable
+    data class TaskCenter(val tab: String = "") : AppRoute
+
     @Serializable
     data object LinuxEnvironment : AppRoute
 

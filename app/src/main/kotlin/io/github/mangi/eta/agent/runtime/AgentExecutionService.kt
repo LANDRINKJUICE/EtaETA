@@ -12,10 +12,14 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import io.github.mangi.eta.R
+import io.github.mangi.eta.agent.approval.AgentApprovalCoordinator
 import io.github.mangi.eta.agent.overlay.AgentOverlayStatus
 import io.github.mangi.eta.agent.overlay.localizedText
 import io.github.mangi.eta.agent.overlay.toolDisplayName
+import io.github.mangi.eta.agent.notify.AgentNotifications
+import io.github.mangi.eta.agent.notify.NotificationPolicy
 import io.github.mangi.eta.core.AndroidAgentLogger
 import io.github.mangi.eta.core.safeLogType
 import io.github.mangi.eta.ui.MainActivity
@@ -29,6 +33,31 @@ internal class AgentExecutionService : Service() {
     private val owner = ownerSequence.incrementAndGet()
     private var foregroundActive = false
     @Volatile private var startRejected = false
+    /** 等待用户确认的卡片变化时刷新常驻通知，让浮层/后台场景也能感知"有操作在等确认"。 */
+    private var approvalListener: (() -> Unit)? = null
+    /**
+     * 常驻通知的实时耗时心跳：每秒刷新一次，让"运行中"显示真实的已用时，
+     * 而不是一条直到状态变化才更新的静态文案。节流由 [NotificationPolicy.Throttle] 保证 ≥1s。
+     */
+    private val elapsedHandler = Handler(Looper.getMainLooper())
+    private val elapsedThrottle = NotificationPolicy.Throttle()
+    private val elapsedTick = object : Runnable {
+        override fun run() {
+            if (!foregroundActive || runStatus == null) return
+            val now = SystemClock.elapsedRealtime()
+            val enabled = runStartedAtMillis > 0L
+            val seconds = if (enabled) (now - runStartedAtMillis).coerceAtLeast(0L) / 1_000L else 0L
+            // key 带上秒数：同一秒内不重复 notify，跨秒才刷新。
+            // key 用 5s 粒度：同一窗口内不重复 notify，跨窗口才刷新（配合 5s 心跳省电）。
+            val bucket = seconds / (NotificationPolicy.SLOW_REFRESH_INTERVAL_MILLIS / 1_000L)
+            if (elapsedThrottle.shouldEmit("$runStatus|$runRound|$bucket", now)) {
+                runCatching {
+                    getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification())
+                }
+            }
+            elapsedHandler.postDelayed(this, NotificationPolicy.SLOW_REFRESH_INTERVAL_MILLIS)
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -38,7 +67,20 @@ internal class AgentExecutionService : Service() {
         manager.createNotificationChannel(
             NotificationChannel(CHANNEL, getString(R.string.execution_channel), NotificationManager.IMPORTANCE_LOW),
         )
+        approvalListener = AgentApprovalCoordinator.shared.addPendingListener {
+            mainHandler.post { if (instance === this && foregroundActive) refreshNotification() }
+        }
         ensureForeground()
+    }
+
+    /** 仅在"前台服务活着 + 有 Agent run 在跑"时开启耗时心跳；其余情况立刻停掉。 */
+    private fun syncElapsedTicker() {
+        elapsedHandler.removeCallbacks(elapsedTick)
+        if (foregroundActive && runStatus != null) {
+            elapsedThrottle.reset()
+            // 用 postDelayed 起步：不抢在 startForeground 那一条之后立刻重复 notify。
+            elapsedHandler.postDelayed(elapsedTick, NotificationPolicy.SLOW_REFRESH_INTERVAL_MILLIS)
+        }
     }
 
     private fun ensureForeground() {
@@ -51,6 +93,7 @@ internal class AgentExecutionService : Service() {
                 startForeground(NOTIFICATION_ID, notification())
             }
             foregroundActive = true
+            syncElapsedTicker()
         } catch (failure: RuntimeException) {
             startRejected = true
             AndroidAgentLogger.warn("Execution service foreground failed: type=${failure.safeLogType()}")
@@ -71,6 +114,9 @@ internal class AgentExecutionService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        elapsedHandler.removeCallbacks(elapsedTick)
+        approvalListener?.invoke()
+        approvalListener = null
         if (instance === this) instance = null
         // 销毁时同样收回本服务拥有的任务。回收在独立有界工作线程上完成，不阻塞 Main。
         stopQueue.close(leases.drainOwner(owner))
@@ -107,11 +153,14 @@ internal class AgentExecutionService : Service() {
         val taskCount = if (activeRunCount > 0) activeRunCount else leases.count()
         val actionText = status?.localizedText(resources) ?: getString(R.string.execution_title)
         val detail = runDetail.ifBlank { runThought }.take(240)
+        // 待确认数量由专用的"待确认"常驻通知负责展示（可直达待确认区、可滑掉），
+        // 执行通知这里始终显示当前动作/细节，不再被数量文案顶掉。
+        val contentText = detail.ifBlank { executionText(this, status, taskCount) }
         val builder = Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(actionText)
-            .setContentText(detail.ifBlank { executionText(this, status, taskCount) })
-            .setSubText(if (runRound > 0) "第 $runRound 轮 · $taskCount 项任务" else null)
+            .setContentText(contentText)
+            .setSubText(ongoingSubText(taskCount))
             .setContentIntent(open)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -157,6 +206,8 @@ internal class AgentExecutionService : Service() {
         private var activeRunCount = 0
         private var publishedStatusText: String? = null
         private var runRound = 0
+        /** 本段 Agent run 的实际开始时间（elapsedRealtime）；0 表示当前没有 run。 */
+        private var runStartedAtMillis = 0L
         private var runDetail = ""
         private var runThought = ""
         private var resultPublished = false
@@ -176,6 +227,12 @@ internal class AgentExecutionService : Service() {
             failed: Boolean = false,
         ) {
             mainHandler.post {
+                // 记录/清理本段运行的实际开始时间：用于常驻通知里的实时耗时。
+                if (status != null && runStatus == null) {
+                    runStartedAtMillis = SystemClock.elapsedRealtime()
+                } else if (status == null) {
+                    runStartedAtMillis = 0L
+                }
                 runStatus = status
                 this.activeRunCount = activeRunCount
                 runRound = round
@@ -195,6 +252,7 @@ internal class AgentExecutionService : Service() {
                     publishedStatusText = text
                     instance?.takeIf { it.foregroundActive }?.refreshNotification()
                 }
+                instance?.syncElapsedTicker()
                 if ((finished || failed) && !resultPublished) {
                     resultPublished = true
                     showRunResult(context, failed, detailText)
@@ -206,23 +264,63 @@ internal class AgentExecutionService : Service() {
         private fun showRunResult(context: Context, failed: Boolean, detail: String) {
             val manager = context.getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(
-                NotificationChannel(RESULT_CHANNEL, "Agent 任务结果", NotificationManager.IMPORTANCE_DEFAULT),
+                NotificationChannel(
+                    RESULT_CHANNEL,
+                    context.getString(R.string.execution_result_channel),
+                    NotificationManager.IMPORTANCE_DEFAULT,
+                ),
             )
             val open = PendingIntent.getActivity(
                 context, 20, Intent(context, MainActivity::class.java),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
-            val text = detail.ifBlank { if (failed) "任务未能完成，打开会话查看原因" else "任务已完成，打开会话查看结果" }
+            val text = detail.ifBlank {
+                context.getString(
+                    if (failed) R.string.execution_result_failed_hint else R.string.execution_result_done_hint,
+                )
+            }
             val notification = Notification.Builder(context, RESULT_CHANNEL)
                 .setSmallIcon(R.drawable.ic_notification)
-                .setContentTitle(if (failed) "Eta 任务中断" else "Eta 任务完成")
+                .setContentTitle(
+                    context.getString(
+                        if (failed) R.string.execution_result_failed_title else R.string.execution_result_done_title,
+                    ),
+                )
                 .setContentText(text)
                 .setStyle(Notification.BigTextStyle().bigText(text))
                 .setContentIntent(open)
                 .setAutoCancel(true)
                 .setOnlyAlertOnce(true)
+                // 结果通知带可用动作：查看结果（进会话）+ 打开任务中心，而不是只能点开首页。
+                .addAction(
+                    Notification.Action.Builder(
+                        null,
+                        context.getString(R.string.notify_action_view_result),
+                        open,
+                    ).build(),
+                )
+                .addAction(
+                    Notification.Action.Builder(
+                        null,
+                        context.getString(R.string.notify_action_open_task_center),
+                        AgentNotifications.taskCenterIntent(context, RESULT_NOTIFICATION_ID + 1, "RUNNING"),
+                    ).build(),
+                )
                 .build()
             if (manager.areNotificationsEnabled()) manager.notify(RESULT_NOTIFICATION_ID, notification)
+        }
+
+        private fun ongoingSubText(taskCount: Int): String? {
+            val parts = buildList {
+                if (runRound > 0) add(getString(R.string.execution_subtext_round, runRound))
+                if (taskCount > 0) add(getString(R.string.execution_subtext_tasks, taskCount))
+                if (runStartedAtMillis > 0L) {
+                    val elapsed = (SystemClock.elapsedRealtime() - runStartedAtMillis).coerceAtLeast(0L)
+                    add(String.format(getString(R.string.notify_elapsed_format), elapsed / 1_000L))
+                }
+            }
+            // 三段都为空时返回 null：不要给通知塞一个空 subText（会多出一行空白）。
+            return parts.joinToString(" · ").ifBlank { null }
         }
 
         private fun executionText(context: Context, status: AgentOverlayStatus?, taskCount: Int): String {

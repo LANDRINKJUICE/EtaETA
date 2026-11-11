@@ -33,6 +33,8 @@ import io.github.mangi.eta.agent.runtime.AgentEvent
 import io.github.mangi.eta.agent.runtime.GuiControlStatus
 import io.github.mangi.eta.agent.runtime.AgentConversationIdentity
 import io.github.mangi.eta.agent.runtime.AgentConversationIdentity.archiveConversationId
+import io.github.mangi.eta.agent.approval.AgentApprovalCoordinator
+import io.github.mangi.eta.agent.approval.AgentSessionApprovalGrants
 import io.github.mangi.eta.agent.browser.BrowserSessionRegistry
 import io.github.mangi.eta.agent.runtime.AgentExecutionService
 import io.github.mangi.eta.agent.runtime.AgentExternalArchivePayload
@@ -1113,6 +1115,9 @@ internal class AgentAppState(
     private fun deleteSettledConversation(conversationId: String) {
         pendingConversationDeletes.remove(conversationId)
         BrowserSessionRegistry.requestRemove(conversationId)
+        // 会话结束时同时回收本次会话的确认卡与"本会话内允许同类"的授权。
+        AgentApprovalCoordinator.shared.abandonConversation(conversationId)
+        AgentSessionApprovalGrants.shared.clear(conversationId)
         val wasSelected = selectedConversationId == conversationId
         conversationsById = conversationsById - conversationId
         conversationTitles = conversationTitles - conversationId

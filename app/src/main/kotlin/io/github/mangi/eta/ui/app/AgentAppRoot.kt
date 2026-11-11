@@ -87,6 +87,9 @@ import io.github.mangi.eta.ui.screens.home.AgentHomeScreen
 import io.github.mangi.eta.ui.screens.mcp.McpServerDetailScreen
 import io.github.mangi.eta.ui.screens.mcp.McpServersScreen
 import io.github.mangi.eta.ui.screens.memory.AgentMemoryScreen
+import io.github.mangi.eta.ui.model.TaskCenterActions
+import io.github.mangi.eta.ui.model.TaskCenterTab
+import io.github.mangi.eta.ui.screens.taskcenter.TaskCenterScreen
 import io.github.mangi.eta.ui.screens.permissions.PermissionHealthScreen
 import io.github.mangi.eta.ui.screens.skills.AgentSkillsScreen
 import io.github.mangi.eta.ui.screens.subagent.SubagentSettingsScreen
@@ -128,6 +131,9 @@ fun AgentAppRoot(
     onSharedContentAccepted: () -> Unit = {},
     openSpeechSettings: Boolean = false,
     openTerminal: Boolean = false,
+    /** 主动沟通 / 待确认通知点击后要打开的任务中心分区名（空串表示默认分区）。 */
+    openTaskCenterTab: String? = null,
+    onTaskCenterOpened: () -> Unit = {},
     onTerminalOpened: () -> Unit = {},
     onSpeechSettingsOpened: () -> Unit = {},
     onAssistantConversationOpened: (Boolean) -> Unit = {},
@@ -147,6 +153,15 @@ fun AgentAppRoot(
             if (backStack.lastOrNull() != AppRoute.Terminal) backStack.add(AppRoute.Terminal)
             onTerminalOpened()
         }
+    }
+    // 主动沟通 / 待确认通知：点通知直达任务中心指定分区（待确认区默认 APPROVALS）。
+    LaunchedEffect(openTaskCenterTab) {
+        val tab = openTaskCenterTab ?: return@LaunchedEffect
+        // 先归一化再比较：同一个分区可能有多种写法（空串 / 历史名 / 大小写），
+        // 直接用原始字符串比较会把"已经在待确认区"的通知再压一次栈，返回时要多点一次。
+        val route = AppRoute.TaskCenter(TaskCenterTab.fromNameOrDefault(tab).name)
+        if (backStack.lastOrNull() != route) backStack.add(route)
+        onTaskCenterOpened()
     }
     val navigator = remember(backStack) { AgentNavigator(backStack) }
     var navigationResetKey by rememberSaveable { mutableIntStateOf(0) }
@@ -343,6 +358,7 @@ fun AgentAppRoot(
             onStopKimiWeb = appViewModel::stopKimiWeb,
             onRefreshKimiWeb = appViewModel::refreshKimiWeb,
             onOpenBrowser = { openConversationBrowser() },
+            onOpenTaskCenter = { pushRoute(AppRoute.TaskCenter()) },
             onSelectConversation = { conversationId -> selectConversation(conversationId) },
             onConversationTogglePin = { conversation ->
                 agentState.toggleConversationPin(conversation.id)
@@ -745,12 +761,25 @@ fun AgentAppRoot(
                         when (action) {
                             AgentMemoryAction.NavigateBack -> popRoute()
                             is AgentMemoryAction.ToggleEnabled -> memory.setMemoryEnabled(action.enabled)
+                            is AgentMemoryAction.ToggleRelevance -> memory.setRelevanceEnabled(action.enabled)
+                            is AgentMemoryAction.ToggleDistillation -> memory.setDistillationEnabled(action.enabled)
+                            is AgentMemoryAction.ToggleSemanticRecall -> memory.setSemanticRecallEnabled(action.enabled)
                             is AgentMemoryAction.DraftChanged -> memory.updateMemoryDraft(action.content)
                             AgentMemoryAction.Save -> memory.saveMemory()
                             AgentMemoryAction.Clear -> memory.clearMemory()
                             AgentMemoryAction.DismissNotice -> memory.dismissMemoryNotice()
                         }
                     },
+                )
+            }
+            // 旧的「自动任务」路由保留：直接打开任务中心的自动任务分区，不再有第二套列表实现。
+            entry<AppRoute.ScheduledTasks>(swipeDismiss = swipeDismiss) {
+                TaskCenterRoute(initialTab = TaskCenterTab.SCHEDULED, onBack = ::popRoute)
+            }
+            entry<AppRoute.TaskCenter>(swipeDismiss = swipeDismiss) { taskRoute ->
+                TaskCenterRoute(
+                    initialTab = TaskCenterTab.fromNameOrDefault(taskRoute.tab),
+                    onBack = ::popRoute,
                 )
             }
             entry<AppRoute.LinuxEnvironment>(swipeDismiss = swipeDismiss) {
@@ -1038,3 +1067,35 @@ private data class MessageMutationTarget(
     val messageId: String,
     val laterTurnCount: Int,
 )
+
+/**
+ * 任务中心的装配点。
+ *
+ * 路由只决定"先看哪个分区"，页面状态由 [TaskCenterStore] 持有并对外暴露单一 StateFlow；
+ * 旧的自动任务路由与新路由共用这一份实现，避免同一个列表出现两套 UI / 两套逻辑。
+ */
+@Composable
+private fun TaskCenterRoute(initialTab: TaskCenterTab, onBack: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val store = remember(initialTab) { TaskCenterStore(context, scope, initialTab) }
+    LaunchedEffect(initialTab) { store.refresh() }
+    val state by store.state.collectAsState()
+    TaskCenterScreen(
+        state = state,
+        actions = TaskCenterActions(
+            onSelectTab = store::selectTab,
+            onDecideApproval = store::decide,
+            onStopRun = store::stopRun,
+            onStopTerminalTask = store::stopTerminalTask,
+            onToggleScheduled = store::toggleScheduled,
+            onDeleteScheduled = store::deleteScheduled,
+            onRunScheduledNow = store::runScheduledNow,
+            onDeleteMacro = store::deleteMacro,
+            onToggleUsageStats = store::setUsageStatsEnabled,
+            onRefresh = store::refresh,
+            onDismissNotice = store::dismissNotice,
+        ),
+        onBack = onBack,
+    )
+}

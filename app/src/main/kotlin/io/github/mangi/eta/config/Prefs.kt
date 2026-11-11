@@ -51,8 +51,28 @@ internal object Prefs {
         const val AGENT_AUTO_COMPACTION_ENABLED = "agent_auto_compaction_enabled"
         const val AGENT_SUBAGENT_ENABLED = "agent_subagent_enabled"
         const val AGENT_VIRTUAL_DISPLAY_ENABLED = "agent_virtual_display_enabled"
+        /** 危险操作拦截：命中系统分区/启动链等规则时先在聊天流里确认再执行。 */
+        const val AGENT_DANGER_TOOL_GUARD = "agent_danger_tool_guard"
         const val AGENT_RUNTIME_CONFIG_JSON = "agent_runtime_config_json"
         const val AGENT_DISABLED_TOOLS_JSON = "agent_disabled_tools_json"
+        /** 一期：按当前用户消息注入非核心记忆节。 */
+        const val AGENT_MEMORY_RELEVANCE_ENABLED = "agent_memory_relevance_enabled"
+        /** 三期：一轮运行结束后追加轻量记忆沉淀回合。 */
+        const val AGENT_MEMORY_DISTILL_ENABLED = "agent_memory_distill_enabled"
+        /** 四期：memory_get(query=...) 使用向量语义检索。 */
+        const val AGENT_MEMORY_SEMANTIC_RECALL_ENABLED = "agent_memory_semantic_recall_enabled"
+        /** 四期：语义检索使用的 embedding 模型名（OpenAI 兼容 /embeddings）。 */
+        const val AGENT_MEMORY_EMBEDDING_MODEL = "agent_memory_embedding_model"
+        /** 用量统计：只记录请求计数与 token 数量等元数据，纯本地、默认开启。 */
+        const val AGENT_USAGE_STATS_ENABLED = "agent_usage_stats_enabled"
+        /**
+         * 主动沟通：允许 Agent 在值得关注时主动发系统通知（notify_user），默认开启。
+         * 刻意不并入 [BOOLEAN_DEFAULTS]/[LOCAL_AGENT_KEYS]：这两个集合被 PrefsDefaultsTest 用
+         * 精确 map/set 断言钉住，且四期/拦截卡/任务中心等未提交轮次已各自追加过键。这里改用
+         * [isProactiveNotifyEnabled] 独立读取同一份 localAgent prefs，既不改动既有默认值快照测试，
+         * 也不与那些轮次抢同一处定义；默认 true 与设置页 SwitchPref 的 `?: true` 一致。
+         */
+        const val AGENT_PROACTIVE_NOTIFY_ENABLED = "agent_proactive_notify_enabled"
 
         /** 全部布尔开关及其默认值。 */
         val BOOLEAN_DEFAULTS: Map<String, Boolean> = mapOf(
@@ -74,6 +94,11 @@ internal object Prefs {
             AGENT_AUTO_COMPACTION_ENABLED to true,
             AGENT_SUBAGENT_ENABLED to true,
             AGENT_VIRTUAL_DISPLAY_ENABLED to true,
+            AGENT_DANGER_TOOL_GUARD to true,
+            AGENT_MEMORY_RELEVANCE_ENABLED to true,
+            AGENT_MEMORY_DISTILL_ENABLED to false,
+            AGENT_MEMORY_SEMANTIC_RECALL_ENABLED to false,
+            AGENT_USAGE_STATS_ENABLED to true,
         )
 
         /** 由 Eta Runtime 最终裁决、不要求 Xposed 框架在线的开关。 */
@@ -87,6 +112,11 @@ internal object Prefs {
             AGENT_AUTO_COMPACTION_ENABLED,
             AGENT_SUBAGENT_ENABLED,
             AGENT_VIRTUAL_DISPLAY_ENABLED,
+            AGENT_DANGER_TOOL_GUARD,
+            AGENT_MEMORY_RELEVANCE_ENABLED,
+            AGENT_MEMORY_DISTILL_ENABLED,
+            AGENT_MEMORY_SEMANTIC_RECALL_ENABLED,
+            AGENT_USAGE_STATS_ENABLED,
         )
     }
 
@@ -135,6 +165,31 @@ internal object Prefs {
 
     fun getString(key: String): String {
         return remote?.getString(key, "") ?: ""
+    }
+
+    /**
+     * 主动沟通开关：默认开启。读取 localAgent prefs（与设置页 SwitchPref 同一份），
+     * 缺失时按默认 true；框架 remote 不可用也不影响。独立于 [isEnabled] 的默认值快照，
+     * 避免与"默认值精确断言"测试以及其它未提交轮次的 BOOLEAN_DEFAULTS 追加互相干扰。
+     */
+    fun isProactiveNotifyEnabled(): Boolean = runCatching {
+        (localAgent ?: remote)?.getBoolean(Keys.AGENT_PROACTIVE_NOTIFY_ENABLED, true) ?: true
+    }.getOrDefault(true)
+
+    /** 读取本地 Agent 配置中的字符串（远端未必有同名键）；缺省返回 [default]。 */
+    fun localAgentString(key: String, default: String = ""): String =
+        runCatching { (localAgent ?: remote)?.getString(key, default) }.getOrNull() ?: default
+
+    /** 写入单个本地 Agent 布尔开关；框架可用时顺手回写远端，保持 hook 侧一致。 */
+    fun setAgentSwitch(
+        key: String,
+        enabled: Boolean,
+        service: XposedService? = null,
+    ): Boolean {
+        val local = localAgent ?: return false
+        val committed = runCatching { local.edit().putBoolean(key, enabled).commit() }.getOrDefault(false)
+        if (committed && service != null) reconcileAgentPreferences(service)
+        return committed
     }
 
     fun powerAssistantTarget(): PowerAssistantTarget = powerAssistantTarget(remote)

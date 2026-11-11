@@ -7,10 +7,13 @@ import io.github.mangi.eta.agent.model.AgentModelExecutionException
 import io.github.mangi.eta.agent.runtime.AgentEvent
 import io.github.mangi.eta.agent.runtime.AgentRunCancelledException
 import io.github.mangi.eta.agent.runtime.AgentRunController
+import io.github.mangi.eta.agent.runs.AgentRunSource
+import io.github.mangi.eta.agent.runs.agentLiveRuns
 import io.github.mangi.eta.agent.skill.SkillContext
 import io.github.mangi.eta.agent.terminal.TerminalExecutionContext
 import io.github.mangi.eta.agent.terminal.TerminalRuntime
 import io.github.mangi.eta.agent.tool.AgentToolCapabilities
+import io.github.mangi.eta.agent.usage.UsageAttribution
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ScheduledFuture
@@ -34,6 +37,8 @@ internal class SubagentExecutor(
     private val mcpTools: JSONArray,
     private val executionContext: TerminalExecutionContext?,
     private val onProgress: (AgentEvent.SubagentProgress) -> Unit,
+    /** 父 run 的 id；只用于任务中心把子代理挂回父运行，缺省时不影响任何行为。 */
+    private val parentRunId: String = "",
     private val nanoTime: () -> Long = System::nanoTime,
 ) {
     private val latestSnapshots = ConcurrentHashMap<String, String>()
@@ -196,6 +201,15 @@ internal class SubagentExecutor(
             supportsSearchSuggestions = false,
         )
 
+        // 任务中心的「运行中」投影：子代理单独登记，标题只保留类型与描述，不涉及内容落盘。
+        // 放在所有早退分支之后，保证登记一定会被 finally 收走。
+        val subagentRegistration = agentLiveRuns.begin(
+            runId = subagentId,
+            source = AgentRunSource.SUBAGENT,
+            title = "${profile.name} · $description",
+            parentRunId = parentRunId,
+        )
+
         return try {
             val response = AgentModelClient.complete(
                 config = subagentConfig,
@@ -211,6 +225,7 @@ internal class SubagentExecutor(
                 sessionId = "$conversationKey-$subagentId",
                 operationId = "${toolCall.id}-$subagentId",
                 toolFilter = profile::filterTools,
+                usageAttribution = UsageAttribution(source = AgentRunSource.SUBAGENT, runId = subagentId),
                 onEvent = { childEvent ->
                     if (childEvent is AgentEvent.RoundStarted) {
                         // 用事件携带的逻辑轮次，网络重试（同 round 多 attempt）不重复计预算。
@@ -332,6 +347,7 @@ internal class SubagentExecutor(
         } finally {
             timeoutFuture?.cancel(false)
             controllerBinding.close()
+            runCatching { subagentRegistration.close() }
         }
     }
 

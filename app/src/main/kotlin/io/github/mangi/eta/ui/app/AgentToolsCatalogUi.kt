@@ -26,6 +26,8 @@ internal fun buildToolsState(context: Context): AgentToolsUiState =
                     ToolItemUi("macro_save", "保存 GUI 宏", "保存验证过的动作序列，支持参数占位。"),
                     ToolItemUi("macro_run", "执行 GUI 宏", "按名称运行动作脚本并注入参数。"),
                     ToolItemUi("macro_delete", "删除 GUI 宏", "按名称删除动作脚本。"),
+                    ToolItemUi("macro_record", context.getString(R.string.tool_macro_record), context.getString(R.string.tool_macro_record_description)),
+                    ToolItemUi("schedule_task", context.getString(R.string.tool_schedule_task), context.getString(R.string.tool_schedule_task_description)),
                 ),
             ),
             ToolGroupUi(
@@ -53,6 +55,7 @@ internal fun buildToolsState(context: Context): AgentToolsUiState =
                 tools = listOf(
                     ToolItemUi("search_apps", context.getString(R.string.tool_ui_search_apps_897fdf), context.getString(R.string.tool_ui_query_installed_applications_by_name_or_package__32b004)),
                     ToolItemUi("get_current_context", context.getString(R.string.tool_ui_time_and_location_693893), context.getString(R.string.tool_ui_read_system_time_and_recent_location_b9f4ae)),
+                    ToolItemUi("ask_user", context.getString(R.string.tool_ask_user), context.getString(R.string.tool_ask_user_description)),
                     ToolItemUi("launch_app", context.getString(R.string.tool_ui_open_app_7c65e7), context.getString(R.string.tool_ui_start_the_specified_package_name_or_application__beabff)),
                     ToolItemUi("open_uri", context.getString(R.string.tool_ui_open_with_app_32c24e), context.getString(R.string.tool_ui_explicitly_hand_over_links_or_deep_links_to_exte_35ff26)),
                     ToolItemUi("press_key", context.getString(R.string.tool_ui_button_02eafa), context.getString(R.string.tool_ui_system_buttons_such_as_return_homepage_recent_ta_1b4cf0)),

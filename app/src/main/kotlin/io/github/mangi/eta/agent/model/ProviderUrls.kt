@@ -13,6 +13,10 @@ internal object ProviderUrls {
     fun openAiModelsUrl(baseUrl: String): String =
         appendPath(baseUrl, "models")
 
+    /** 语义检索用的 OpenAI 兼容向量接口。 */
+    fun openAiEmbeddingsUrl(baseUrl: String): String =
+        appendPath(baseUrl, "embeddings")
+
     fun anthropicMessagesUrl(baseUrl: String): String =
         appendPath(baseUrl, "v1/messages")
 

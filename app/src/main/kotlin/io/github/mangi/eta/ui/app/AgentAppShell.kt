@@ -24,6 +24,7 @@ import androidx.compose.material.icons.automirrored.rounded.VolumeOff
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.rounded.AddComment
+import androidx.compose.material.icons.rounded.Dashboard
 import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Stop
@@ -116,6 +117,7 @@ internal fun AgentAppShell(
     onStopKimiWeb: () -> Unit,
     onRefreshKimiWeb: () -> Unit,
     onOpenBrowser: () -> Unit,
+    onOpenTaskCenter: () -> Unit,
     onSelectConversation: (String) -> Unit,
     onConversationTogglePin: (ConversationSummaryUi) -> Unit,
     onConversationRename: (ConversationSummaryUi) -> Unit,
@@ -177,6 +179,13 @@ internal fun AgentAppShell(
                                 actions = {
                                     if (isHome) {
                                         TopAppBarButtonGroup {
+                                            CouiTopAppBarIconButton(
+                                                icon = Icons.Rounded.Dashboard,
+                                                contentDescription = stringResource(R.string.task_center_title),
+                                                onClick = onOpenTaskCenter,
+                                                dark = dark,
+                                                colors = colors,
+                                            )
                                             CouiTopBarOverflowMenu(
                                                 dark = dark,
                                                 colors = colors,
@@ -233,6 +242,7 @@ internal fun AgentAppShell(
                                     onStopKimiWeb = onStopKimiWeb,
                                     onRefreshKimiWeb = onRefreshKimiWeb,
                                     onOpenBrowser = onOpenBrowser,
+                                    onOpenTaskCenter = onOpenTaskCenter,
                                     homeCharacter = homeCharacter,
                                     onOpenCharacter = onOpenCharacter,
                                 )
@@ -391,6 +401,7 @@ private fun AgentTopBar(
     onStopKimiWeb: () -> Unit,
     onRefreshKimiWeb: () -> Unit,
     onOpenBrowser: () -> Unit,
+    onOpenTaskCenter: () -> Unit,
     homeCharacter: RoleplayChatUi?,
     onOpenCharacter: () -> Unit,
 ) {
@@ -415,6 +426,13 @@ private fun AgentTopBar(
     }
     val actions: @Composable RowScope.() -> Unit = {
         if (isHome) {
+            IconButton(onClick = onOpenTaskCenter) {
+                Icon(
+                    imageVector = Icons.Rounded.Dashboard,
+                    modifier = Modifier.size(24.dp),
+                    contentDescription = stringResource(R.string.task_center_title),
+                )
+            }
             TopBarOverflowMenu(
                 onNewConversation = onNewConversation,
                 onOpenTerminal = onOpenTerminal,
@@ -623,6 +641,8 @@ private fun titleForRoute(route: AppRoute?): String = when (route) {
     is AppRoute.AppearanceSettings -> stringResource(R.string.appearance_title)
     is AppRoute.DataBackup -> stringResource(R.string.data_backup_title)
     is AppRoute.Memory -> stringResource(R.string.route_memory)
+    is AppRoute.ScheduledTasks -> stringResource(R.string.route_scheduled_tasks)
+    is AppRoute.TaskCenter -> stringResource(R.string.task_center_title)
     is AppRoute.LinuxEnvironment -> stringResource(R.string.route_linux_environment)
     is AppRoute.Workspace -> stringResource(R.string.capability_workspace)
     is AppRoute.SharedFolders -> stringResource(R.string.route_shared_folders)

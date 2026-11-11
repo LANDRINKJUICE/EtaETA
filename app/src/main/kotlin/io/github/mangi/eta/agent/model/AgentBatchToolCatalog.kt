@@ -98,6 +98,31 @@ internal object AgentBatchToolCatalog {
             )
             .put(
                 AgentToolSchema.function(
+                    name = "macro_record",
+                    description = "录制用户自己的屏幕操作生成 GUI 宏。action=start 开始录制（需要一个有效的 name），" +
+                        "用户在手机上正常操作后 action=stop 停止并返回归一化后的动作序列与动作数，" +
+                        "确认后可用 macro_save 保存（或 stop 时直接传 save=true）。" +
+                        "密码框内的输入一律不录制；录制期间不要同时让 Agent 操作手机。",
+                    parameters = JSONObject()
+                        .put("type", "object")
+                        .put(
+                            "properties",
+                            JSONObject()
+                                .put(
+                                    "action",
+                                    JSONObject().put("type", "string")
+                                        .put("enum", JSONArray().put("start").put("stop").put("cancel").put("status")),
+                                )
+                                .put("name", JSONObject().put("type", "string").put("description", "宏名：小写字母、数字、下划线、连字符"))
+                                .put("save", JSONObject().put("type", "boolean").put("description", "stop 时直接保存，默认 false"))
+                                .put("overwrite", JSONObject().put("type", "boolean").put("description", "save=true 时是否覆盖同名宏"))
+                                .put("description", JSONObject().put("type", "string").put("description", "save=true 时写入宏描述")),
+                        )
+                        .put("required", JSONArray().put("action")),
+                ),
+            )
+            .put(
+                AgentToolSchema.function(
                     name = "macro_delete",
                     description = "按名称删除 GUI 宏。",
                     parameters = JSONObject()

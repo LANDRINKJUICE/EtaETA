@@ -11,7 +11,7 @@ internal object AgentMemoryToolCatalog {
             .put(
                 AgentToolSchema.function(
                     name = "memory_get",
-                    description = "Read persistent cross-conversation memory from MEMORY.md. Core memory and the heading index are already provided at run start, so call this only to inspect details, answer what is remembered, or refresh after a conflict. Use query for just-in-time retrieval instead of reading the whole file.",
+                    description = "Read persistent cross-conversation memory from MEMORY.md. Core memory, the heading index, and the most relevant sections for the current request are already provided at run start, so call this only to inspect details, answer what is remembered, or refresh after a conflict. Use query for just-in-time retrieval instead of reading the whole file; when semantic recall is enabled the query is also matched by embedding similarity, otherwise by keyword.",
                     parameters = JSONObject()
                         .put("type", "object")
                         .put(
@@ -38,6 +38,12 @@ internal object AgentMemoryToolCatalog {
                                         .put("minimum", AgentMemoryStore.MIN_READ_CHARS)
                                         .put("maximum", AgentMemoryStore.MAX_READ_CHARS)
                                         .put("description", "Maximum returned characters; default 12000, maximum 32000."),
+                                )
+                                .put(
+                                    "include_metadata",
+                                    JSONObject()
+                                        .put("type", "boolean")
+                                        .put("description", "When true, also return per-section metadata (id, heading, line range, created, verified, type)."),
                                 ),
                         ),
                 ),
@@ -47,7 +53,7 @@ internal object AgentMemoryToolCatalog {
             .put(
                 AgentToolSchema.function(
                     name = "memory_write",
-                    description = "Atomically update persistent MEMORY.md. Store only durable cross-conversation facts, preferences, relationships, and ongoing project context; never store secrets, credentials, verification codes, or transient requests. Keep '# 核心记忆' concise, correct stale facts, and prefer replacing an existing section over blindly appending duplicates. Prefer mode=upsert_section for section-level updates: it replaces the whole section body by heading without line-number surgery. Use the revision from the most recent memory_write or memory_get result, or the session memory snapshot if neither has run.",
+                    description = "Atomically update persistent MEMORY.md. Store only durable cross-conversation facts, preferences, relationships, and ongoing project context; never store secrets, credentials, verification codes, or transient requests. Keep '# 核心记忆' concise, correct stale facts, and prefer replacing an existing section over blindly appending duplicates. Prefer mode=upsert_section for section-level updates: it replaces the whole section body by heading without line-number surgery. Section metadata (created/verified/id) is maintained automatically in an HTML comment line; keep it and set type=state on a section whose facts expire quickly. Use the revision from the most recent memory_write or memory_get result, or the session memory snapshot if neither has run.",
                     parameters = JSONObject()
                         .put("type", "object")
                         .put(

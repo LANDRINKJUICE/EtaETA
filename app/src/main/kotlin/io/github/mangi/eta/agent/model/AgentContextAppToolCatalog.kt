@@ -103,6 +103,74 @@ internal object AgentContextAppToolCatalog {
             )
             .put(
                 AgentToolSchema.function(
+                    name = "ask_user",
+                    description = "在聊天流里向用户提一个问题并等待选择，用于拿不准用户意图、需要用户在几个方案里做决定、" +
+                        "或缺少只有用户才知道的信息时。参数含 question（一句话问题）、可选 explanation（背景与不确定性说明）、" +
+                        "options（2 到 4 个选项，每项含 label 与可选 description）与 allow_free_text（是否允许用户自行输入）。" +
+                        "用户点选后工具结果返回所选选项；用户没有回答（超时或会话结束）时返回 USER_NO_ANSWER，" +
+                        "此时不要臆测用户的选择。不要用它确认危险操作（危险操作会由系统自动弹出确认卡），也不要用它代替普通回答。",
+                    parameters = JSONObject()
+                        .put("type", "object")
+                        .put(
+                            "properties",
+                            JSONObject()
+                                .put(
+                                    "question",
+                                    JSONObject()
+                                        .put("type", "string")
+                                        .put("description", "要问用户的一句话问题，例如“这张照片要发到哪个群？”")
+                                )
+                                .put(
+                                    "explanation",
+                                    JSONObject()
+                                        .put("type", "string")
+                                        .put("description", "可选，说明为什么需要用户决定、有哪几种可能，最多 2000 字")
+                                )
+                                .put(
+                                    "options",
+                                    JSONObject()
+                                        .put("type", "array")
+                                        .put("minItems", 2)
+                                        .put("maxItems", 4)
+                                        .put(
+                                            "items",
+                                            JSONObject()
+                                                .put("type", "object")
+                                                .put(
+                                                    "properties",
+                                                    JSONObject()
+                                                        .put(
+                                                            "label",
+                                                            JSONObject()
+                                                                .put("type", "string")
+                                                                .put("description", "选项按钮文案，简短明确，最多 120 字")
+                                                        )
+                                                        .put(
+                                                            "description",
+                                                            JSONObject()
+                                                                .put("type", "string")
+                                                                .put("description", "可选，一句话说明这个选项的后果，最多 300 字")
+                                                        )
+                                                )
+                                                .put("required", JSONArray().put("label"))
+                                                .put("additionalProperties", false)
+                                        )
+                                        .put("description", "2 到 4 个选项，由你根据当前场景生成")
+                                )
+                                .put(
+                                    "allow_free_text",
+                                    JSONObject()
+                                        .put("type", "boolean")
+                                        .put("default", false)
+                                        .put("description", "是否允许用户补充自由文本；开启后卡片会显示输入框")
+                                )
+                        )
+                        .put("required", JSONArray().put("question").put("options"))
+                        .put("additionalProperties", false),
+                )
+            )
+            .put(
+                AgentToolSchema.function(
                     name = "open_uri",
                     description = "把一个确定有效的 URI 显式交给 Android 外部应用处理，例如 https、tel、geo 或应用 deep link。它不用于读取网页或网页交互。不要编造 URI。",
                     parameters = JSONObject()

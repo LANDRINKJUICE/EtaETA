@@ -10,6 +10,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 自动任务的精确定时；Android 12+ 用户可撤销，未授权时降级为允许系统推迟的闹钟。 -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!-- 开机后重建自动任务的闹钟；任务定义持久化在应用私有目录，不会丢。 -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Agent run 期间把执行通知提升为 Live Update，显示在状态栏胶囊与锁屏；普通权限，用户可在通知设置中关闭。 -->
     <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" tools:ignore="ScopedStorage" />
@@ -164,6 +168,15 @@
         </service>
 
         <service
+            android:name=".agent.schedule.ScheduledTaskService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Unattended agent tasks scheduled by the user at a specific time" />
+        </service>
+
+        <service
             android:name=".agent.accessibility.AgentAccessibilityService"
             android:exported="true"
             android:label="@string/agent_accessibility_label"
@@ -185,6 +198,22 @@
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
         </service>
+
+        <receiver
+            android:name=".agent.schedule.ScheduledTaskReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".agent.tool.MacroRecordingReceiver"
+            android:exported="false" />
 
         <provider
             android:name=".agent.accessibility.AgentAccessibilityHealthProvider"

@@ -303,6 +303,30 @@ private fun MemorySettingsGroup(
                     onCheckedChange = { onAction(AgentMemoryAction.ToggleEnabled(it)) },
                 )
                 Divider()
+                CouiSwitchPreference(
+                    title = stringResource(R.string.memory_relevance_injection),
+                    summary = stringResource(R.string.memory_relevance_injection_summary),
+                    checked = state.relevanceEnabled,
+                    enabled = !state.isLoading,
+                    onCheckedChange = { onAction(AgentMemoryAction.ToggleRelevance(it)) },
+                )
+                Divider()
+                CouiSwitchPreference(
+                    title = stringResource(R.string.memory_distillation_title),
+                    summary = stringResource(R.string.memory_distillation_summary),
+                    checked = state.distillationEnabled,
+                    enabled = !state.isLoading,
+                    onCheckedChange = { onAction(AgentMemoryAction.ToggleDistillation(it)) },
+                )
+                Divider()
+                CouiSwitchPreference(
+                    title = stringResource(R.string.memory_semantic_recall_title),
+                    summary = stringResource(R.string.memory_semantic_recall_summary),
+                    checked = state.semanticRecallEnabled,
+                    enabled = !state.isLoading,
+                    onCheckedChange = { onAction(AgentMemoryAction.ToggleSemanticRecall(it)) },
+                )
+                Divider()
                 CouiPreference(
                     title = stringResource(R.string.ui_core_memory_injection_budget_48b5d5),
                     summary = stringResource(R.string.memory_budget_summary, formatNumber(state.coreBudgetChars)),
@@ -322,6 +346,27 @@ private fun MemorySettingsGroup(
                     checked = state.enabled,
                     enabled = !state.isLoading,
                     onCheckedChange = { onAction(AgentMemoryAction.ToggleEnabled(it)) },
+                )
+                SwitchPreference(
+                    title = stringResource(R.string.memory_relevance_injection),
+                    summary = stringResource(R.string.memory_relevance_injection_summary),
+                    checked = state.relevanceEnabled,
+                    enabled = !state.isLoading,
+                    onCheckedChange = { onAction(AgentMemoryAction.ToggleRelevance(it)) },
+                )
+                SwitchPreference(
+                    title = stringResource(R.string.memory_distillation_title),
+                    summary = stringResource(R.string.memory_distillation_summary),
+                    checked = state.distillationEnabled,
+                    enabled = !state.isLoading,
+                    onCheckedChange = { onAction(AgentMemoryAction.ToggleDistillation(it)) },
+                )
+                SwitchPreference(
+                    title = stringResource(R.string.memory_semantic_recall_title),
+                    summary = stringResource(R.string.memory_semantic_recall_summary),
+                    checked = state.semanticRecallEnabled,
+                    enabled = !state.isLoading,
+                    onCheckedChange = { onAction(AgentMemoryAction.ToggleSemanticRecall(it)) },
                 )
                 BasicComponent(
                     title = stringResource(R.string.ui_core_memory_injection_budget_48b5d5),

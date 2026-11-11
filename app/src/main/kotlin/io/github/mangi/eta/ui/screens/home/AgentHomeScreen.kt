@@ -103,6 +103,7 @@ internal fun AgentHomeScreen(
                     onLoadEarlierMessages = { onAction(AgentHomeAction.LoadEarlierMessages) },
                     onHistoryViewportChanged = { onAction(AgentHomeAction.HistoryViewportChanged(it)) },
                     isDrawerOpen = isDrawerOpen,
+                    conversationId = conversationKey,
                     modifier = modifier,
                 )
             }
