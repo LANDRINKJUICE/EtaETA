@@ -650,4 +650,188 @@ class ToolRiskEvaluatorTest {
             AgentToolRiskEvaluator.evaluate("schedule_task", JSONObject().put("action", "create")),
         )
     }
+
+    // ── Eta 自管理工具（提供商 / 模型 / MCP / 开关 / 技能）─────────────
+
+    /** 自管理工具写入：确认卡必须同时写出工具名与关键参数（名字、id），且凭据不回显。 */
+    private fun assertSelfBlocked(
+        tool: String,
+        json: String,
+        expectedLevel: ToolRiskLevel,
+        expectedCategory: ToolRiskCategory,
+        vararg expectedInSubject: String,
+    ): ToolRiskVerdict.NeedsConfirm {
+        val verdict = evaluate(tool, json)
+        if (verdict !is ToolRiskVerdict.NeedsConfirm) {
+            fail("$tool 必须走确认卡，实际：$verdict")
+            error("unreachable")
+        }
+        val needsConfirm = verdict
+        assertEquals("$tool 风险类别", listOf(expectedCategory), needsConfirm.categories)
+        assertEquals("$tool 风险等级", expectedLevel, needsConfirm.level)
+        assertTrue("确认卡要展示工具名：${needsConfirm.subject}", needsConfirm.subject.contains(tool))
+        expectedInSubject.forEach { token ->
+            assertTrue(
+                "确认卡要点出关键参数「$token」：${needsConfirm.subject}",
+                needsConfirm.subject.contains(token),
+            )
+        }
+        return needsConfirm
+    }
+
+    @Test
+    fun `eta self config writes need confirmation`() {
+        assertSelfBlocked(
+            "eta_set_config",
+            """{"key":"AGENT_TERMINAL_TOOLS","value":false}""",
+            ToolRiskLevel.MEDIUM,
+            ToolRiskCategory.AGENT_SELF_CONFIG_WRITE,
+            "AGENT_TERMINAL_TOOLS",
+            "关闭",
+        )
+        assertSelfBlocked(
+            "eta_set_tool_enabled",
+            """{"tool":"browser_use","enabled":false}""",
+            ToolRiskLevel.MEDIUM,
+            ToolRiskCategory.AGENT_SELF_CONFIG_WRITE,
+            "browser_use",
+        )
+    }
+
+    @Test
+    fun `eta provider and model writes need confirmation and hide the api key`() {
+        val provider = assertSelfBlocked(
+            "eta_provider_upsert",
+            """{"name":"DeepSeek","base_url":"https://api.deepseek.com","api_key":"sk-live-1234567890abcdef"}""",
+            ToolRiskLevel.MEDIUM,
+            ToolRiskCategory.AGENT_SELF_CONFIG_WRITE,
+            "DeepSeek",
+            "https://api.deepseek.com",
+        )
+        assertTrue(
+            "确认卡不能回显 api_key：${provider.subject} / ${provider.findings.first().detail}",
+            !provider.subject.contains("sk-live") && !provider.findings.first().detail.contains("sk-live"),
+        )
+
+        // 更新已有提供商时至少要让人看到 id，否则用户对不上是哪一条。
+        assertSelfBlocked(
+            "eta_provider_upsert",
+            """{"id":"p1","api_key":""}""",
+            ToolRiskLevel.MEDIUM,
+            ToolRiskCategory.AGENT_SELF_CONFIG_WRITE,
+            "p1",
+            "凭据将被清除",
+        )
+
+        assertSelfBlocked(
+            "eta_model_upsert",
+            """{"provider_id":"p1","model_id":"deepseek-chat","display_name":"DeepSeek Chat"}""",
+            ToolRiskLevel.MEDIUM,
+            ToolRiskCategory.AGENT_SELF_CONFIG_WRITE,
+            "p1",
+            "deepseek-chat",
+        )
+        // 切换默认模型同样改变"之后谁来处理请求"，也要确认。
+        assertSelfBlocked(
+            "eta_model_select",
+            """{"id":"m1"}""",
+            ToolRiskLevel.MEDIUM,
+            ToolRiskCategory.AGENT_SELF_CONFIG_WRITE,
+            "m1",
+        )
+        assertSelfBlocked(
+            "eta_model_select",
+            """{"provider_id":"p1"}""",
+            ToolRiskLevel.MEDIUM,
+            ToolRiskCategory.AGENT_SELF_CONFIG_WRITE,
+            "p1",
+        )
+    }
+
+    @Test
+    fun `eta mcp upsert needs confirmation and hides the bearer token`() {
+        val server = assertSelfBlocked(
+            "eta_mcp_upsert",
+            """{"name":"GitHub","url":"https://api.githubcopilot.com/mcp/","bearer_token":"ghp_abcdefghijklmnop"}""",
+            ToolRiskLevel.MEDIUM,
+            ToolRiskCategory.AGENT_SELF_CONFIG_WRITE,
+            "GitHub",
+            "https://api.githubcopilot.com/mcp/",
+        )
+        assertTrue(
+            "确认卡不能回显 bearer_token：${server.subject}",
+            !server.subject.contains("ghp_abcdefghijklmnop") &&
+                !server.findings.first().detail.contains("ghp_abcdefghijklmnop"),
+        )
+    }
+
+    @Test
+    fun `eta self deletions are high risk`() {
+        assertSelfBlocked(
+            "eta_provider_delete",
+            """{"id":"p1"}""",
+            ToolRiskLevel.HIGH,
+            ToolRiskCategory.AGENT_SELF_DELETE,
+            "p1",
+        )
+        assertSelfBlocked(
+            "eta_model_delete",
+            """{"provider_id":"p1","id":"m1"}""",
+            ToolRiskLevel.HIGH,
+            ToolRiskCategory.AGENT_SELF_DELETE,
+            "m1",
+        )
+        assertSelfBlocked(
+            "eta_mcp_delete",
+            """{"id":"srv1"}""",
+            ToolRiskLevel.HIGH,
+            ToolRiskCategory.AGENT_SELF_DELETE,
+            "srv1",
+        )
+        assertSelfBlocked(
+            "eta_skill_delete",
+            """{"id":"pdf"}""",
+            ToolRiskLevel.HIGH,
+            ToolRiskCategory.AGENT_SELF_DELETE,
+            "pdf",
+        )
+    }
+
+    @Test
+    fun `eta self tools without the required arguments are not gated`() {
+        // 参数不全时执行侧本来就会拒绝（MODEL_TOOL_ERROR / SELF_TOOL_ERROR），
+        // 判定器只制造噪音没有任何收益。
+        listOf(
+            "eta_set_config" to """{"value":true}""",
+            "eta_set_tool_enabled" to """{"tool":"browser_use"}""",
+            "eta_set_tool_enabled" to """{"enabled":false}""",
+            "eta_provider_upsert" to """{}""",
+            "eta_provider_delete" to """{}""",
+            "eta_model_upsert" to """{}""",
+            "eta_model_delete" to """{"provider_id":"p1"}""",
+            "eta_model_select" to """{}""",
+            "eta_mcp_upsert" to """{"discover":false}""",
+            "eta_mcp_delete" to """{}""",
+            "eta_skill_delete" to """{}""",
+        ).forEach { (tool, args) ->
+            assertEquals("参数不全不该弹卡：$tool $args", ToolRiskVerdict.Safe, evaluate(tool, args))
+        }
+    }
+
+    @Test
+    fun `eta read only tools stay safe`() {
+        listOf(
+            "eta_get_config" to "{}",
+            "eta_provider_list" to "{}",
+            "eta_model_list" to """{"provider_id":"p1"}""",
+            "eta_mcp_list" to "{}",
+            "eta_mcp_refresh" to """{"id":"srv1"}""",
+            "eta_skill_list" to "{}",
+            "eta_skill_set_enabled" to """{"id":"pdf","enabled":true}""",
+            "eta_prefs_list" to "{}",
+            "eta_prefs_get" to """{"key":"web.custom_search_url"}""",
+        ).forEach { (tool, args) ->
+            assertEquals("只读工具必须放行：$tool", ToolRiskVerdict.Safe, evaluate(tool, args))
+        }
+    }
 }

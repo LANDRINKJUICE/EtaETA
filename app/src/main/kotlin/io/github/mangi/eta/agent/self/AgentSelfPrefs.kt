@@ -163,7 +163,7 @@ internal object AgentSelfPrefsRules {
      * 运行时前置条件：登记表管不了的部分（需要设备能力或外部状态）集中在这里，
      * 由执行侧在写入前调用。返回 null 表示可以写。
      */
-    fun precondition(spec: PrefSpec, value: String, rootAvailable: Boolean): PrefCheck? = when {
+    fun precondition(spec: PrefSpec, value: String, rootAvailable: Boolean): PrefCheck.Rejected? = when {
         // 对齐终端页门槛：chroot 需要 Root 授权，未授权时只能选 proot。
         spec.target is PrefTarget.LinuxBackend && value == CHROOT_BACKEND && !rootAvailable ->
             PrefCheck.Rejected(

@@ -60,6 +60,23 @@
 
 技能启用或卸载从下一轮运行生效。
 
+### 写入前的危险操作确认
+
+自管理工具和其它危险操作共用同一张确认卡（判定在
+`agent/approval/AgentToolRiskEvaluator.kt`，闸门 `AgentToolApprovalGate` 在 `AgentLocalTools`
+真正分发之前统一生效；子代理经 `SubagentExecutor` 复用同一个执行器，因此同样受约束）：
+
+| 等级 | 工具 | 为什么 |
+|---|---|---|
+| MEDIUM | `eta_provider_upsert`、`eta_model_upsert`、`eta_model_select`、`eta_mcp_upsert`、`eta_set_config`、`eta_set_tool_enabled` | 改写运行配置：请求发往哪个端点、带谁的凭据、用哪个模型、哪些工具还能调用 |
+| HIGH | `eta_provider_delete`、`eta_model_delete`、`eta_mcp_delete`、`eta_skill_delete` | 删除不可撤销，重建要用户重新填地址 \/ 凭据 \/ 重装技能 |
+| 放行 | `eta_get_config`、`eta_provider_list`、`eta_model_list`、`eta_mcp_list`、`eta_mcp_refresh`、`eta_skill_list`、`eta_prefs_list`、`eta_prefs_get` | 只读 |
+
+- 确认卡标题写出工具名与关键参数（提供商名、模型 id、MCP 服务器名、开关键）；
+  `api_key` \/ `bearer_token` 只说"替换 \/ 清除 \/ 沿用"，**一个字符都不回显**。
+- 参数不全时判定器不弹卡：执行侧本来就会用 `${MODEL,SKILL}_TOOL_ERROR` 拒绝，重复弹卡只会训练用户盲点同意。
+- `eta_skill_set_enabled` 是可逆开关，暂未纳入闸门；若后续出现"关掉安全相关技能"的滥用场景，再加。
+
 ## 5. 设置键读写工具（eta_prefs_\*）
 
 工具组开关以外，Agent 现在可以按**白名单**读写设置页里的三类配置，不需要用户手点设置页，

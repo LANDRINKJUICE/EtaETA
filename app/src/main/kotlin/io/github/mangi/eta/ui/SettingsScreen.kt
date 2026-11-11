@@ -435,7 +435,7 @@ private fun SettingsPageContent(
                         title = stringResource(R.string.settings_job_wakeup),
                         summary = stringResource(R.string.settings_job_wakeup_summary),
                         key = Prefs.Keys.AGENT_JOB_WAKEUP_ENABLED,
-                        icon = Icons.Rounded.Refresh,
+                        icon = Icons.Rounded.NotificationsActive,
                         iconTint = SettingsIconColors.Green,
                     )
                 }
@@ -926,7 +926,7 @@ private fun SettingsPageContent(
                             title = stringResource(R.string.settings_job_wakeup),
                             summary = stringResource(R.string.settings_job_wakeup_summary),
                             key = Prefs.Keys.AGENT_JOB_WAKEUP_ENABLED,
-                            icon = Icons.Rounded.Refresh,
+                            icon = Icons.Rounded.NotificationsActive,
                             iconTint = SettingsIconColors.Green,
                         )
                     }

@@ -97,6 +97,22 @@ internal enum class ToolRiskCategory(val wireValue: String) {
      * 属于用户必须当面点头的一类；判定规则见 [io.github.mangi.eta.agent.self.AgentSelfPrefsRules.confirmationReason]。
      */
     AGENT_SETTINGS_WRITE("agent_settings_write"),
+
+    /**
+     * Agent 改写 Eta 自身的运行配置：模型提供商、模型、MCP 服务器、工具组开关。
+     *
+     * 这类写入不碰系统分区，但决定"之后的请求发往哪个端点、带谁的凭据、模型具备哪些能力、
+     * 哪些工具还能被调用"，属于用户必须当面点头的一类；与 [AGENT_SETTINGS_WRITE] 分开是因为
+     * 确认卡的解释不同（那边说的是单个设置键，这边说的是整套模型\/MCP 配置）。
+     */
+    AGENT_SELF_CONFIG_WRITE("agent_self_config_write"),
+
+    /**
+     * Agent 删除 Eta 自身的配置项或已安装内容（提供商、模型、MCP 服务器、技能）。
+     *
+     * 删除不可撤销，重建要用户自己重新填地址、凭据或重新安装技能包，因此单列一类 HIGH。
+     */
+    AGENT_SELF_DELETE("agent_self_delete"),
 }
 
 /** 单条命中记录：类别 + 等级 + 具体对象（路径、属性键、命令片段）。 */

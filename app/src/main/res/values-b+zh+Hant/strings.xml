@@ -1647,6 +1647,8 @@
     <string name="macro_recording_no_actions">沒有可儲存的內容：這次沒有錄到可回放的動作。</string>
     <string name="macro_recording_saved_description">由螢幕錄製生成</string>
     <string name="approval_reason_agent_settings">這會修改 Eta 自身的設定：請求和憑據會被發往新的位址，或指令改在另一個環境裡執行。</string>
+    <string name="approval_reason_agent_self_config">這會改寫 Eta 自身的執行設定（模型提供商、模型、MCP 伺服器或工具開關）：之後請求、憑據和可用工具都會隨之改變。</string>
+    <string name="approval_reason_agent_self_delete">這會刪除 Eta 自身的設定或已安裝內容（提供商、模型、MCP 伺服器、技能）：復原只能重新設定或重新安裝。</string>
     <string name="approval_reason_scheduled_task_create">這會建立一條自動任務：下面的指令將在你不在場的情況下，到點被自動執行。</string>
     <string name="tool_notify_user">主動提醒</string>
     <string name="tool_notify_user_description">後台任務或自動任務有值得關注的結果時，主動給你發一則系統通知。</string>

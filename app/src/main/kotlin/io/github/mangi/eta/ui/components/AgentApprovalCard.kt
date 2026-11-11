@@ -470,6 +470,8 @@ private fun riskCategoryReason(category: ToolRiskCategory): Int = when (category
     ToolRiskCategory.UNRESOLVED_TARGET -> R.string.approval_reason_unresolved_target
     ToolRiskCategory.AGENT_SCHEDULED_TASK_CREATE -> R.string.approval_reason_scheduled_task_create
     ToolRiskCategory.AGENT_SETTINGS_WRITE -> R.string.approval_reason_agent_settings
+    ToolRiskCategory.AGENT_SELF_CONFIG_WRITE -> R.string.approval_reason_agent_self_config
+    ToolRiskCategory.AGENT_SELF_DELETE -> R.string.approval_reason_agent_self_delete
 }
 
 private fun dangerOptionLabel(optionId: String): Int = when (optionId) {

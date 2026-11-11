@@ -1605,7 +1605,9 @@
     <string name="tool_schedule_task_description">Create, list, enable or cancel agent tasks that run automatically at a set time.</string>
     <string name="tool_macro_record">Record a macro</string>
     <string name="tool_macro_record_description">Record your own screen actions into a replayable GUI macro.</string>
-    <string name="approval_reason_agent_settings">This changes Eta's own settings: where requests and credentials go, or which environment commands run in.</string>
+    <string name="approval_reason_agent_settings">This changes Eta\'s own settings: where requests and credentials go, or which environment commands run in.</string>
+    <string name="approval_reason_agent_self_config">This rewrites Eta\'s own runtime config - model providers, models, MCP servers or tool switches - so later requests, credentials and available tools change with it.</string>
+    <string name="approval_reason_agent_self_delete">This deletes Eta\'s own configuration or installed content (provider, model, MCP server or skill). It cannot be undone without setting it up again.</string>
     <string name="approval_reason_scheduled_task_create">This creates a scheduled task: the instruction below will run automatically, without you present, at the time it was set for.</string>
 
     <!-- 任务中心 / Task center -->
