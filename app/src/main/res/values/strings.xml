@@ -1666,4 +1666,6 @@
     <string name="task_center_source_external">External assistant</string>
     <string name="task_center_source_unknown">Unknown</string>
 
+    <string name="tool_notify_user">Send a proactive notification</string>
+    <string name="tool_notify_user_description">Let the agent send a system notification when a background or scheduled task has something worth your attention.</string>
 </resources>

@@ -1647,4 +1647,6 @@
     <string name="task_center_source_external">外部助手</string>
     <string name="task_center_source_unknown">未知</string>
 
+    <string name="tool_notify_user">主动提醒</string>
+    <string name="tool_notify_user_description">后台任务或自动任务有值得关注的结果时，主动给你发一条系统通知。</string>
 </resources>
