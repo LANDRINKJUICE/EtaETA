@@ -40,4 +40,6 @@
     <string name="job_wakeup_prompt_tail_label">Tail of the task output:</string>
     <string name="job_wakeup_prompt_truncated">…(earlier output omitted)&#10;</string>
     <string name="job_wakeup_prompt_footer">No user is online right now: nothing here is confirmed by a human. Analyse the cause and fix it. Risky actions still go through the approval gate, and an unattended confirmation times out without executing - never report something as done when it was not executed. Report back briefly when you are done. If no action is needed, just say so in one or two sentences. Jobs you start from this run will not wake the agent again.</string>
+    <string name="job_wakeup_prompt_header_watch">[Background task wakeup] The background command below has finished per its watch setting (success included). You are woken automatically to review the result.</string>
+    <string name="job_wakeup_prompt_footer_watch">No user is online right now. Check whether the result meets the goal; if a follow-up is needed, handle it. Risky actions still go through the approval gate, and an unattended confirmation times out without executing - never report something as done when it was not executed. If no action is needed, just say so in one or two sentences. Jobs you start from this run will not wake the agent again.</string>
 </resources>

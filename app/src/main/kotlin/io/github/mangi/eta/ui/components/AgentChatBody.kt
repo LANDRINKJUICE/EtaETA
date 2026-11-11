@@ -88,6 +88,9 @@ import io.github.mangi.eta.R
 import io.github.mangi.eta.agent.approval.AgentApprovalCoordinator
 import io.github.mangi.eta.agent.approval.AgentApprovalRequest
 import io.github.mangi.eta.agent.approval.ResolvedApproval
+import io.github.mangi.eta.agent.approval.approvalFeedbackRefreshDelayMillis
+import io.github.mangi.eta.agent.approval.awaitingConfirmationIn
+import io.github.mangi.eta.agent.approval.resolvedFeedbackIn
 import io.github.mangi.eta.agent.browser.BrowserSessionSnapshot
 import io.github.mangi.eta.data.model.AppearanceUiStyle
 import io.github.mangi.eta.data.model.ReasoningEffort
@@ -246,26 +249,31 @@ internal fun AgentChatBody(
     val approvalResolved by approvalCoordinator.resolved.collectAsState()
     var approvalNowMillis by remember { mutableStateOf(0L) }
     LaunchedEffect(approvalResolved) {
-        while (approvalResolved.isNotEmpty()) {
-            approvalNowMillis = System.nanoTime() / 1_000_000
-            kotlinx.coroutines.delay(1_000)
+        // 回显只用"窗口内"需要刷新：resolved 是永不自动清空的历史列表，
+        // 用 `while (approvalResolved.isNotEmpty())` 会让整个聊天体在第一次决策之后
+        // 永远每秒重组一次，并持续扰动已决策卡片那一格的列表退出动画。
+        while (true) {
+            val now = System.nanoTime() / 1_000_000
+            approvalNowMillis = now
+            val sleepMillis = approvalFeedbackRefreshDelayMillis(
+                resolved = approvalResolved,
+                nowMillis = now,
+                windowMillis = APPROVAL_FEEDBACK_VISIBLE_MILLIS,
+            ) ?: break
+            kotlinx.coroutines.delay(sleepMillis)
         }
     }
+    // 卡片只由 pending 的投影决定是否出现：决策落地后这里立刻变空，
+    // 列表里那一格必须当帧消失（不能留退出动画的残影）。
     val visibleApprovalRequests = remember(approvalPending, conversationId) {
-        approvalPending.filter { request ->
-            conversationId == null ||
-                request.conversationId == null ||
-                request.conversationId == conversationId
-        }
+        approvalPending.awaitingConfirmationIn(conversationId)
     }
     val visibleResolvedApprovals = remember(approvalResolved, approvalNowMillis, conversationId) {
-        approvalResolved.filter { resolved ->
-            val matchesConversation = conversationId == null ||
-                resolved.request.conversationId == null ||
-                resolved.request.conversationId == conversationId
-            matchesConversation &&
-                approvalNowMillis - resolved.resolution.atMillis in 0L..APPROVAL_FEEDBACK_VISIBLE_MILLIS
-        }
+        approvalResolved.resolvedFeedbackIn(
+            conversationId = conversationId,
+            nowMillis = approvalNowMillis,
+            windowMillis = APPROVAL_FEEDBACK_VISIBLE_MILLIS,
+        )
     }
 
     LaunchedEffect(isStreaming) {
@@ -901,9 +909,13 @@ internal fun AgentConversationMessages(
             ) { resolved ->
                 AgentApprovalResolvedChip(
                     resolved = resolved,
+                    // 与消息时间线同一条规矩：走出列表时必须立刻退出。带非空 fadeOutSpec 会让
+                    // 已从状态里裁掉的卡片继续作为"退场项"被绘制，和同位置的后续内容
+                    // （消息 / 输入器）叠在一起——用户看到的就是"点了按钮卡片还在"。
                     modifier = Modifier.animateItem(
                         fadeInSpec = tween(durationMillis = 180),
-                        fadeOutSpec = tween(durationMillis = 160),
+                        placementSpec = null,
+                        fadeOutSpec = null,
                     ),
                 )
             }
@@ -917,9 +929,11 @@ internal fun AgentConversationMessages(
                     onDecide = { optionId, freeText ->
                         onApprovalDecide(request.id, optionId, freeText)
                     },
+                    // 同上：决策落地后这一格必须当帧消失，不能留残影叠在消息上。
                     modifier = Modifier.animateItem(
                         fadeInSpec = tween(durationMillis = 200),
-                        fadeOutSpec = tween(durationMillis = 140),
+                        placementSpec = null,
+                        fadeOutSpec = null,
                     ),
                 )
             }

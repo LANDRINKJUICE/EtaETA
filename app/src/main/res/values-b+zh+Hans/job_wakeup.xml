@@ -33,4 +33,6 @@
     <string name="job_wakeup_prompt_tail_label">任务输出末尾：</string>
     <string name="job_wakeup_prompt_truncated">…（更早输出已省略）&#10;</string>
     <string name="job_wakeup_prompt_footer">当前没有用户在线：这里的任何操作都不会有人当场确认。请分析失败原因并处理；危险操作仍会被闸门拦下，无人确认时会超时且不执行——不要把"没有执行"写成"已完成"。处理完简短汇报；如果无需处理就一两句话说明。本次运行里你新起的任务完成时不会再唤醒 Agent。</string>
+    <string name="job_wakeup_prompt_header_watch">[后台任务唤醒] 以下后台命令已按盯梢设置结束（成功也会唤醒）。你被自动唤醒来核对结果。</string>
+    <string name="job_wakeup_prompt_footer_watch">当前没有用户在线。请核对结果是否达成目标；需要跟进就处理。危险操作仍走审批闸门，无人确认会超时且不执行——没执行过的事不要写成已完成。无需处理就用一两句话说明。本次运行新起的任务不会再次唤醒 Agent。</string>
 </resources>

@@ -307,6 +307,8 @@ internal class BackgroundJobWakeup(
         tailLabel = context.getString(R.string.job_wakeup_prompt_tail_label),
         truncatedMarker = context.getString(R.string.job_wakeup_prompt_truncated),
         footer = context.getString(R.string.job_wakeup_prompt_footer),
+        headerWatched = context.getString(R.string.job_wakeup_prompt_header_watch),
+        footerWatched = context.getString(R.string.job_wakeup_prompt_footer_watch),
     )
 
     /** 释放租约与"正在跑"标记；只生效一次（finally 与派发失败路径都可能到这里）。 */

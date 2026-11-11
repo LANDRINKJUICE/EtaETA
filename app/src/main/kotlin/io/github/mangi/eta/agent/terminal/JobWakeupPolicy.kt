@@ -218,6 +218,10 @@ internal object JobWakeupPolicy {
         val truncatedMarker: String,
         /** 收尾指令块：要求模型分析原因、处理并汇报，无需处理就简短说明。 */
         val footer: String,
+        /** watch 盯梢任务结束（成功也唤醒）时的抬头；缺省沿用失败抬头。 */
+        val headerWatched: String = header,
+        /** watch 盯梢任务结束时的收尾指令；缺省沿用失败收尾。 */
+        val footerWatched: String = footer,
     )
 
     /**
@@ -242,7 +246,8 @@ internal object JobWakeupPolicy {
     }
 
     private fun assemble(signal: Signal, texts: Texts, tail: String): String = buildString {
-        appendLine(texts.header)
+        val watched = signal.succeeded && signal.watch
+        appendLine(if (watched) texts.headerWatched else texts.header)
         appendLine()
         appendLine("job_id: ${signal.jobId}")
         appendLine("description: ${clip(signal.description.ifBlank { "-" }, DESCRIPTION_MAX_CHARS)}")
@@ -252,7 +257,7 @@ internal object JobWakeupPolicy {
         signal.endReason?.let { appendLine("end_reason: $it") }
         if (tail.isNotBlank()) append(tailBlock(texts.tailLabel, tail))
         appendLine()
-        append(texts.footer)
+        append(if (watched) texts.footerWatched else texts.footer)
     }.trimEnd()
 
     private fun tailBlock(label: String, tail: String): String = "\n$label\n```\n$tail\n```"

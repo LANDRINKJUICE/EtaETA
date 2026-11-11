@@ -33,4 +33,6 @@
     <string name="job_wakeup_prompt_tail_label">任務輸出末尾：</string>
     <string name="job_wakeup_prompt_truncated">…（更早輸出已省略）&#10;</string>
     <string name="job_wakeup_prompt_footer">目前沒有使用者線上：這裡的任何操作都不會有人當場確認。請分析失敗原因並處理；危險操作仍會被閘門攔下，無人確認時會逾時且不執行——不要把「沒有執行」寫成「已完成」。處理完簡短回報；如果無需處理就一兩句話說明。本次執行裡你新起的任務完成時不會再喚醒 Agent。</string>
+    <string name="job_wakeup_prompt_header_watch">[背景工作喚醒] 以下背景指令已依監看設定結束（成功也會喚醒）。你被自動喚醒以核對結果。</string>
+    <string name="job_wakeup_prompt_footer_watch">目前沒有使用者在線上。請核對結果是否達成目標；需要跟進就處理。危險操作仍走審批閘門，無人確認會逾時且不執行——沒執行過的事不要寫成已完成。無需處理就用一兩句話說明。本次執行新起的工作不會再次喚醒 Agent。</string>
 </resources>

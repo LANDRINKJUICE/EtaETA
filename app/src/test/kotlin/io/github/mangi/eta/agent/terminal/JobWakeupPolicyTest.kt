@@ -404,4 +404,40 @@ class JobWakeupPolicyTest {
         // 命令本身仍要进 prompt（Agent 需要它复现问题），只是不进通知标题。
         assertTrue(JobWakeupPolicy.buildPrompt(blank, "", texts).contains(secret))
     }
+
+    @Test
+    fun `watched successful job uses watch wording instead of failure wording`() {
+        val watchTexts = texts.copy(
+            headerWatched = "任务按盯梢设置结束，请核对结果。",
+            footerWatched = "核对结果即可，无需处理就简短说明。",
+        )
+        val prompt = JobWakeupPolicy.buildPrompt(
+            signal(exitCode = 0, watch = true),
+            outputTail = "OK (562 tests)",
+            texts = watchTexts,
+        )
+        assertTrue(prompt.contains(watchTexts.headerWatched))
+        assertTrue(prompt.contains(watchTexts.footerWatched))
+        assertFalse(prompt.contains(texts.header))
+        assertFalse(prompt.contains(texts.footer))
+        assertTrue(prompt.contains("OK (562 tests)"))
+        assertTrue(prompt.length <= JobWakeupPolicy.PROMPT_MAX_CHARS)
+    }
+
+    @Test
+    fun `failed job keeps failure wording even when watched`() {
+        val watchTexts = texts.copy(
+            headerWatched = "任务按盯梢设置结束，请核对结果。",
+            footerWatched = "核对结果即可，无需处理就简短说明。",
+        )
+        val prompt = JobWakeupPolicy.buildPrompt(
+            signal(exitCode = 1, watch = true),
+            outputTail = "",
+            texts = watchTexts,
+        )
+        assertTrue(prompt.contains(texts.header))
+        assertTrue(prompt.contains(texts.footer))
+        assertFalse(prompt.contains(watchTexts.headerWatched))
+        assertFalse(prompt.contains(watchTexts.footerWatched))
+    }
 }
