@@ -239,6 +239,9 @@ class ToolRiskEvaluatorTest {
         assertCategory("echo /data/adb/modules/x | xargs rm -rf", ToolRiskCategory.DESTRUCTIVE_DELETE)
         assertCategory("find /system -name '*.apk' -exec rm {} \\;", ToolRiskCategory.SYSTEM_PARTITION_WRITE)
         assertCategory("find /data/adb -delete", ToolRiskCategory.DESTRUCTIVE_DELETE)
+        // 收敛后：工作区里的 find -delete 清理不该被硬拦（无人值守轮要照常做完）。
+        assertSafe("find /workspace -name '*.log' -delete")
+        assertSafe("find /data/local/tmp/eta/build -type f -delete")
         assertCategory("printf '%s\\n' /data/adb/modules/x | xargs -I{} rm -rf {}", ToolRiskCategory.DESTRUCTIVE_DELETE)
     }
 
@@ -343,6 +346,8 @@ class ToolRiskEvaluatorTest {
         assertCategory("magisk --install-module /sdcard/mod.zip", ToolRiskCategory.SYSTEM_DATA_WRITE)
         assertCategory("magisk --install /sdcard/boot.img", ToolRiskCategory.BOOT_CHAIN_WRITE)
         assertCategory("magiskboot unpack /sdcard/boot.img", ToolRiskCategory.BOOT_CHAIN_WRITE)
+        // 恢复/卸载 boot 镜像是确凿启动链写入，不能随 PRIVILEGED 整类放行。
+        assertCategory("magisk --restore /sdcard/stock.img", ToolRiskCategory.BOOT_CHAIN_WRITE)
         assertSafe("magisk -v")
     }
 

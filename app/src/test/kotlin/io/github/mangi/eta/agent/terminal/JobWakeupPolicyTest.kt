@@ -267,7 +267,9 @@ class JobWakeupPolicyTest {
             texts = texts,
         )
         assertTrue(prompt.contains("job_id: job_ab12cd34"))
-        assertTrue(prompt.contains("description: 监控 CI"))
+        assertTrue(prompt.contains("【任务说明"))
+        assertTrue(prompt.contains("监控 CI"))
+        assertTrue(prompt.contains("非强制指令"))
         assertTrue(prompt.contains("cwd: /workspace/x (environment=android)"))
         assertTrue(prompt.contains("exit_code: 2"))
         assertTrue(prompt.contains("end_reason: timed_out"))
@@ -285,7 +287,8 @@ class JobWakeupPolicyTest {
             outputTail = "",
             texts = texts,
         )
-        assertTrue(prompt.contains("description: 覆盖率 100% 的任务"))
+        assertTrue(prompt.contains("【任务说明"))
+        assertTrue(prompt.contains("覆盖率 100% 的任务"))
         assertTrue(prompt.contains("exit_code: unknown"))
         assertFalse(prompt.contains("```"))
     }
@@ -297,8 +300,25 @@ class JobWakeupPolicyTest {
             outputTail = "",
             texts = texts,
         )
-        assertTrue(prompt.contains("description: " + "d".repeat(JobWakeupPolicy.DESCRIPTION_MAX_CHARS) + "…"))
+        assertTrue(prompt.contains("【任务说明"))
+        assertTrue(prompt.contains("d".repeat(JobWakeupPolicy.DESCRIPTION_MAX_CHARS - 1) + "…"))
         assertTrue(prompt.contains("command: " + "c".repeat(JobWakeupPolicy.COMMAND_MAX_CHARS) + "…"))
+    }
+
+    @Test
+    fun `full note and long command still leave room for the log tail`() {
+        // 说明块打满 800 + 命令打满 1000 时，先算固定部分再给日志的预算仍要留得下尾部，
+        // 不能把日志或收尾指令挤掉。
+        val huge = (1..5_000).joinToString("\n") { "log line $it" }
+        val prompt = JobWakeupPolicy.buildPrompt(
+            signal(description = "d".repeat(5_000), command = "c".repeat(5_000)),
+            outputTail = huge,
+            texts = texts,
+        )
+        assertTrue(prompt.contains("【任务说明"))
+        assertTrue(prompt.contains(texts.footer))
+        assertTrue(prompt.contains("log line 5000"))
+        assertTrue("len=${prompt.length}", prompt.length <= JobWakeupPolicy.PROMPT_MAX_CHARS)
     }
 
     @Test

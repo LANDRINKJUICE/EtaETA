@@ -43,7 +43,8 @@ internal object AgentScheduleToolCatalog {
                 name = "schedule_task",
                 description = "管理到点自动执行的 agent 任务。action=create 创建（需要 prompt 与 schedule），" +
                     "list 列出全部任务与下次触发时间，enable/disable 启停，delete 删除，run_now 立刻跑一次验证。" +
-                    "任务到点后会在后台无人值守地执行 prompt：危险操作仍会被拦下并等待确认，无人确认会超时且不执行。",
+                    "任务到点后会在后台无人值守地执行 prompt：照常把已授权任务做完并产出结果，不要求用户回来再批。" +
+                    "安全闸门只硬守系统分区/启动链/安卓侧手机数据等关键部位，对所有来源一律照样弹卡，两分钟没人点则那一条不执行、不谎报完成，其余工作照常完成由模型自行判断。",
                 parameters = JSONObject()
                     .put("type", "object")
                     .put(

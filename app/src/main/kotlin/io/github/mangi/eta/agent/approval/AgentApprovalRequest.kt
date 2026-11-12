@@ -121,5 +121,7 @@ internal sealed interface AgentApprovalOutcome {
     data object Cancelled : AgentApprovalOutcome
 }
 
-/** 默认等待上限：超时一律按"用户未确认"处理，绝不默认放行。 */
-internal const val AGENT_APPROVAL_TIMEOUT_MILLIS = 300_000L
+/** 默认等待上限（全局统一 2 分钟）：危险拦截卡与询问卡共用，在线 / 后台 / 自动任务 /
+ * 子代理一视同仁，不按来源预判。超时一律按"用户未确认"处理，绝不默认放行；这轮可能无人值守，
+ * 未执行的事实交回模型自行判断其余任务如何照常做完。 */
+internal const val AGENT_APPROVAL_TIMEOUT_MILLIS = 120_000L

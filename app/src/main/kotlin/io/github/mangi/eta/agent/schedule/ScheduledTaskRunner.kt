@@ -250,8 +250,9 @@ internal object ScheduledTaskRunner {
     }
 
     /**
-     * 无人值守的指令包装：明确告诉模型"没有人在线"，并说明危险闸门在无人确认时会超时且不执行，
-     * 避免它把"没执行"写成"已完成"，也避免它为了完成任务而反复重试同一操作。
+     * 无人值守的指令包装：告诉模型"用户可能不在线"，它是已授权任务的延续轮、要把任务照常做到完成；
+     * 安全闸门只硬守关键部位，命中时对所有来源一律照样弹卡、两分钟没人点则那一条不执行、绝不谎报完成，
+     * 未执行的事实交模型自行判断其余任务照常完成。
      */
     internal fun buildPrompt(context: Context, task: ScheduledTask): String = buildString {
         appendLine(context.getString(io.github.mangi.eta.R.string.schedule_run_prompt_header, task.title))

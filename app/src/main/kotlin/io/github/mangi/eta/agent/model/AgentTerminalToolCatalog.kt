@@ -38,7 +38,7 @@ internal object AgentTerminalToolCatalog {
                     executionProperties()
                         .put("action", action("start", "list", "read", "wait", "stop"))
                         .put("command", text("start 要执行的完整命令。"))
-                        .put("description", text("可选的简短任务说明，用于列表、完成通知与自动唤醒时的上下文。"))
+                        .put("description", text("可选：给未来被唤醒的 Agent 的任务说明。写清目标、验收标准、失败后怎么重试、产物路径与交付位置，以及用户可能不在线、尽量别发询问卡或碰关键部位、别擅自替用户做决定等策略；这段会作为上下文与策略注入唤醒轮 prompt（非强制指令，机制兜底固定）。忘了就留空，退回默认话术。也用于列表、完成通知与归档标题。"))
                         .put("timeout_ms", integer("start 的命令运行上限，默认 600000 毫秒；0 表示不设超时。"))
                         .put("watch", bool(if (jobWakeup) {
                             "start 是否盯梢这条任务：默认 false，只在失败/超时/中断时才会自动唤醒；设为 true 后正常结束也会唤醒一轮 agent 查看结果。"

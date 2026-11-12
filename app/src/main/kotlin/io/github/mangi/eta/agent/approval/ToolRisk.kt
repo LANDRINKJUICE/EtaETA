@@ -130,3 +130,30 @@ internal fun String.boundedRiskSubject(): String {
     if (trimmed.length <= RISK_SUBJECT_MAX_CHARS) return trimmed
     return trimmed.take(RISK_SUBJECT_MAX_CHARS) + "…"
 }
+
+/**
+ * 安全闸门真正要守的「关键部位」类别（用户 2026-11-12 定稿）：系统分区、启动链、
+ * 安卓侧手机数据（系统数据区 / 其他应用私有目录）、大范围删除、重新挂载、格式化与分区表、
+ * 装卸或冻结系统应用、敏感系统设置。
+ *
+ * 这是判定收敛的唯一准绳，在 AgentToolApprovalGate.check 收口处按类别过滤：只有命中这些
+ * 「证据确凿的关键部位越界」才需要拦（对所有来源一律照样弹卡确认 / 2 分钟没人点则未执行交模型自判）。其余类别——
+ * INDIRECT_EXECUTION、UNRESOLVED_TARGET、PRIVILEGED_SYSTEM_COMMAND 这类静态分析「看不清」
+ * 的不确定性，以及 AGENT_SCHEDULED_TASK_CREATE / AGENT_SETTINGS_WRITE /
+ * AGENT_SELF_CONFIG_WRITE / AGENT_SELF_DELETE 这类 Eta 自管理动作——一律放行，不再冒充危险、
+ * 不再弹卡、不再卡死无人值守任务。在线、后台唤醒、自动任务、子代理共用这一套判定。
+ *
+ * 识别与裁决刻意分离：ShellCommandAnalyzer / AgentToolRiskEvaluator 仍如实产出全部 findings
+ * （它们负责「命令里出现受保护路径」的递归识别），由闸门决定哪些算数。
+ */
+internal val PROTECTED_BOUNDARY_CATEGORIES: Set<ToolRiskCategory> = setOf(
+    ToolRiskCategory.SYSTEM_PARTITION_WRITE,
+    ToolRiskCategory.BOOT_CHAIN_WRITE,
+    ToolRiskCategory.REMOUNT_READ_WRITE,
+    ToolRiskCategory.DISK_FORMAT,
+    ToolRiskCategory.DESTRUCTIVE_DELETE,
+    ToolRiskCategory.SYSTEM_DATA_WRITE,
+    ToolRiskCategory.FOREIGN_APP_DATA_WRITE,
+    ToolRiskCategory.SYSTEM_APP_MUTATION,
+    ToolRiskCategory.SENSITIVE_SETTING_WRITE,
+)

@@ -1480,7 +1480,7 @@
     <string name="schedule_empty">還沒有自動任務。在聊天裡告訴 Agent 要做什麼、什麼時候做，比如：每個工作日 8:00 彙總我昨晚收到的通知。</string>
     <string name="schedule_loading">正在讀取自動任務…</string>
     <string name="schedule_create_hint">任務在聊天裡建立：說清目標與時間，Agent 會呼叫 schedule_task。</string>
-    <string name="schedule_unattended_notice">自動任務由系統到點觸發、無人值守：危險操作仍會等待你確認，無人回答會超時並且不執行。</string>
+    <string name="schedule_unattended_notice">自動任務由系統到點觸發，是你已授權任務的延續輪：會把任務照常執行到完成。安全閘門只硬守系統分區、啟動鏈、安卓側手機資料、大範圍刪除等關鍵部位，對所有來源一律照樣彈卡，兩分鐘沒人點則那一條不執行、絕不謊報完成，其餘工作照常做完。</string>
     <string name="schedule_next_trigger">下次觸發：%1$s</string>
     <string name="schedule_no_next_trigger">已無下次觸發</string>
     <string name="schedule_last_run">最近執行：%1$s</string>
@@ -1525,11 +1525,11 @@
     <string name="schedule_notification_failed">%1$s 執行失敗</string>
     <string name="schedule_notification_no_summary">本次沒有返回結果摘要。</string>
     <string name="schedule_missed_summary">裝置關機期間錯過觸發，本次未執行。</string>
-    <string name="schedule_tool_unattended_note">無人值守執行：危險操作會等待確認，無人確認則超時不執行。</string>
+    <string name="schedule_tool_unattended_note">照常把任務做到完成：關鍵部位寫入對所有來源一律照樣彈卡，兩分鐘沒人點則那一條不執行、絕不謊報完成，其餘工作照常完成。</string>
     <string name="schedule_tool_inexact_note">未獲得精確鬧鐘授權，系統可能推遲觸發</string>
     <string name="schedule_tool_alarm_failed_note">鬧鐘設定失敗，請檢查鬧鐘許可權</string>
     <string name="schedule_run_prompt_header">【自動任務】%1$s</string>
-    <string name="schedule_run_prompt_footer">此刻沒有使用者線上：不要呼叫 ask_user，也不要等待使用者確認。需要確認的危險操作會超時並且不會執行；請改用只讀或安全的方式完成任務，並在結果裡說明哪些部分沒有執行。最後用一段話給出結論。</string>
+    <string name="schedule_run_prompt_footer">使用者可能不在線上。本輪是你已授權任務的延續：請把任務照常執行到完成並產出結果，不降級成建議、不要求使用者回來再批。安全閘門只硬守系統分區、啟動鏈、安卓側手機資料、大範圍刪除、重新掛載、格式化、裝卸凍結系統應用、敏感設定等關鍵部位：命中時對所有來源一律照樣彈卡，兩分鐘內沒人點，那一條就不執行、絕不謊報完成——使用者並沒有同意，也不要重試或換寫法繞過；其餘所有工作照常做完。盡量別呼叫 ask_user（可能沒人在線上），也盡量別去碰關鍵部位；不要擅自替使用者做他可能不滿意的決定。確實需要決斷時，詢問卡仍可用兜底、同樣兩分鐘逾時。最後用一段話給出結論。</string>
     <string name="tool_schedule_task">建立自動任務</string>
     <string name="tool_schedule_task_description">建立、檢視、啟停到點自動執行的 agent 任務。</string>
     <string name="tool_macro_record">錄製宏</string>

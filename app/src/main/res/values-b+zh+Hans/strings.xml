@@ -1521,7 +1521,7 @@
     <string name="schedule_empty">还没有自动任务。在聊天里告诉 Agent 要做什么、什么时候做，比如：每个工作日 8:00 汇总我昨晚收到的通知。</string>
     <string name="schedule_loading">正在读取自动任务…</string>
     <string name="schedule_create_hint">任务在聊天里创建：说清目标与时间，Agent 会调用 schedule_task。</string>
-    <string name="schedule_unattended_notice">自动任务由系统到点触发、无人值守：危险操作仍会等待你确认，无人回答会超时并且不执行。</string>
+    <string name="schedule_unattended_notice">自动任务由系统到点触发，是你已授权任务的延续轮：会把任务照常执行到完成。安全闸门只硬守系统分区、启动链、安卓侧手机数据、大范围删除等关键部位，对所有来源一律照样弹卡，两分钟没人点则那一条不执行、绝不谎报完成，其余工作照常做完。</string>
     <string name="schedule_next_trigger">下次触发：%1$s</string>
     <string name="schedule_no_next_trigger">已无下次触发</string>
     <string name="schedule_last_run">最近执行：%1$s</string>
@@ -1566,11 +1566,11 @@
     <string name="schedule_notification_failed">%1$s 执行失败</string>
     <string name="schedule_notification_no_summary">本次没有返回结果摘要。</string>
     <string name="schedule_missed_summary">设备关机期间错过触发，本次未执行。</string>
-    <string name="schedule_tool_unattended_note">无人值守执行：危险操作会等待确认，无人确认则超时不执行。</string>
+    <string name="schedule_tool_unattended_note">照常把任务做到完成：关键部位写入对所有来源一律照样弹卡，两分钟没人点则那一条不执行、绝不谎报完成，其余工作照常完成。</string>
     <string name="schedule_tool_inexact_note">未获得精确闹钟授权，系统可能推迟触发</string>
     <string name="schedule_tool_alarm_failed_note">闹钟设置失败，请检查闹钟权限</string>
     <string name="schedule_run_prompt_header">【自动任务】%1$s</string>
-    <string name="schedule_run_prompt_footer">此刻没有用户在线：不要调用 ask_user，也不要等待用户确认。需要确认的危险操作会超时并且不会执行；请改用只读或安全的方式完成任务，并在结果里说明哪些部分没有执行。最后用一段话给出结论。</string>
+    <string name="schedule_run_prompt_footer">用户可能不在线。本轮是你已授权任务的延续：请把任务照常执行到完成并产出结果，不降级成建议、不要求用户回来再批。安全闸门只硬守系统分区、启动链、安卓侧手机数据、大范围删除、重新挂载、格式化、装卸冻结系统应用、敏感设置等关键部位：命中时对所有来源一律照样弹卡，两分钟内没人点，那一条就不执行、绝不谎报完成——用户并没有同意，也不要重试或换写法绕过；其余所有工作照常做完。尽量别调用 ask_user（可能没人在线），也尽量别去碰关键部位；不要擅自替用户做他可能不满意的决定。确实需要决断时，询问卡仍可用兜底、同样两分钟超时。最后用一段话给出结论。</string>
 
     <!-- 宏录制 -->
     <string name="macro_recording_channel">宏录制</string>

@@ -202,6 +202,10 @@ internal class AgentRuntimeRunExecutor(
                     entrySurfaceGuard, checkpointRecorder,
                 )
             }
+            // 闸门对所有来源统一：命中关键部位照样弹卡、统一 2 分钟超时，不预判"有没有人在线"。
+            // job 来源标记：它起的 terminal_job 完成时不再触发唤醒（防循环），语义独立、与闸门无关。
+            val jobWakeupRun = request.handoff?.source ==
+                AgentRuntimeWire.ETA_JOB_WAKEUP_HANDOFF_SOURCE
             val approvalGate = AgentToolApprovalGate(
                 coordinator = AgentApprovalCoordinator.shared,
                 grants = AgentSessionApprovalGrants.shared,
@@ -245,10 +249,9 @@ internal class AgentRuntimeRunExecutor(
                 // 角色会话不提供会话级工具；自动任务 run 里禁止再次创建自动任务（审查 M3② / M4）。
                 conversationToolsAllowed = roleplayContext == null,
                 scheduledRun = request.handoff?.source ==
-                    io.github.mangi.eta.agent.runtime.AgentRuntimeWire.ETA_SCHEDULED_TASK_HANDOFF_SOURCE,
+                    AgentRuntimeWire.ETA_SCHEDULED_TASK_HANDOFF_SOURCE,
                 // 后台任务失败唤醒的 run：它起的 terminal_job 会被标记来源，完成时不再触发唤醒。
-                jobWakeupRun = request.handoff?.source ==
-                    io.github.mangi.eta.agent.runtime.AgentRuntimeWire.ETA_JOB_WAKEUP_HANDOFF_SOURCE,
+                jobWakeupRun = jobWakeupRun,
                 screenshotExcludedPackages = {
                     entrySurfaceGuard?.consumeScreenshotExcludedPackages().orEmpty()
                 },
@@ -292,6 +295,8 @@ internal class AgentRuntimeRunExecutor(
                         defaultCwd = defaultCwd,
                     )
                 },
+                // ask_user 与危险卡同一条路径：不按来源特判、不短路。"别发询问卡"是话术层
+                // 的引导（用户可能不在线），不是机制；真发了也走统一 2 分钟超时 + 无人可答兜底。
                 askUserBridge = { arguments ->
                     AgentAskUserTool.execute(
                         args = arguments,

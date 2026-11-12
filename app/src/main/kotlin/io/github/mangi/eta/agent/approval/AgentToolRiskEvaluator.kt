@@ -9,7 +9,9 @@ import org.json.JSONObject
  * 工具调用的静态风险判定入口。
  *
  * 纯函数：不读取运行期状态、不执行任何 IO，便于单元测试与复用。执行侧只在拿到
- * [ToolRiskVerdict.NeedsConfirm] 时挂起等待用户确认。
+ * [ToolRiskVerdict.NeedsConfirm] 表示「识别到可疑点」；是否真要拦、弹卡后有没有人点，
+ * 由 [AgentToolApprovalGate] 按关键部位类别收口裁决（所有来源一律弹卡、2 分钟超时交模型自判），
+ * 识别层本身只负责如实产出 findings。
  */
 internal object AgentToolRiskEvaluator {
     /** 需要解析 command 字段的终端类工具。 */

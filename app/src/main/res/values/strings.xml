@@ -1540,7 +1540,7 @@
     <string name="schedule_empty">No scheduled tasks yet. Ask the agent in a chat to create one, for example: every weekday at 8:00 summarize the notifications I received overnight.</string>
     <string name="schedule_loading">Loading scheduled tasks…</string>
     <string name="schedule_create_hint">Tasks are created in chat: tell the agent what to do and when, and it calls schedule_task for you.</string>
-    <string name="schedule_unattended_notice">Scheduled runs are unattended. Dangerous operations still wait for your confirmation; without an answer they time out and are not executed.</string>
+    <string name="schedule_unattended_notice">Scheduled runs continue tasks you already authorized and carry them through to completion. Only key areas (system partitions, boot chain, Android-side phone data, broad deletes) are hard-guarded, with a confirmation card for all sources alike; if nobody answers within 2 minutes the action is not executed and is never reported as done. All other work completes normally.</string>
     <string name="schedule_next_trigger">Next: %1$s</string>
     <string name="schedule_no_next_trigger">No further run</string>
     <string name="schedule_last_run">Last run: %1$s</string>
@@ -1585,11 +1585,11 @@
     <string name="schedule_notification_failed">%1$s failed</string>
     <string name="schedule_notification_no_summary">No summary was returned.</string>
     <string name="schedule_missed_summary">Missed while the device was off; not executed.</string>
-    <string name="schedule_tool_unattended_note">Runs unattended: dangerous operations wait for confirmation and time out without executing.</string>
+    <string name="schedule_tool_unattended_note">Carries the task through to completion. Key-area writes show a confirmation card for all sources alike; if nobody answers within 2 minutes the action is not executed and is never reported as done. All other work completes normally.</string>
     <string name="schedule_tool_inexact_note">exact alarms are not allowed, the system may delay the trigger</string>
     <string name="schedule_tool_alarm_failed_note">the alarm could not be registered, check the alarm permission</string>
     <string name="schedule_run_prompt_header">Scheduled task: %1$s</string>
-    <string name="schedule_run_prompt_footer">Nobody is online right now: do not call ask_user and do not wait for confirmation. A dangerous operation that gets blocked will time out and will not be executed; complete the task with read-only or safe steps instead and state in the answer which parts were not executed. Finish with a short conclusion.</string>
+    <string name="schedule_run_prompt_footer">The user may not be online right now. This round continues a task you already authorized: carry it through to completion and produce the result, do not downgrade it into suggestions or require the user to come back and approve. The danger gate only hard-guards key areas (system partitions, boot chain, Android-side phone data, broad deletes, remount, format, system app changes, sensitive settings): a hit still shows a confirmation card for all sources alike; if nobody answers within 2 minutes that single action is not executed, is never reported as done, and the user has NOT agreed to it — do not retry it or rephrase it to bypass the gate. All other work still completes normally. Prefer not to call ask_user (nobody may be online) and prefer not to touch key areas; do not make decisions on the user behalf they might dislike. If you need a decision, an inquiry card is still available with the same 2-minute timeout. Finish with a short conclusion.</string>
 
     <!-- 宏录制 / Macro recording -->
     <string name="macro_recording_channel">Macro recording</string>

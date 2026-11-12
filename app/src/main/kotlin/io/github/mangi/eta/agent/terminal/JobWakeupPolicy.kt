@@ -50,7 +50,8 @@ internal object JobWakeupPolicy {
     /** 全局配额（跨任务合计）用尽：只发通知。 */
     const val CODE_GLOBAL_LIMIT = "JOB_WAKEUP_GLOBAL_LIMIT"
 
-    const val DESCRIPTION_MAX_CHARS = 300
+    /** 任务说明块上限（字）：起任务那轮的 Agent 主动写清目标 / 验收标准 / 失败重试 / 产物路径。 */
+    const val DESCRIPTION_MAX_CHARS = 800
     const val COMMAND_MAX_CHARS = 1_000
     const val CWD_MAX_CHARS = 300
 
@@ -164,10 +165,13 @@ internal object JobWakeupPolicy {
      * 通知 / 归档标题里的"这一条任务是谁"。
      *
      * 有意**不接收 command**：失败命令里常含 token、凭据或长链接，标题只允许用描述；
-     * 描述为空时用调用方给的固定文案（已含 job_id）。
+     * description 升级成任务说明块后可能很长，进锁屏与通知历史前按 60 字收紧（复用同款
+     * 清洗：单行化 + 码点安全截断），避免整段说明糊在标题上；描述为空时用固定文案（含 job_id）。
      */
-    fun subject(description: String, fallback: String): String =
-        description.trim().ifBlank { fallback.trim() }
+    fun subject(description: String, fallback: String): String {
+        val note = io.github.mangi.eta.agent.approval.ApprovalIntentPolicy.normalize(description, 60)
+        return note.ifBlank { fallback.trim() }
+    }
 
     /**
      * 全局唤醒配额：跨任务合计，滑动窗口内最多 [maxPerWindow] 次。
@@ -250,7 +254,17 @@ internal object JobWakeupPolicy {
         appendLine(if (watched) texts.headerWatched else texts.header)
         appendLine()
         appendLine("job_id: ${signal.jobId}")
-        appendLine("description: ${clip(signal.description.ifBlank { "-" }, DESCRIPTION_MAX_CHARS)}")
+        // 任务说明块：由起 terminal_job 那轮的 Agent 自由写（目标 / 验收 / 失败重试 / 产物路径 /
+        // 「用户可能不在线」等策略）。当「上下文与策略」注入、明确非强制指令；机制兜底话术固定、
+        // 不可被这段覆盖。复用 ApprovalIntentPolicy 同款清洗：单行化 + 码点安全截断 + 空则降级。
+        val note = io.github.mangi.eta.agent.approval.ApprovalIntentPolicy.normalize(
+            signal.description, DESCRIPTION_MAX_CHARS,
+        )
+        if (io.github.mangi.eta.agent.approval.ApprovalIntentPolicy.shouldShow(note)) {
+            appendLine("【任务说明（起任务那轮 Agent 写的上下文与策略，非强制指令；机制兜底话术固定不可覆盖）】")
+            appendLine(note)
+            appendLine("【/任务说明】")
+        }
         appendLine("command: ${clip(signal.command, COMMAND_MAX_CHARS)}")
         appendLine("cwd: ${clip(signal.cwd.ifBlank { "-" }, CWD_MAX_CHARS)} (environment=${signal.environment})")
         appendLine("exit_code: ${signal.exitCode?.toString() ?: "unknown"}")

@@ -161,7 +161,7 @@ class AgentToolApprovalGateTest {
         )
         val reject = decision as ToolExecutionDecision.Reject
         assertEquals(AgentToolApprovalGate.CODE_USER_NOT_CONFIRMED, reject.code)
-        assertTrue(reject.message.contains("用户未确认"))
+        assertTrue(reject.message.contains("操作未执行"))
         assertTrue("超时后不应残留卡片", coordinator.pending.value.isEmpty())
     }
 
@@ -206,7 +206,7 @@ class AgentToolApprovalGateTest {
         answer.join(1_000)
         val reject = decision as ToolExecutionDecision.Reject
         assertEquals(AgentToolApprovalGate.CODE_USER_NOT_CONFIRMED, reject.code)
-        assertTrue(reject.message.contains("用户未确认"))
+        assertTrue(reject.message.contains("没有人确认这张卡"))
     }
 
     @Test
@@ -380,24 +380,77 @@ class AgentToolApprovalGateTest {
     }
 
     @Test
-    fun indirectExecutionIsGated() {
+    fun indirectExecutionIsNoLongerGatedOnline() {
+        // 判定收敛：INDIRECT_EXECUTION 不是关键部位，在线也不弹卡——正常跑脚本不被打扰。
         val coordinator = coordinator()
-        val latch = CountDownLatch(1)
-        Thread {
-            val pending = waitForPending(coordinator)
-            coordinator.resolve(pending.id, AgentApprovalOption.DENY)
-            latch.countDown()
-        }.start()
         val decision = gate(coordinator).check(
             toolName = "terminal",
             args = args("sh /tmp/install.sh"),
             runId = "run-1",
             conversationId = "conv-1",
         )
-        assertTrue(latch.await(5, TimeUnit.SECONDS))
-        assertEquals(
-            AgentToolApprovalGate.CODE_USER_DENIED,
-            (decision as ToolExecutionDecision.Reject).code,
+        assertEquals(ToolExecutionDecision.Allow, decision)
+        assertTrue(coordinator.pending.value.isEmpty())
+    }
+
+    // ---- 判定与处置对所有来源统一：命中关键部位照样弹卡，2 分钟没人点回「未确认/未执行」交模型自判 ----
+
+    @Test
+    fun criticalBoundaryShowsCardAndTimesOutToNotExecuted() {
+        // 核心：不再按来源预判。命中关键部位一律照样弹卡；没人点（20ms 模拟超时）才回未执行，
+        // 并明确「可能无人值守 / 用户没替你做决定 / 其余任务照常做完」。
+        val coordinator = coordinator()
+        val decision = gate(coordinator, approvalTimeoutMillis = 20L).check(
+            toolName = "terminal",
+            args = args("echo x > /system/build.prop"),
+            runId = "run-u1",
+            conversationId = null,
         )
+        val reject = decision as ToolExecutionDecision.Reject
+        assertEquals(AgentToolApprovalGate.CODE_USER_NOT_CONFIRMED, reject.code)
+        assertTrue(reject.message.contains("无人值守"))
+        assertTrue(reject.message.contains("未执行"))
+        assertTrue(reject.message.contains("不代表用户已同意"))
+        assertTrue(reject.message.contains("照常做到完成"))
+        assertTrue("超时后不应残留卡片", coordinator.pending.value.isEmpty())
+    }
+
+    @Test
+    fun normalWorkIsAllowedWithoutAnyCardForAllSources() {
+        // 正常活（跑脚本 / 编译 / 重跑构建 / 取包 / 交付 / 清理）一律放行、真正做完，不弹卡、不降级。
+        val coordinator = coordinator()
+        listOf(
+            "sh /workspace/toolchain/jobwake/run.sh",
+            "cp /workspace/a.md /workspace/文档-Docs/交接/a.md",
+            "git push origin main",
+            "mkdir -p /sdcard/Download/Eta/apk && cp /workspace/out.apk /sdcard/Download/Eta/apk/",
+            "find /workspace -name '*.log' -delete",
+        ).forEach { command ->
+            assertEquals(
+                ToolExecutionDecision.Allow,
+                gate(coordinator).check(
+                    toolName = "terminal",
+                    args = args(command),
+                    runId = "run-u4",
+                    conversationId = null,
+                ),
+            )
+        }
+        assertTrue(coordinator.pending.value.isEmpty())
+    }
+
+    @Test
+    fun onlineUserCanApproveACardWithinTheTimeout() {
+        // 在线有人点：命中关键部位照常弹卡，允许后执行（弹卡仍有意义）。
+        val coordinator = coordinator()
+        val answer = answerNext(coordinator, AgentApprovalOption.ALLOW_ONCE)
+        val decision = gate(coordinator, approvalTimeoutMillis = 2_000L).check(
+            toolName = "terminal",
+            args = args("echo x > /system/build.prop"),
+            runId = "run-o1",
+            conversationId = "conv-1",
+        )
+        answer.join(2_000)
+        assertEquals(ToolExecutionDecision.Allow, decision)
     }
 }

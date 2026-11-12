@@ -6,7 +6,8 @@ import java.util.Locale
  * Shell 命令的静态写入分析。
  *
  * 目标不是完整实现一个 Shell，而是在命令真正执行之前尽量抓住"会改动系统分区、启动链、
- * 系统私有数据或其他应用私有目录"的写法。判定策略是保守的：拿不准就命中，让用户决定。
+ * 系统私有数据或其他应用私有目录"的写法。识别层如实产出全部可疑点；真正「拦不拦」由
+ * [AgentToolApprovalGate] 按关键部位类别收口裁决（见 ToolRisk.PROTECTED_BOUNDARY_CATEGORIES）。
  *
  * 已建模的间接执行形态：
  * - `sh -c '...'` / `su -c '...'` / `adb shell '...'`：递归分析内层命令；
@@ -563,14 +564,28 @@ internal object ShellCommandAnalyzer {
             }
         }
         if (args.any { it == "-delete" }) {
-            args.takeWhile { !it.startsWith("-") }.forEach { root ->
+            // 与 analyzeDelete 同口径：搜索根落在受保护/大范围目录时才算「大范围删除」，
+            // 否则工作区里 `find /workspace -name '*.log' -delete` 这类正常清理会被误拦，
+            // 无人值守轮就没法照常把清理做完。根下的系统分区/启动链/外来应用目录写入
+            // 仍由 classifyWritePath 独立判定，不受影响。
+            val roots = args.takeWhile { !it.startsWith("-") }
+            roots.forEach { root ->
                 classifyWritePath(root, "find -delete 删除", state)?.let(out::add)
+                val resolved = resolvePath(root, state)
+                val checked = resolved ?: root
+                val protectedRoot = ProtectedPaths.isSystemPartition(checked) ||
+                    ProtectedPaths.isBootChain(checked) ||
+                    ProtectedPaths.isSystemData(checked) ||
+                    ProtectedPaths.foreignPackageOf(checked) != null ||
+                    (resolved != null && ProtectedPaths.isBroadDeleteTarget(resolved))
+                if (protectedRoot) {
+                    out += RiskFinding(
+                        ToolRiskCategory.DESTRUCTIVE_DELETE,
+                        ToolRiskLevel.MEDIUM,
+                        "find -delete 会删除 $root 下匹配到的文件",
+                    )
+                }
             }
-            out += RiskFinding(
-                ToolRiskCategory.DESTRUCTIVE_DELETE,
-                ToolRiskLevel.MEDIUM,
-                "find -delete 会删除匹配到的文件",
-            )
         }
     }
 
@@ -751,8 +766,11 @@ internal object ShellCommandAnalyzer {
                         "安装或移除 Magisk 模块（写入 /data/adb）",
                     )
                     restore -> out += RiskFinding(
-                        ToolRiskCategory.PRIVILEGED_SYSTEM_COMMAND,
-                        ToolRiskLevel.HIGH,
+                        // 恢复/卸载会改写 boot 镜像，属确凿的启动链写入；不能随
+                        // PRIVILEGED_SYSTEM_COMMAND 整类放行（那类只是静态不确定性）。
+                        ToolRiskCategory.BOOT_CHAIN_WRITE,
+                        // 与 dd 写 boot 同级：CRITICAL，且 CRITICAL 永不落「本会话允许同类」授权。
+                        ToolRiskLevel.CRITICAL,
                         "Magisk 恢复原始镜像（${args.joinToString(" ").boundedRiskSubject()}）",
                     )
                     flags.any { it == "--preinit-device" || it == "--daemon" || it == "--post-fs-data" } ->
