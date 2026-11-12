@@ -8,6 +8,7 @@ import android.os.Looper
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
+import android.view.inputmethod.InputMethodManager
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -86,6 +87,10 @@ internal object ApprovalAttentionOverlay {
      */
     private const val CARD_MAX_HEIGHT_DP = 520
 
+    /** 弹 IME 重试：窗口焦点切换是异步的，短间隔多试几次覆盖这段窗口；总数约 8×70ms。 */
+    private const val IME_SHOW_RETRY_INTERVAL_MS = 70L
+    private const val IME_SHOW_RETRY_MAX = 8
+
     private class Attached(
         val windowManager: WindowManager,
         val view: ComposeView,
@@ -104,6 +109,9 @@ internal object ApprovalAttentionOverlay {
 
         /** 窗口是否曾进入过可聚焦态；用于 detach 时判断是否需要主动收键盘 / 清焦点。主线程访问。 */
         var everFocusable: Boolean = false
+
+        /** 正在进行的弹 IME 重试 Runnable；还原不可聚焦 / 拆窗时取消，避免决策后还弹键盘。主线程访问。 */
+        var imeShowRunnable: Runnable? = null
 
         /**
          * 已成功收敛到窗口 params.height 的卡片内容高度（px）。首次为
@@ -242,37 +250,53 @@ internal object ApprovalAttentionOverlay {
         val focusable = ApprovalOverlayFocusPolicy.shouldBeFocusable(composerActive, decisionConsumed)
         val applyFocusMode = {
             val current = attached
-            if (current != null && current.focusable != focusable) {
-                val lp = current.params
-                // 从加窗时的基准 flags 派生，绝不就地拿 lp.flags 当基准：
-                // updateViewLayout 失败时 lp 不会被写脏，窗口状态与基准始终一致（G4）。
-                val nextFlags = if (focusable) {
-                    current.baseFlags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
-                } else {
-                    current.baseFlags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+            if (current != null) {
+                // 1) 必要时切窗口 flag / softInputMode（幂等：状态未变不重复改布局）。
+                if (current.focusable != focusable) {
+                    val lp = current.params
+                    // 从加窗时的基准 flags 派生，绝不就地拿 lp.flags 当基准：
+                    // updateViewLayout 失败时 lp 不会被写脏，窗口状态与基准始终一致（G4）。
+                    val nextFlags = if (focusable) {
+                        current.baseFlags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
+                    } else {
+                        current.baseFlags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                    }
+                    // focusable 时带 STATE_VISIBLE：窗口由 FLAG_NOT_FOCUSABLE 切为可聚焦、
+                    // 真正获焦的那一次由系统据 state 位把 IME 拉起；「获焦之后」的重放（如按
+                    // back 收键盘再点输入框）由 requestShowIme 负责——state 位只在获焦时消费一次。
+                    val nextSoftInputMode = if (focusable) {
+                        WindowManager.LayoutParams.SOFT_INPUT_ADJUST_PAN or
+                            WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE
+                    } else {
+                        WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING
+                    }
+                    val snapshotFlags = lp.flags
+                    val snapshotSoftInputMode = lp.softInputMode
+                    lp.flags = nextFlags
+                    lp.softInputMode = nextSoftInputMode
+                    val ok = runCatching {
+                        current.windowManager.updateViewLayout(current.view, lp)
+                    }.isSuccess
+                    if (ok) {
+                        current.focusable = focusable
+                        if (focusable) current.everFocusable = true
+                    } else {
+                        // 失败：回滚 lp 到快照，focusable 不变，下次 composer 变化会重试。
+                        lp.flags = snapshotFlags
+                        lp.softInputMode = snapshotSoftInputMode
+                        AndroidAgentLogger.warn(
+                            "Approval overlay focus update failed: request=${current.requestId}",
+                        )
+                    }
                 }
-                val nextSoftInputMode = if (focusable) {
-                    WindowManager.LayoutParams.SOFT_INPUT_ADJUST_PAN
+                // 2) 输入意图存在 → 每次都（重新）确保 IME 弹出：覆盖「按 back 收掉键盘后再点
+                //    输入框」的重放，也覆盖「flag 切换与窗口真正获焦之间的异步窗口」（有界重试）。
+                //    意图消失 / 决策落地 → 取消重试并主动收键盘（G2 还原也走这里），把焦点还下层 App。
+                if (focusable && current.focusable) {
+                    requestShowIme(current)
                 } else {
-                    WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING
-                }
-                val snapshotFlags = lp.flags
-                val snapshotSoftInputMode = lp.softInputMode
-                lp.flags = nextFlags
-                lp.softInputMode = nextSoftInputMode
-                val ok = runCatching {
-                    current.windowManager.updateViewLayout(current.view, lp)
-                }.isSuccess
-                if (ok) {
-                    current.focusable = focusable
-                    if (focusable) current.everFocusable = true
-                    // true -> false：主动清焦点 + 收键盘。放在这里而不是只依赖 detachLocked，
-                    // 因为决策路径会先把 focusable 改成 false 再 dismiss（G2）。
-                    if (!focusable && current.everFocusable) hideKeyboard(current)
-                } else {
-                    // 失败：回滚 lp 到快照，focusable 不变，下次 composer 变化会重试。
-                    lp.flags = snapshotFlags
-                    lp.softInputMode = snapshotSoftInputMode
+                    cancelShowIme(current)
+                    if (current.everFocusable) hideKeyboard(current)
                 }
             }
         }
@@ -281,6 +305,70 @@ internal object ApprovalAttentionOverlay {
         } else {
             mainHandler.post { runCatching { applyFocusMode() } }
         }
+    }
+
+    /**
+     * 后台悬浮审批卡弹 IME 的有界重试。
+     *
+     * 老 BUG 根因：窗口从 FLAG_NOT_FOCUSABLE 切到可聚焦后，WMS 的焦点转移 / 下层 App IME 收起
+     * / BasicTextField 建立 InputConnection 都是异步的；卡片里那次 `delay(180) + keyboard.show()`
+     * 单次盲等常踩在窗口真正获焦之前，且失败被静默吞掉。这里在宿主层用原生 IMM 做几次短重试，
+     * 覆盖这段时序窗口；每次先 view.requestFocus() 再 showSoftInput，已显示时幂等。
+     * 配合 softInputMode 的 SOFT_INPUT_STATE_VISIBLE（窗口获焦时系统自动拉起）双保险。
+     */
+    private fun requestShowIme(current: Attached) {
+        cancelShowIme(current)
+        val view = current.view
+        val imm = runCatching {
+            view.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        }.getOrNull() ?: return
+        val runnable = object : Runnable {
+            var attempts = 0
+            override fun run() {
+                // 窗口已替换 / 已还原不可聚焦 / 已拆窗：停止，别把键盘弹到别人的界面上。
+                if (attached !== current || !current.focusable || !view.isAttachedToWindow) {
+                    current.imeShowRunnable = null
+                    return
+                }
+                // 窗口级拉 IME（minSdk 33）：不依赖 mServedView / InputConnection，最贴合
+                // 「窗口刚从 FLAG_NOT_FOCUSABLE 切到可聚焦」；补上 Compose 尚未把焦点交给
+                // BasicTextField 那段时序里视图级 showSoftInput 的空转。
+                runCatching {
+                    view.windowInsetsController?.show(android.view.WindowInsets.Type.ime())
+                }
+                // 与下面的 showSoftInput 用同一个焦点目标，避免把 View 级焦点从 AndroidComposeView
+                // 挪到外层 ComposeView 而踢掉 BasicTextField 的焦点。
+                runCatching { (view.findFocus() ?: view).requestFocus() }
+                // 视图级兜底：Compose 聚焦后 findFocus() 返回 AndroidComposeView，showSoftInput
+                // 与卡片里 LocalSoftwareKeyboardController.show() 同源，幂等。
+                runCatching {
+                    val target = view.findFocus() ?: view
+                    imm.showSoftInput(target, InputMethodManager.SHOW_IMPLICIT)
+                }
+                // 已显示就立刻停，避免用户按 back 收键盘后仍被重试拉回来一次。
+                val imeVisible = runCatching {
+                    view.rootWindowInsets?.isVisible(android.view.WindowInsets.Type.ime()) == true
+                }.getOrDefault(false)
+                if (imeVisible || ++attempts >= IME_SHOW_RETRY_MAX) {
+                    current.imeShowRunnable = null
+                    if (!imeVisible) {
+                        AndroidAgentLogger.warn(
+                            "Approval overlay IME show retries exhausted: request=${current.requestId}",
+                        )
+                    }
+                    return
+                }
+                mainHandler.postDelayed(this, IME_SHOW_RETRY_INTERVAL_MS)
+            }
+        }
+        current.imeShowRunnable = runnable
+        mainHandler.post(runnable)
+    }
+
+    /** 取消未完成的弹 IME 重试（决策落地 / 还原不可聚焦 / 拆窗时）。可重复调用。 */
+    private fun cancelShowIme(current: Attached) {
+        current.imeShowRunnable?.let { mainHandler.removeCallbacks(it) }
+        current.imeShowRunnable = null
     }
 
     /**
@@ -339,7 +427,7 @@ internal object ApprovalAttentionOverlay {
         runCatching { current.view.clearFocus() }
         runCatching {
             val imm = current.view.context
-                .getSystemService(Context.INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager
+                .getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
             imm?.hideSoftInputFromWindow(current.view.windowToken, 0)
         }
     }
@@ -347,6 +435,7 @@ internal object ApprovalAttentionOverlay {
     private fun detachLocked() {
         val current = attached ?: return
         attached = null
+        cancelShowIme(current)
         // 先收键盘再拆窗：曾可聚焦的窗口上 IME 可能附着，直接 removeView 会留残影/焦点。
         // 用 everFocusable 而非 focusable 作判据——决策路径可能已把 focusable 复位（G2）。
         if (current.everFocusable) hideKeyboard(current)

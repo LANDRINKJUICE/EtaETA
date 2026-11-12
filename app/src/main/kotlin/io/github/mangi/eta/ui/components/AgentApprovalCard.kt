@@ -17,7 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Block
@@ -38,6 +38,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
@@ -330,11 +331,21 @@ internal fun AgentApprovalRequestCard(
                                 // inputTapCount++ 让每次点击都重放一次 show（back 收键盘后可再点重弹）。
                                 // 危险卡的意图已由 composerOpen 表达，无需在此重复。
                                 Modifier.pointerInput(Unit) {
-                                    detectTapGestures {
-                                        if (!danger) {
-                                            inputRequested = true
-                                            inputTapCount++
-                                        }
+                                    // BasicTextField 的点击聚焦会消费 Main pass 的 down；原先的
+                                    // detectTapGestures 默认 requireUnconsumed=true，点文本区域时外层
+                                    // 永远收不到 → inputRequested 恒 false → 窗口不切可聚焦 → IME 不弹。
+                                    // 改在 Initial pass（早于子节点消费）抓 down：awaitEachGesture 保证
+                                    // 每轮手势只跑一次 block；Initial pass 不消费事件，子节点 BasicTextField
+                                    // 在 Main pass 仍照常聚焦。用项目既有可编译的 awaitPointerEvent(Initial)
+                                    // 写法，不依赖手势 API 新参数。手机触摸下每轮首事件即 down，无需额外
+                                    // 过滤（避免引入项目无先例、需额外 import 的手势扩展函数）。
+                                    // 两种卡都自增 inputTapCount → 重放 host(true)/弹 IME，让「按 back
+                                    // 收键盘后再点输入框」在危险卡也生效（危险卡意图由 composerOpen 表达，
+                                    // 无需置 inputRequested，但重放信号必须给）。
+                                    awaitEachGesture {
+                                        awaitPointerEvent(PointerEventPass.Initial)
+                                        if (!danger) inputRequested = true
+                                        inputTapCount++
                                     }
                                 }
                             } else {

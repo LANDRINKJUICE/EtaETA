@@ -6,7 +6,7 @@
 <resources>
     <!-- 设置开关 -->
     <string name="settings_job_wakeup">Auto-handle failed background tasks</string>
-    <string name="settings_job_wakeup_summary">When a background command started from a chat or a scheduled task fails, times out or is interrupted, Eta wakes an agent round with the task, its exit status and the tail of its output to finish the work. This round continues a task the user already authorized online: for example after a failed build, rerun the build, fetch the artifact and deliver the APK, carried through to completion. The danger gate only hard-guards key areas (system partitions, boot chain, Android-side phone data, broad deletes, remount, format, system app changes, sensitive settings) and shows a confirmation card for all sources alike. If nobody answers within 2 minutes the action is not executed, is never reported as done, and the agent judges honestly how to finish the rest of the task. Push, builds and packaging are normal work here. Installing the APK on the device still needs the user to say so explicitly.</string>
+    <string name="settings_job_wakeup_summary">When a background command fails, times out or is interrupted, Eta wakes an agent round to finish the work. Turn this off to only get a result notification.</string>
 
     <!-- 唤醒通知 -->
     <string name="job_wakeup_title">Eta is auto-handling a failed background task: %1$s</string>

@@ -2,7 +2,7 @@
 <!-- 后台任务失败自动唤醒的文案：简体中文。 -->
 <resources>
     <string name="settings_job_wakeup">后台任务完成自动唤醒 Agent</string>
-    <string name="settings_job_wakeup_summary">聊天或自动任务起的后台命令失败、超时或被中断时，Eta 会自动唤醒一轮 Agent，带上任务、退出状态与输出末尾把任务做完。本轮是在线会话里用户已授权任务的延续：例如构建失败后重跑构建、取包、交付 APK，都照常执行到完成。安全闸门只硬守系统分区、启动链、安卓侧手机数据、大范围删除、重新挂载、格式化、装卸或冻结系统应用、敏感设置等关键部位，且对所有来源一律照样弹卡；两分钟没人点则那一条不执行、绝不谎报完成，由模型自行判断其余任务照常做完。推送、构建等属于正常任务照常进行。装机仍需用户明确说装。</string>
+    <string name="settings_job_wakeup_summary">后台命令失败、超时或被中断时，Eta 自动唤醒一轮 Agent 接着把任务做完。关闭后只发结果通知。</string>
 
     <string name="job_wakeup_title">Eta 正在自动处理失败的后台任务：%1$s</string>
     <string name="job_wakeup_title_watch">Eta 正在处理盯梢的后台任务：%1$s</string>
