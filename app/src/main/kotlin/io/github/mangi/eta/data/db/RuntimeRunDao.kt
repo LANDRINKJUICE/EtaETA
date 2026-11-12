@@ -6,6 +6,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Upsert
+import kotlinx.coroutines.flow.Flow
 
 @Dao
 internal interface RuntimeRunDao : ChunkedTextDao {
@@ -106,6 +107,17 @@ internal interface RuntimeRunDao : ChunkedTextDao {
     @Transaction
     @Query("SELECT * FROM runtime_archive_runs ORDER BY created_at ASC")
     suspend fun archivedRunRows(): List<RuntimeArchiveRunWithEvents>
+
+    /**
+     * 归档表变更的轻量通知桥：只查主键，不还原分块文本、不做事件组合。
+     *
+     * `AgentRunArchiveStore.add`（后台唤醒 / 语音 / 自动任务等外部归档 run 的终态写入）
+     * 与 UI 订阅者同进程，Room 的 InvalidationTracker 会在 `replaceArchivedRun` 事务提交后
+     * 自动重新发射本 Flow；UI 据此实时把归档导入会话列表，不必等回前台或点通知。
+     * 刻意不带 @Transaction / 不返回组合对象，避免为一次"有变化"信号做整表反序列化。
+     */
+    @Query("SELECT archive_run_id FROM runtime_archive_runs ORDER BY created_at ASC, archive_run_id ASC")
+    fun archivedRunIdsFlow(): Flow<List<String>>
 
     @Transaction
     suspend fun archivedRuns(): List<RuntimeArchiveRunWithEvents> = archivedRunRows().map { stored ->

@@ -401,7 +401,12 @@ internal class McpHttpClient(
     }
 
     private fun Request.Builder.applyAuthorization(): Request.Builder = apply {
-        bearerToken?.trim()?.takeIf { it.isNotBlank() }?.let { token ->
+        // 用户常在 token 框里连 "Bearer " 一起粘贴，去掉前缀避免拼成 "Bearer Bearer xxx"。
+        val token = bearerToken?.trim()
+            ?.replaceFirst(BEARER_PREFIX, "")
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+        if (token != null) {
             header("Authorization", "Bearer $token")
         }
     }
@@ -484,6 +489,7 @@ internal class McpHttpClient(
 
     private companion object {
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+        val BEARER_PREFIX = Regex("^Bearer\\s+", RegexOption.IGNORE_CASE)
         const val CLIENT_VERSION = "1"
         const val HEADER_PROTOCOL_VERSION = "MCP-Protocol-Version"
         const val HEADER_METHOD = "Mcp-Method"

@@ -1178,6 +1178,7 @@
   <string name="mcp_connecting">正在連線…</string>
   <string name="mcp_name_required">請輸入伺服器名稱</string>
   <string name="mcp_server_added">伺服器已新增，發現 %1$d 個工具</string>
+  <string name="mcp_server_added_offline">伺服器已儲存，但工具探索失敗，請點重新整理重試</string>
   <string name="mcp_connection_failed">無法連線 MCP 伺服器</string>
   <string name="mcp_refreshed">工具清單已重新整理 · %1$d 個</string>
   <string name="mcp_refresh_failed">無法重新整理工具清單</string>

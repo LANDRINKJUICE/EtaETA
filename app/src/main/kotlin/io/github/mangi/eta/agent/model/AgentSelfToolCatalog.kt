@@ -55,7 +55,7 @@ internal object AgentSelfToolCatalog {
             .put(
                 AgentToolSchema.function(
                     name = "eta_mcp_upsert",
-                    description = "新增或更新 MCP 服务器。新增时不传 id，name/url 必填；更新时传 id，仅修改给出的字段。默认自动发现工具，新服务器默认启用发现的全部工具。bearer_token 可选，写入后由安全存储保管。",
+                    description = "新增或更新 MCP 服务器。新增时不传 id，name/url 必填；更新时传 id，仅修改给出的字段。默认自动发现工具，新服务器默认启用发现的全部工具。bearer_token 三态：传非空字符串=设置新凭据（写入后由安全存储保管）；不传或传空串=保持原凭据不变；需清空凭据请显式传 clear_bearer_token=true。",
                     parameters = JSONObject()
                         .put("type", "object")
                         .put(
@@ -71,7 +71,18 @@ internal object AgentSelfToolCatalog {
                                         .put("type", "string")
                                         .put("description", "auto 或具体协议版本日期；默认 auto。"),
                                 )
-                                .put("bearer_token", JSONObject().put("type", "string"))
+                                .put(
+                                    "bearer_token",
+                                    JSONObject()
+                                        .put("type", "string")
+                                        .put("description", "非空=设置新凭据；不传或空串=保持原凭据不变。"),
+                                )
+                                .put(
+                                    "clear_bearer_token",
+                                    JSONObject()
+                                        .put("type", "boolean")
+                                        .put("description", "设为 true 时显式清空已保存的 bearer 凭据；不能与 bearer_token 同时给出。"),
+                                )
                                 .put(
                                     "discover",
                                     JSONObject()

@@ -3,9 +3,13 @@ package io.github.mangi.eta.agent.runtime
 import io.github.mangi.eta.data.db.EtaDatabase
 import android.content.Context
 import io.github.mangi.eta.agent.model.AgentModelClient
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -147,6 +151,51 @@ class AgentRunArchiveStoreTest {
         )
         assertEquals(4, restored.events.size)
         assertEquals(archivedRun.events[2], restored.events[1])
+    }
+
+    /**
+     * 「归档落库 -> UI 订阅桥」的数据侧契约：外部归档 run 一旦写进归档表，
+     * [AgentRunArchiveStore.archiveChangeFlow] 的首次发射里就能看到它的主键，
+     * 且 [AgentRunArchiveStore.list] 能同时取回完整内容与派生会话所需字段。
+     * AgentAppState 常驻订阅这个 Flow，据此实时把 run 导入会话列表，不必回前台或点通知。
+     */
+    @Test
+    fun archiveChangeFlowSurfacesNewlyArchivedRun() {
+        val archived = AgentRunArchiveStore.ArchivedRun(
+            handoff = AgentRuntimeWire.EntryHandoff(
+                id = "job-wakeup-run-1",
+                source = AgentRuntimeWire.ETA_JOB_WAKEUP_HANDOFF_SOURCE,
+                payload = AgentExternalArchivePayload(
+                    userText = "后台任务失败，自动接手处理",
+                    conversationKey = "job-task-1",
+                    title = "后台任务自动处理",
+                ).toJson(),
+            ),
+            events = emptyList(),
+            result = AgentRuntimeWire.RunResult("job-wakeup-run-1", true, "已处理完成"),
+            createdAt = 42L,
+        )
+        AgentRunArchiveStore.add(context, archived)
+
+        val ids = runBlocking {
+            withTimeout(5_000L) { AgentRunArchiveStore.archiveChangeFlow(context).first() }
+        }
+        assertTrue("新增归档应出现在变更 Flow 里", ids.contains("job-wakeup-run-1"))
+
+        val payload = AgentExternalArchivePayload.from(
+            AgentRunArchiveStore.list(context).single().handoff.payload,
+        )
+        assertNotNull(payload)
+        assertEquals("job-task-1", payload!!.conversationKey)
+        assertEquals("后台任务自动处理", payload.title)
+
+        // 导入成功后会删归档行；删行要能触发 Flow 再发射且这次为空，
+        // 这正是 UI 订阅不会重复导入该 run 的闭环契约。
+        AgentRunArchiveStore.remove(context, "job-wakeup-run-1")
+        val afterRemove = runBlocking {
+            withTimeout(5_000L) { AgentRunArchiveStore.archiveChangeFlow(context).first() }
+        }
+        assertTrue("删行后变更 Flow 应为空", afterRemove.isEmpty())
     }
 
     @Test

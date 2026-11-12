@@ -233,28 +233,40 @@ internal object AgentSelfTools {
         require(
             protocolMode in setOf(McpProtocolMode.AUTO, McpProtocolMode.LATEST, McpProtocolMode.LEGACY),
         ) { "protocol_mode 仅支持 auto / ${McpProtocolMode.LATEST} / ${McpProtocolMode.LEGACY}" }
-        val bearerProvided = args.has("bearer_token")
-        val bearerToken = if (bearerProvided) args.optString("bearer_token", "") else ""
+        // bearer_token 三态语义（避免「顺手传空串」摧毁已有鉴权）：
+        //   - 非空字符串                → 设为 BEARER 并写入新凭据
+        //   - 空串 / null / 未提供       → 不修改鉴权，沿用 existing / 现有凭据
+        //   - clear_bearer_token=true   → 显式清空（唯一能清掉鉴权的路径）
+        // org.json 对 JSONObject.NULL 的 optString 会返回字面量 "null"，用 isNull 挡掉，
+        // 绝不能把它当成有效 token 存进 SecretStore。
+        val clearBearer = args.optBoolean("clear_bearer_token", false)
+        val hasBearerField = args.has("bearer_token") && !args.isNull("bearer_token")
+        val newToken = if (hasBearerField) args.optString("bearer_token", "").trim() else ""
+        val setNewBearer = hasBearerField && newToken.isNotEmpty()
+        require(!(clearBearer && hasBearerField)) {
+            "clear_bearer_token 与 bearer_token 不能同时给出"
+        }
+        val authorizationType = when {
+            clearBearer -> McpAuthorizationType.NONE
+            setNewBearer -> McpAuthorizationType.BEARER
+            else -> existing?.authorizationType ?: McpAuthorizationType.NONE
+        }
         var server = (existing ?: McpServerSetting(id = "", name = "", url = url)).copy(
             name = args.optString("name").trim().ifEmpty { existing?.name ?: url },
             url = url,
             enabled = if (args.has("enabled")) args.getBoolean("enabled") else existing?.enabled ?: true,
             protocolMode = protocolMode,
-            authorizationType = when {
-                bearerProvided && bearerToken.isNotEmpty() -> McpAuthorizationType.BEARER
-                bearerProvided -> McpAuthorizationType.NONE
-                else -> existing?.authorizationType ?: McpAuthorizationType.NONE
-            },
+            authorizationType = authorizationType,
         )
         var discoveryError: String? = null
         if (args.optBoolean("discover", true)) {
             server = try {
+                // 只有「显式设新 token」用新值；显式清空不带凭据；其余回退现有凭据。
                 // 首次成功发现的默认全开在 McpServerManager.discover 内统一处理。
-                // 显式传入 bearer_token（含清空）时不再回退旧凭据。
-                val discoveryToken = if (bearerProvided) {
-                    bearerToken
-                } else {
-                    existing?.let { McpServerRepository.bearerToken(it.id) }
+                val discoveryToken: String? = when {
+                    setNewBearer -> newToken
+                    clearBearer -> null
+                    else -> existing?.let { McpServerRepository.bearerToken(it.id) }
                 }
                 McpServerManager.discover(server, discoveryToken)
             } catch (failure: Throwable) {
@@ -264,9 +276,17 @@ internal object AgentSelfTools {
         }
         val saved = runBlocking {
             if (existing == null) {
-                McpServerRepository.add(server, bearerToken)
+                // 新增：只有设了新 token 才写凭据，否则不带 secret。
+                McpServerRepository.add(server, if (setNewBearer) newToken else "")
             } else {
-                McpServerRepository.update(server, if (bearerProvided) bearerToken else null)
+                // 更新：传 null = 完全不碰 secret（保留现有凭据）；
+                // 只有设新 token / 显式清空才动 secret。
+                val tokenArg: String? = when {
+                    setNewBearer -> newToken
+                    clearBearer -> ""
+                    else -> null
+                }
+                McpServerRepository.update(server, tokenArg)
                 McpServerRepository.serverById(existing.id)
             }
         }
@@ -276,6 +296,7 @@ internal object AgentSelfTools {
             .put("name", server.name)
             .put("enabled", server.enabled)
             .put("tool_count", server.tools.size)
+            .put("authorization_type", server.authorizationType)
             .put("enabled_tool_names", JSONArray(server.enabledToolNames.sorted()))
             .put("discovery_error", discoveryError ?: JSONObject.NULL)
     }

@@ -1196,6 +1196,7 @@
   <string name="mcp_connecting">正在连接…</string>
   <string name="mcp_name_required">请输入服务器名称</string>
   <string name="mcp_server_added">服务器已添加，发现 %1$d 个工具</string>
+  <string name="mcp_server_added_offline">服务器已保存，但工具发现失败，请点刷新重试</string>
   <string name="mcp_connection_failed">无法连接 MCP 服务器</string>
   <string name="mcp_refreshed">工具列表已刷新 · %1$d 个</string>
   <string name="mcp_refresh_failed">无法刷新工具列表</string>

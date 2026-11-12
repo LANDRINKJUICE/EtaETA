@@ -88,6 +88,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -96,6 +97,7 @@ import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 internal class AgentAppState(
     context: Context,
@@ -111,6 +113,8 @@ internal class AgentAppState(
     // 导入期间暂停保存：旧状态的增量保存会删除刚导入的会话；导入成功后整体重载，失败时数据库已回滚。
     private var persistencePaused = false
     private val runtimeRecoveryInProgress = AtomicBoolean(false)
+    /** init 的 recoverRuntimeRuns + 首次导入完成的门；归档订阅等它完成后再消费信号。 */
+    private val runtimeRecoveryDone = CompletableDeferred<Unit>()
     private val defaultThinkingEnabled = agentBooleanForUi(Prefs.Keys.AGENT_THINKING_ENABLED)
     @Volatile
     private var conversationPersistence = AgentConversationPersistence(initialConversations)
@@ -120,6 +124,8 @@ internal class AgentAppState(
     private var defaultProviderId: String? = null
     private var fileAttachmentOwnerVersion = 0L
     private val conversationLoadMutex = Mutex()
+    /** 归档导入串行化：init / 回前台对账 / 点通知 / 归档表变更订阅四条路径共用，防并发重复导入。 */
+    private val archiveImportMutex = Mutex()
     private val conversationContentPins = mutableMapOf<String, Int>()
     private var conversationSelectionJob: Job? = null
     private var conversationSelectionVersion = 0L
@@ -167,13 +173,64 @@ internal class AgentAppState(
     init {
         refreshConversationSummaries()
         observeRuntimeSelection()
+        observeArchivedRuns()
         runtimeRecoveryInProgress.set(true)
         scope.launch(Dispatchers.IO) {
             try {
                 recoverRuntimeRuns()
-                importArchivedExternalRuns()
+                importArchivedExternalRunsSerialized()
             } finally {
                 runtimeRecoveryInProgress.set(false)
+                runtimeRecoveryDone.complete(Unit)
+            }
+        }
+    }
+
+    /**
+     * 归档表变更 -> 会话列表实时重组。
+     *
+     * 后台唤醒（以及语音、自动任务等外部归档入口）的 run 不走 [AgentAppState] 自身的
+     * run 发起路径：它的实时事件只回到发起它的 [AgentRuntimeClient]，终态结果则由
+     * [AgentRuntimeService] 写进 `runtime_archive_runs`。过去把它变成会话列表条目只能靠
+     * [refreshRuntimeResults]（回前台 ON_RESUME）或点通知时"拉"一次导入，于是进程活着、
+     * 停在前台时列表（纯内存投影）对归档毫无感知，看不到这条会话。
+     *
+     * 这里常驻订阅归档表主键 Flow：任何外部归档 run 一落库，Room 的 invalidation 立即
+     * 推来信号，随即串行调用 [importArchivedExternalRunsSerialized] 把完整消息/标题/终态
+     * 导入内存并刷新列表。Flow 首次发射会带当前全表，与 init 对账并发时由 [archiveImportMutex]
+     * 串行、且导入本身幂等，不会重复插入。导入成功后归档行被移除，下一次发射只有新 run。
+     */
+    private fun observeArchivedRuns() {
+        scope.launch(Dispatchers.IO) {
+            // 冷启动：等 init 的 recoverRuntimeRuns + 首次导入跑完再消费归档信号，复原
+            // 「先 recover 再 import」次序。加超时兜底：主 runtime 无响应时也别把订阅拖哑
+            // 几十秒；提前放行由 archiveImportMutex + 导入幂等保证安全，不会重复插入。
+            withTimeoutOrNull(RECOVERY_GATE_TIMEOUT_MILLIS) { runtimeRecoveryDone.await() }
+            // 常驻桥外层兜底：Flow 建立 / collect 本身若抛非取消异常，不让常驻协程崩进程
+            // （仓库无全局 CoroutineExceptionHandler）；记录后结束，下次冷启动会重建订阅。
+            runCatching {
+                AgentRunArchiveStore.archiveChangeFlow(appContext)
+                    .distinctUntilChanged()
+                    .collect { ids ->
+                        if (ids.isEmpty()) return@collect // 归档已清空（导入删行后的连锁发射）
+                        // 归档行可能因并发（同会话尚有活动 run / 结算未完成）被跳过而残留。
+                        // 有残留才继续有界重试：正常路径一轮导完即退出，不空转、不堵后续信号。
+                        for (attempt in 0 until ARCHIVE_IMPORT_RECHECK_ATTEMPTS) {
+                            if (attempt > 0) delay(ARCHIVE_IMPORT_RECHECK_MILLIS)
+                            val pending = runCatching { importArchivedExternalRunsSerialized() }
+                                .getOrElse { failure ->
+                                    if (failure is CancellationException) throw failure
+                                    AndroidAgentLogger.error(
+                                        "Archive import on change failed: type=${failure.safeLogType()}",
+                                    )
+                                    true // 失败当作仍有残留，留待下一轮重试
+                                }
+                            if (!pending) break
+                        }
+                    }
+            }.onFailure { failure ->
+                if (failure is CancellationException) throw failure
+                AndroidAgentLogger.error("Archive change observer stopped: type=${failure.safeLogType()}")
             }
         }
     }
@@ -241,7 +298,7 @@ internal class AgentAppState(
         scope.launch(Dispatchers.IO) {
             try {
                 recoverRuntimeRuns()
-                importArchivedExternalRuns()
+                importArchivedExternalRunsSerialized()
             } finally {
                 runtimeRecoveryInProgress.set(false)
             }
@@ -626,12 +683,20 @@ internal class AgentAppState(
         observationJob.start()
     }
 
-    private suspend fun importArchivedExternalRuns() {
+    /**
+     * 归档导入的唯一入口：四条触发路径（init / 回前台 / 点通知 / 归档表订阅）在此串行。
+     * 返回「是否仍有归档行残留待导入」：正常全部导完为 false；某行因并发被跳过 / 持久化
+     * 失败而 break 时为 true。订阅路径据此决定是否继续有界重试，避免正常路径空转。
+     */
+    private suspend fun importArchivedExternalRunsSerialized(): Boolean =
+        archiveImportMutex.withLock { importArchivedExternalRuns() }
+
+    private suspend fun importArchivedExternalRuns(): Boolean {
         val archivedRuns = withContext(Dispatchers.IO) {
             AgentRunArchiveStore.list(appContext)
                 .filter { AgentExternalArchivePayload.from(it.handoff.payload) != null }
         }
-        if (archivedRuns.isEmpty()) return
+        if (archivedRuns.isEmpty()) return false
 
         for (archivedRun in archivedRuns) {
             val payload = AgentExternalArchivePayload.from(archivedRun.handoff.payload) ?: continue
@@ -644,8 +709,9 @@ internal class AgentAppState(
                 AgentRunArchiveStore.remove(appContext, importedRunId)
                 true
             }
-            if (!saved) break
+            if (!saved) return true // 本行没导成，归档仍在，留给后续重试
         }
+        return false // 全部导完
     }
 
     suspend fun openAssistantConversation(conversationKey: String): Boolean =
@@ -654,7 +720,7 @@ internal class AgentAppState(
     /** 打开外部入口按 [source] 与 [conversationKey] 归档的会话；先导入尚未入库的归档结果。 */
     suspend fun openArchivedConversation(source: String, conversationKey: String): Boolean {
         if (source.isBlank() || conversationKey.isBlank()) return false
-        importArchivedExternalRuns()
+        importArchivedExternalRunsSerialized()
         return withContext(Dispatchers.Main.immediate) {
             val conversationId = archiveConversationId(
                 source = source,
@@ -2576,6 +2642,12 @@ internal class AgentAppState(
     private companion object {
         const val MAX_TITLE_CHARS = 24
         const val MAX_PREVIEW_CHARS = 48
+        /** 归档导入自愈复查：给并发中的结算 / 活动 run 一点收尾时间，避免空转。 */
+        const val ARCHIVE_IMPORT_RECHECK_MILLIS = 1_500L
+        /** 同一轮归档信号最多复查几次；有界，避免某行永久无法导入时空转。 */
+        const val ARCHIVE_IMPORT_RECHECK_ATTEMPTS = 4
+        /** 冷启动恢复门最长等待：主 runtime 无响应时也放行归档订阅，避免桥长期哑火。 */
+        const val RECOVERY_GATE_TIMEOUT_MILLIS = 5_000L
         const val LEGACY_STOPPED_ERROR = "已停止"
         const val SYNTHETIC_STATUS_STOPPED = "eta_status:stopped"
         private val SHARED_IMAGE_EXTENSIONS = setOf(

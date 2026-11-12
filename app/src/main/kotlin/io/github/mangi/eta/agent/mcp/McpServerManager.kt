@@ -34,7 +34,8 @@ internal object McpServerManager {
             "MCP 服务器不存在"
         }
         val refreshed = discover(server, McpServerRepository.bearerToken(serverId))
-        McpServerRepository.update(refreshed)
+        // 只回写探测相关列，避免用网络前的旧快照整行覆盖用户期间改动的配置。
+        McpServerRepository.updateDiscovery(refreshed)
         return refreshed
     }
 }

@@ -1212,6 +1212,7 @@
   <string name="mcp_connecting">Connecting…</string>
   <string name="mcp_name_required">Enter a server name</string>
   <string name="mcp_server_added">Server added. %1$d tools discovered</string>
+  <string name="mcp_server_added_offline">Server saved, but tools could not be discovered. Tap refresh to retry.</string>
   <string name="mcp_connection_failed">Could not connect to the MCP server</string>
   <string name="mcp_refreshed">Tool list refreshed · %1$d tools</string>
   <string name="mcp_refresh_failed">Could not refresh the tool list</string>
