@@ -20,6 +20,13 @@
     <string name="notify_action_view_result">View result</string>
 
     <!-- 危险操作等待确认（常驻单条，数量原地更新） -->
+
+    <!-- 审批通知「后台回复」RemoteInput：action 标签 + 输入框提示 -->
+    <string name="approval_reply_action_danger">Deny &amp; explain</string>
+    <string name="approval_reply_action_ask">Type a reply</string>
+    <string name="approval_reply_hint_danger">Tell the agent what to do instead</string>
+    <string name="approval_reply_hint_ask">Type your own answer</string>
+
     <string name="notify_approval_title">%1$d action(s) waiting for your confirmation</string>
     <string name="notify_approval_body">%1$d action(s) paused before running something risky. Open the task center to allow or reject.</string>
 

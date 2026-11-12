@@ -1,123 +1,118 @@
 package io.github.mangi.eta.agent.approval
 
 /**
- * 「这次审批卡该出现在哪里」的唯一裁决点。
+ * 「这次审批卡该出现在哪里 / 通知上放哪些 action」的唯一裁决点（纯逻辑，可 JVM 单测）。
  *
- * 审批卡原来只存在于聊天流里：用户在别的 App（看视频、聊天）时永远看不到，
- * 工具只能干等到 2 分钟超时。这里把「用哪种载体提醒用户」收敛成纯逻辑，
- * 让前后台判定、降级条件、通知按钮映射都能在纯 JVM 单测里钉住，
- * Android 侧（[ApprovalAttentionPresenter]）只负责执行结论。
+ * 三层架构（2026-11-12 定稿）：状态 = 灵动岛只读、裁决 = 通知、深聊 = 前台会话。
+ * 后台审批一律走 eta_attention heads-up 通知：
+ *  - 前台：聊天流卡片为主 + 同样补发强通知（前台 ≠ 看得到卡片：用户常停在别的会话 / 设置页）；
+ *  - 后台：通知是唯一载体。悬浮审批卡的打字能力已被真机证伪 —— 设备启用 Eta 无障碍服务时
+ *    浮窗走 TYPE_ACCESSIBILITY_OVERLAY，这种窗口永远拿不到 IME 焦点，系统逐个取消 show 请求。
+ *    继续在 overlay 里堆 flag / 重试无解，故整条悬浮卡载体移除，后台打字改由通知的
+ *    [android.app.RemoteInput] 承接（SystemUI 托管键盘，锁屏 / 后台都必弹）。
  *
- * 三条硬规则：
- * 1. Eta 在前台时主载体是聊天流卡片，不弹悬浮层；但**执行层仍要补发 eta_attention 强通知**
- *    （方案 1）——「在前台」不等于「看得到卡片」：用户常停在别的会话 / 设置页 / 任务中心，
- *    归属会话的卡片并不在屏上，仅靠 9400 无声汇总通知根本注意不到。前台与后台一样发
- *    HIGH heads-up 行动通知（带直接决策按钮），抑制 9400 避免重复。
- * 2. 后台优先悬浮层卡片（可直接点选、可填自由输入，与聊天流是同一个 Composable）；
- * 3. 悬浮层不可用（无权限 / 宿主服务不在 / addView 失败）才退成带按钮的 heads-up 通知。
- *
- * 任何分支都只是「把卡片送到用户眼前」，决策入口仍只有 [AgentApprovalCoordinator.resolve]
- * 一个，不会出现第二条放行通路。
+ * 决策入口始终只有 [AgentApprovalCoordinator.resolve] 一个：通知按钮（点选）与
+ * 「后台回复」RemoteInput（打字）都回灌到这里，执行层只负责把卡片 / 通知送到用户眼前。
  */
 internal enum class AgentApprovalSurface {
     /** 没有待确认请求：所有载体都应收起。 */
     NONE,
 
-    /**
-     * Eta 在前台：主载体是聊天流里的卡片；执行层额外补发 eta_attention 强通知，
-     * 覆盖「前台但不在归属会话 / 在设置页」看不到卡片的场景（见头注释规则 1）。
-     */
+    /** Eta 在前台：主载体是聊天流卡片，执行层额外补发 eta_attention 强通知。 */
     CHAT_INLINE,
 
-    /** Eta 在后台：悬浮层卡片（复用聊天流同一个 Composable）。 */
-    OVERLAY,
-
-    /** 悬浮层不可用：eta_attention heads-up 通知 + 按钮。 */
+    /** Eta 在后台：eta_attention heads-up 通知 + 决策按钮 + RemoteInput 后台回复。 */
     NOTIFICATION,
 }
 
 internal object AgentApprovalAttentionPolicy {
 
     /**
-     * 单条通知最多几个 action。
-     *
-     * 3 是折叠态可见的上限：Android 折叠通知只展示前 3 个 action，第 4 个会被塞进
-     * 「更多」里，等于没显示。危险卡正好三个（允许一次 / 本会话允许同类 / 拒绝），
-     * 询问卡超过 3 个选项就不拆按钮，改为「打开处理」。
+     * 单条通知最多几个 action。折叠态只展示前 3 个，第 4 个会被塞进「更多」等于没显示。
      */
     const val NOTIFICATION_ACTION_LIMIT = 3
+
+    /**
+     * 决策按钮的预算：固定给「后台回复」RemoteInput action 留 1 个位置。
+     * 定稿取舍 —— 我自己说占 1 个 action，决策按钮平铺最多剩 2；放不下的选项点通知主体
+     * 进前台聊天流卡片（那里保留全部选项 + 自由输入框），不是功能丢失，只是横幅上的裁剪。
+     */
+    const val NOTIFICATION_DECISION_ACTION_LIMIT = NOTIFICATION_ACTION_LIMIT - 1
 
     /** 裁决当前应该用哪种载体。[pendingCount] <= 0 时一律 [AgentApprovalSurface.NONE]。 */
     fun decide(
         etaInForeground: Boolean,
         pendingCount: Int,
-        overlayUsable: Boolean,
     ): AgentApprovalSurface = when {
         pendingCount <= 0 -> AgentApprovalSurface.NONE
         etaInForeground -> AgentApprovalSurface.CHAT_INLINE
-        overlayUsable -> AgentApprovalSurface.OVERLAY
         else -> AgentApprovalSurface.NOTIFICATION
     }
 
     /**
-     * 悬浮层能不能用：`SYSTEM_ALERT_WINDOW` 已授予，或无障碍服务在跑
-     * （`TYPE_ACCESSIBILITY_OVERLAY` 不需要悬浮窗权限，与既有 AgentOverlay 的取型逻辑一致）。
-     *
-     * 这里只判断「有没有资格建窗口」；真正的建窗失败（ROM 拒绝、BadToken）由调用方按
-     * [decide] 的结果执行后，用 addView 的实际结果再降级一次。
-     */
-    fun overlayUsable(canDrawOverlays: Boolean, accessibilityOverlayReady: Boolean): Boolean =
-        canDrawOverlays || accessibilityOverlayReady
-
-    /**
-     * 方案 1：当前载体是否要补发 eta_attention HIGH 行动通知（heads-up + 直接决策按钮）。
-     *
-     * - [AgentApprovalSurface.CHAT_INLINE]：要。前台≠看得到卡片——用户常停在别的会话 /
-     *   设置页 / 任务中心，归属会话的聊天流卡片并不在屏上；只留 9400 无声汇总通知会"全盲等超时"。
-     * - [AgentApprovalSurface.NOTIFICATION]：要（本来就是通知兜底）。
-     * - [AgentApprovalSurface.OVERLAY]：不要（悬浮层已把卡片送到眼前，再弹通知是重复打扰；
-     *   addView 失败时会由调用方降级成 NOTIFICATION，那时才发）。
-     * - [AgentApprovalSurface.NONE]：不要。
-     *
-     * 抽成纯逻辑以便单测钉住"前台也强提醒"这个产品决定，避免执行层改着改着又退回弱提醒。
-     *
-     * ⚠️ 若将来把 [AgentApprovalSurface.CHAT_INLINE] 改回 `false`（前台不强提醒），
-     * 必须同步让 [ApprovalAttentionPresenter] 的 CHAT_INLINE 分支恢复
-     * `ApprovalNotificationBridge.setSuppressed(ctx, false)`：否则 9400 会停留在上一次的抑制态、
-     * 悬浮层又被关闭，前台将完全没有可见痕迹（比改回之前更糟）。单测已硬钉此值为 true。
+     * 是否要发 eta_attention HIGH 行动通知（heads-up + 决策按钮 + RemoteInput）。
+     * CHAT_INLINE 也要：前台不等于看得到卡片，只靠 9400 无声汇总通知会「全盲等超时」。
+     * 抽成纯逻辑以便单测钉住这个产品决定。
      */
     fun shouldEmitAttentionNotification(surface: AgentApprovalSurface): Boolean = when (surface) {
         AgentApprovalSurface.CHAT_INLINE, AgentApprovalSurface.NOTIFICATION -> true
-        AgentApprovalSurface.OVERLAY, AgentApprovalSurface.NONE -> false
+        AgentApprovalSurface.NONE -> false
     }
 
     /**
-     * 通知上直接做成按钮的选项 id（顺序即展示顺序，最多 [NOTIFICATION_ACTION_LIMIT] 个）。
-     *
-     * - 危险卡：允许一次 /（本次会话允许同类，CRITICAL 或无法归属会话时请求里本来就没有）/ 拒绝。
-     *   「拒绝并说明」必须带自由文本，通知按钮无法收集输入，因此不出现在通知上；
-     *   用户点通知主体可以进任务中心，或等悬浮层/聊天流里补说明。
-     * - 询问卡：模型给的选项 ≤ 3 时逐个做成按钮；否则返回空列表，调用方改用「打开处理」。
+     * 是否给这条通知预留一个「后台回复」RemoteInput action（占 1 个 action 位）。
+     * 危险卡恒 true：`allowFreeText=true`，打字 = 拒绝命令并给模型一句纠正建议；
+     * 询问卡看模型是否开 `allow_free_text`。不预留时决策按钮可用满 3 个位置。
      */
-    fun notificationActions(request: AgentApprovalRequest): List<String> = when (request.kind) {
-        AgentApprovalKind.ToolRisk -> buildList {
-            val ids = request.options.map { it.id }.toSet()
-            if (AgentApprovalOption.ALLOW_ONCE in ids) add(AgentApprovalOption.ALLOW_ONCE)
-            if (AgentApprovalOption.ALLOW_SESSION in ids) add(AgentApprovalOption.ALLOW_SESSION)
-            if (AgentApprovalOption.DENY in ids) add(AgentApprovalOption.DENY)
-        }.take(NOTIFICATION_ACTION_LIMIT)
+    fun replyActionReserved(request: AgentApprovalRequest): Boolean = request.allowFreeText
 
-        AgentApprovalKind.AskUser -> request.options
-            .map { it.id }
-            .distinct()
-            .takeIf { it.isNotEmpty() && it.size <= NOTIFICATION_ACTION_LIMIT }
-            .orEmpty()
+    /**
+     * 通知上的「决策按钮」选项 id（顺序即展示顺序）。已为「后台回复」让出 1 个位置，
+     * 因此本列表长度恒 ≤ [NOTIFICATION_DECISION_ACTION_LIMIT]（无回复位时才到
+     * [NOTIFICATION_ACTION_LIMIT]）。
+     *
+     * - 危险卡：只保留最关键的「允许一次 / 拒绝」两个。砍掉「本会话允许同类」是定稿取舍
+     *   （会话授权是便捷项、不是安全必需，点通知主体进前台卡片仍可点）；「拒绝并说明」由
+     *   「后台回复」打字位承载 —— 打字即拒绝 + 文字当纠正建议，语义与聊天流一致。
+     *   **绝不砍「拒绝」**：否则危险卡通知只剩放行按钮，是安全风险。
+     * - 询问卡：选项数在决策预算内就平铺，超了返回空列表（调用方改用「去确认」进前台，
+     *   或由「后台回复」打字位直接回答）。
+     */
+    fun notificationActions(request: AgentApprovalRequest): List<String> {
+        val ids = request.options.map { it.id }.toSet()
+        val budget = if (replyActionReserved(request)) {
+            NOTIFICATION_DECISION_ACTION_LIMIT
+        } else {
+            NOTIFICATION_ACTION_LIMIT
+        }
+        return when (request.kind) {
+            AgentApprovalKind.ToolRisk -> listOf(
+                AgentApprovalOption.ALLOW_ONCE,
+                AgentApprovalOption.DENY,
+            ).filter { it in ids }
+
+            AgentApprovalKind.AskUser -> request.options
+                .map { it.id }
+                .distinct()
+                .takeIf { it.isNotEmpty() && it.size <= budget }
+                .orEmpty()
+        }
     }
 
     /**
-     * 是否需要额外给一个「打开处理」按钮：通知上放不下全部选项（询问卡 > 3 个选项、
-     * 或只有自由输入没有任何选项）。危险卡永远有三个以内的按钮，不需要。
+     * 决策按钮一个都放不下时（选项过多 / 纯自由输入），给「去确认」直达前台聊天流卡片。
+     * 即便通知上已有「后台回复」打字位，仍保留一个进前台看完整上下文的入口。
      */
     fun needsOpenAction(request: AgentApprovalRequest): Boolean =
         notificationActions(request).isEmpty()
+
+    /**
+     * 防御性断言用：这条通知最终会放几个 action。纯逻辑，单测钉住「任何请求都 ≤3」，
+     * 避免以后加减 action 时把第 4 个悄悄塞进「更多」里等于没显示。
+     * 组成 = 决策按钮 + 后台回复（可选）+ 去确认（可选）。
+     */
+    fun notificationActionCount(request: AgentApprovalRequest): Int =
+        notificationActions(request).size +
+            (if (replyActionReserved(request)) 1 else 0) +
+            (if (needsOpenAction(request)) 1 else 0)
 }

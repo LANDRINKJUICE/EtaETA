@@ -4,6 +4,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.app.RemoteInput
 import android.content.Context
 import android.content.Intent
 import android.media.AudioAttributes
@@ -139,6 +140,36 @@ internal object AgentNotifications {
     }
 
     /**
+     * 审批通知主体：打开这张卡归属的前台会话（复用胶囊结果卡的 ACTION_OPEN_CONVERSATION_ID
+     * 深链），在那里能看到完整上下文、全部选项与自由输入框。conversationId 为空（后台唤醒 /
+     * 子代理弹的卡）时退回任务中心待确认区。
+     *
+     * [approvalId]：PendingIntent 只按 (requestCode, filterEquals) 区分，extras 不参与比较；
+     * 用审批 id 拼唯一 data URI，避免多张卡的 contentIntent 被 FLAG_UPDATE_CURRENT 互相覆盖。
+     */
+    fun approvalConversationIntent(
+        context: Context,
+        requestCode: Int,
+        conversationId: String?,
+        approvalId: String,
+    ): PendingIntent {
+        val intent = Intent(context, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        if (!conversationId.isNullOrBlank()) {
+            intent.action = MainActivity.ACTION_OPEN_CONVERSATION_ID
+            intent.putExtra(MainActivity.EXTRA_CONVERSATION_ID, conversationId)
+        } else {
+            intent.action = ACTION_OPEN_TASK_CENTER
+            intent.putExtra(EXTRA_TASK_CENTER_TAB, "APPROVALS")
+        }
+        intent.data = android.net.Uri.parse("eta://eta.approval/content/$approvalId")
+        return PendingIntent.getActivity(
+            context, requestCode, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+    }
+
+    /**
      * 通知主体：打开按 [source] + [conversationKey] 归档的会话。
      *
      * 无人值守的 run（语音、外部助手、自动任务、后台任务唤醒）不在用户的会话列表里，
@@ -261,13 +292,19 @@ internal object AgentNotifications {
     }
 
     /**
-     * 后台审批卡的行动通知（悬浮层不可用时的兜底，见
-     * [io.github.mangi.eta.agent.approval.AgentApprovalAttentionPolicy] 规则 3）。
+     * 审批卡的行动通知（后台是唯一载体；前台聊天流卡片之外也补发一条强提醒）。
      *
-     * 与 9400 汇总通知不同：每张卡一条、走 eta_attention HIGH channel（heads-up + 提示音），
-     * 带最多 [AgentApprovalAttentionPolicy] 裁决出的直接决策按钮；用户不打开 App 就能放行/拒绝。
-     * 决策按钮走显式广播 [io.github.mangi.eta.agent.approval.ApprovalAttentionReceiver]，
-     * 最终仍落到 Coordinator.resolve 单一入口。
+     * 每张卡一条、走 eta_attention HIGH channel（heads-up + 提示音），带：
+     * - 最多 [AgentApprovalAttentionPolicy] 裁决出的直接决策按钮（点选即决，不打开 App）；
+     * - 一个带 [RemoteInput] 的「后台回复」action：由 SystemUI 渲染输入框并托管键盘，
+     *   锁屏 / 后台都必弹 IME（悬浮审批卡做不到这点，故整条载体移除）。用户打的字在
+     *   [io.github.mangi.eta.agent.approval.ApprovalAttentionReceiver] 用
+     *   [RemoteInput.getResultsFromIntent] 取出，回灌 `resolve(requestId, FREE_TEXT_ONLY, text)`；
+     * - 决策按钮 / 回复都走显式广播 + Coordinator.resolve 单一决策入口。
+     *
+     * Android 折叠通知只展示前 3 个 action：policy 已为 RemoteInput 预留 1 个位置，
+     * 决策按钮最多 2 个，放不下的选项 / 看完整上下文点通知主体进前台聊天流卡片。
+     * 点主体不做成 action（HIG/M3：点主体就该干这事）。
      */
     fun showApprovalAttention(
         context: Context,
@@ -313,8 +350,13 @@ internal object AgentNotifications {
             }
             .ifBlank { title }
 
-        // 点通知主体：打开任务中心待确认区（在那里有完整的聊天流卡片与自由输入）。
-        val open = taskCenterIntent(context, RequestCodes.APPROVAL_CONTENT)
+        // 点通知主体：打开归属会话（完整上下文 + 全部选项 + 自由输入框）；无会话 id 回退任务中心。
+        val open = approvalConversationIntent(
+            context,
+            RequestCodes.APPROVAL_CONTENT,
+            request.conversationId,
+            request.id,
+        )
         val notification = builder(context, NotificationPolicy.CHANNEL_ATTENTION)
             .setContentTitle(title)
             .setContentText(body)
@@ -326,6 +368,7 @@ internal object AgentNotifications {
             // 敏感操作原文不上锁屏：只显示标题，解锁后才看得到正文与风险理由。
             .setVisibility(Notification.VISIBILITY_PRIVATE)
             .apply {
+                // 1) 直接决策按钮（点选即决）。
                 actions.forEach { optionId ->
                     val label = actionLabel(context, request, optionId)
                     val requestCode = NotificationPolicy.approvalActionRequestCode(request.id, optionId)
@@ -345,7 +388,53 @@ internal object AgentNotifications {
                     )
                     addAction(Notification.Action.Builder(null, label, pending).build())
                 }
-                // 选项过多或只有自由输入：放不下按钮，给一个"打开处理"直达任务中心。
+
+                // 2) 「后台回复」RemoteInput action（打字兜底，占 1 个 action 位）。
+                //    危险卡文案 = 拒绝并说明（打字即拒绝 + 纠正建议）；询问卡 = 我自己说。
+                if (policy.replyActionReserved(request)) {
+                    val remoteInput = RemoteInput.Builder(
+                        io.github.mangi.eta.agent.approval.ApprovalAttentionReceiver.RESULT_KEY,
+                    )
+                        .setLabel(
+                            if (danger) {
+                                context.getString(R.string.approval_reply_hint_danger)
+                            } else {
+                                context.getString(R.string.approval_reply_hint_ask)
+                            },
+                        )
+                        // 显式开自由输入（默认虽为 true，但部分 ROM 的通知直达回复要求显式设置
+                        // 才渲染输入框）；不加 setChoices，保持「点才展开打字」的最小交互。
+                        .setAllowFreeFormInput(true)
+                        .build()
+                    val replyIntent = io.github.mangi.eta.agent.approval.ApprovalAttentionReceiver
+                        .replyIntent(context, request.id)
+                        .setData(android.net.Uri.parse("eta://eta.approval/${request.id}/reply"))
+                    // RemoteInput 要求 PendingIntent 可变更（系统要把输入结果写进 Intent 的
+                    // extras），所以这里是全项目唯一用 FLAG_MUTABLE 的广播 PendingIntent。
+                    // 显式广播 + exported=false 接收者保证只有本 App 能收到，外部无法伪造放行。
+                    val replyPending = PendingIntent.getBroadcast(
+                        context,
+                        NotificationPolicy.approvalActionRequestCode(request.id, "reply"),
+                        replyIntent,
+                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
+                    )
+                    val replyLabel = context.getString(
+                        if (danger) R.string.approval_reply_action_danger else R.string.approval_reply_action_ask,
+                    )
+                    addAction(
+                        Notification.Action.Builder(null, replyLabel, replyPending)
+                            .addRemoteInput(remoteInput)
+                            .build(),
+                    )
+                }
+
+                // 3) 选项过多 / 纯自由输入：决策按钮放不下，给「去确认」。
+                //    needsOpenAction 为真 ⇒ notificationActions 为空 ⇒ 决策按钮为 0，
+                //    此时「后台回复 + 去确认」最多 2 个 action，恒不越 3 的上限；
+                //    与 policy.notificationActionCount 的计数口径保持一致，别再叠加多余条件。
+                //    落点用任务中心待确认区（那里必然列出全部 pending），不用会话深链：
+                //    后台唤醒 / 子代理产生的卡，其 conversationId 可能不在会话列表里，
+                //    进会话深链会静默落在空白页，而这条 action 是选项过多卡的唯一前台入口。
                 if (policy.needsOpenAction(request)) {
                     addAction(
                         Notification.Action.Builder(

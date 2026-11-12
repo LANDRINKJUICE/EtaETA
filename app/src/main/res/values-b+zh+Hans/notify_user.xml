@@ -12,6 +12,13 @@
     <string name="notify_action_review">去确认</string>
     <string name="notify_action_view_result">查看结果</string>
 
+
+    <!-- 审批通知「后台回复」RemoteInput：action 标签 + 输入框提示 -->
+    <string name="approval_reply_action_danger">拒绝并说明</string>
+    <string name="approval_reply_action_ask">我自己说</string>
+    <string name="approval_reply_hint_danger">告诉 Agent 应该怎么改</string>
+    <string name="approval_reply_hint_ask">输入你自己的答案</string>
+
     <string name="notify_approval_title">%1$d 个操作等待你确认</string>
     <string name="notify_approval_body">%1$d 个操作 Agent 已暂停执行。打开任务中心决定是否放行。</string>
 

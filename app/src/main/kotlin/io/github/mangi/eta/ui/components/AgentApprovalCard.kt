@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Block
@@ -26,7 +25,6 @@ import androidx.compose.material.icons.rounded.GppMaybe
 import androidx.compose.material.icons.rounded.HelpOutline
 import androidx.compose.material.icons.rounded.Send
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -34,13 +32,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -51,7 +44,6 @@ import com.itos.coui.effect.couiButtonFeedback
 import com.itos.coui.theme.CouiTheme
 import io.github.mangi.eta.R
 import io.github.mangi.eta.agent.approval.AgentApprovalKind
-import io.github.mangi.eta.agent.approval.ApprovalOverlayFocusPolicy
 import io.github.mangi.eta.agent.approval.AgentApprovalOption
 import io.github.mangi.eta.agent.approval.AgentApprovalRequest
 import io.github.mangi.eta.agent.approval.AgentApprovalOptionKind
@@ -80,14 +72,6 @@ internal fun AgentApprovalRequestCard(
     request: AgentApprovalRequest,
     onDecide: (optionId: String, freeText: String?) -> Unit,
     modifier: Modifier = Modifier,
-    /**
-     * 仅后台悬浮层传入。非 null 时表示卡片挂在 FLAG_NOT_FOCUSABLE 的浮窗里：
-     * - 用户表达输入意图（危险卡点「拒绝并说明」/ 询问卡点输入区）时回调宿主切窗口焦点
-     *   flag（boolean = 是否需要可聚焦），随后主动 requestFocus + 弹 IME；
-     * - 意图消失 / 决策 / 卡片消失时回调还原 flag（否则浮窗里的 BasicTextField 拿不到焦点）。
-     * 默认 null = 聊天流 / 任务中心：键盘行为完全沿用系统默认，不主动弹、不抢焦点。
-     */
-    overlayComposerHost: ((Boolean) -> Unit)? = null,
 ) {
     val colors = MiuixTheme.colorScheme
     val isCoui = LocalUiStyle.current == AppearanceUiStyle.COUI
@@ -99,48 +83,12 @@ internal fun AgentApprovalRequestCard(
         mutableStateOf(secondsUntilExpiry(request.expiresAtMillis))
     }
 
-    // 仅悬浮层卡片启用：composer 需要输入时让浮窗临时可聚焦（去 FLAG_NOT_FOCUSABLE），
-    // 否则 BasicTextField 拿不到焦点、IME 弹不出来（用户实测 BUG）。
-    // 聊天流/任务中心 overlayComposerHost==null，下面整块不生效，键盘行为零变化。
-    //
-    // 统一信号 focusWanted：必须「composer 可见」且「用户已表达输入意图」才切可聚焦。
-    // 这是为避免询问卡 composer 默认可见时，浮窗整张卡存活期间都抢着下层 App 的输入焦点
-    //（会收掉别人正在用的 IME、返回键失效）。危险卡的意图 = 点「拒绝并说明」(composerOpen)；
-    // 询问卡的意图 = 点一下 composer 输入区 (inputRequested，见 composer Box 的 pointerInput)。
-    val composerVisible = ApprovalOverlayFocusPolicy.composerVisible(danger, request.allowFreeText, composerOpen)
-    var inputRequested by remember(request.id) { mutableStateOf(false) }
-    // 每次点输入区都自增，让 LaunchedEffect 重放一次 keyboard.show()：
-    // 用户按 back 收掉 IME 后，再点输入框仍能重新弹键盘（focusWanted 不再变化）。
-    var inputTapCount by remember(request.id) { mutableStateOf(0) }
-    val composerFocusRequester = remember { FocusRequester() }
-    val keyboard = LocalSoftwareKeyboardController.current
-    if (overlayComposerHost != null) {
-        val host = overlayComposerHost
-        val focusWanted = ApprovalOverlayFocusPolicy.focusWanted(
-            composerVisible = composerVisible,
-            danger = danger,
-            composerOpen = composerOpen,
-            inputRequested = inputRequested,
-        )
-        // 意图出现 -> 窗口可聚焦（清 NOT_FOCUSABLE），延迟一帧等 updateViewLayout 生效后
-        // 主动 requestFocus + 弹 IME；意图消失 / 卡片消失 -> 还原不可聚焦并收键盘。
-        // 两种卡走同一条确定性路径，不靠焦点回调兜底。
-        LaunchedEffect(focusWanted, inputTapCount, request.id) {
-            host(focusWanted)
-            if (focusWanted) {
-                delay(180)
-                runCatching { composerFocusRequester.requestFocus() }
-                keyboard?.show()
-            } else {
-                keyboard?.hide()
-            }
-        }
-        // 卡片消失（决策 / 载体切换 / 浮窗 detach）务必把浮窗还原成不可聚焦，
-        // 避免窗口继续持有输入焦点、吞掉下层 App 的返回手势。
-        DisposableEffect(request.id) {
-            onDispose { runCatching { host(false) } }
-        }
-    }
+    // composer 可见性（前台聊天流 / 任务中心唯一保留的逻辑）：
+    // 危险卡要点开了「拒绝并说明」才展开；询问卡只要 allowFreeText 就默认展开。
+    // 后台悬浮审批卡已在 2026-11-12 定稿移除（TYPE_ACCESSIBILITY_OVERLAY 拿不到 IME 焦点，
+    // 系统级限制），后台打字改由通知 RemoteInput 承接，故浮层焦点/弹键盘那套整块删除；
+    // 前台输入框仍走系统默认，不主动弹、不抢焦点。
+    val composerVisible = request.allowFreeText && (composerOpen || !danger)
     LaunchedEffect(request.id, request.expiresAtMillis) {
         // 倒计时到 0 后停掉 tick，避免过期卡片继续每秒重组。
         while (true) {
@@ -323,35 +271,6 @@ internal fun AgentApprovalRequestCard(
                         .weight(1f)
                         .heightIn(min = 36.dp)
                         .background(colors.surfaceContainerHigh, RoundedCornerShape(10.dp))
-                        .then(
-                            if (overlayComposerHost != null) {
-                                // 放在 background 之后 / padding 之前，覆盖整个可视输入框（含内边距圈）。
-                                // 询问卡 composer 默认可见但窗口初始 NOT_FOCUSABLE（仍能收触摸）：
-                                // 第一下点击就是用户的输入意图，置 inputRequested 触发切可聚焦+弹 IME；
-                                // inputTapCount++ 让每次点击都重放一次 show（back 收键盘后可再点重弹）。
-                                // 危险卡的意图已由 composerOpen 表达，无需在此重复。
-                                Modifier.pointerInput(Unit) {
-                                    // BasicTextField 的点击聚焦会消费 Main pass 的 down；原先的
-                                    // detectTapGestures 默认 requireUnconsumed=true，点文本区域时外层
-                                    // 永远收不到 → inputRequested 恒 false → 窗口不切可聚焦 → IME 不弹。
-                                    // 改在 Initial pass（早于子节点消费）抓 down：awaitEachGesture 保证
-                                    // 每轮手势只跑一次 block；Initial pass 不消费事件，子节点 BasicTextField
-                                    // 在 Main pass 仍照常聚焦。用项目既有可编译的 awaitPointerEvent(Initial)
-                                    // 写法，不依赖手势 API 新参数。手机触摸下每轮首事件即 down，无需额外
-                                    // 过滤（避免引入项目无先例、需额外 import 的手势扩展函数）。
-                                    // 两种卡都自增 inputTapCount → 重放 host(true)/弹 IME，让「按 back
-                                    // 收键盘后再点输入框」在危险卡也生效（危险卡意图由 composerOpen 表达，
-                                    // 无需置 inputRequested，但重放信号必须给）。
-                                    awaitEachGesture {
-                                        awaitPointerEvent(PointerEventPass.Initial)
-                                        if (!danger) inputRequested = true
-                                        inputTapCount++
-                                    }
-                                }
-                            } else {
-                                Modifier
-                            }
-                        )
                         .padding(horizontal = 10.dp, vertical = 8.dp),
                     contentAlignment = Alignment.CenterStart,
                 ) {
@@ -375,15 +294,7 @@ internal fun AgentApprovalRequestCard(
                         onValueChange = { freeText = it.take(1_000) },
                         textStyle = MiuixTheme.textStyles.footnote1.copy(color = colors.onSurface),
                         cursorBrush = SolidColor(colors.primary),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .then(
-                                if (overlayComposerHost != null) {
-                                    Modifier.focusRequester(composerFocusRequester)
-                                } else {
-                                    Modifier
-                                }
-                            ),
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
                 Spacer(modifier = Modifier.width(8.dp))
