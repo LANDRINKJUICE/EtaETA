@@ -1658,4 +1658,10 @@
 
     <string name="tool_notify_user">主动提醒</string>
     <string name="tool_notify_user_description">后台任务或自动任务有值得关注的结果时，主动给你发一条系统通知。</string>
+  <string name="memory_more_settings">更多设置</string>
+  <string name="memory_auto_expire_title">记忆自动过期</string>
+  <string name="memory_auto_expire_summary">分割线以下超过 90 天未核对的记忆节自动移入 # 归档，纯本地整理、不删除数据。</string>
+  <string name="memory_pinned_label">每轮全量注入</string>
+  <string name="memory_save_conflict">记忆已在别处变更，请重新进入页面后再保存。</string>
+  <string name="memory_no_divider_hint">提示：在顶部内容下方另起一行画 --- ，即可对其下记忆启用日期与自动过期约束。</string>
 </resources>

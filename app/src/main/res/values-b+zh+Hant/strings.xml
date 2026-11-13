@@ -1654,4 +1654,10 @@
     <string name="approval_reason_scheduled_task_create">這會建立一條自動任務：下面的指令將在你不在場的情況下，到點被自動執行。</string>
     <string name="tool_notify_user">主動提醒</string>
     <string name="tool_notify_user_description">後台任務或自動任務有值得關注的結果時，主動給你發一則系統通知。</string>
+  <string name="memory_more_settings">更多設定</string>
+  <string name="memory_auto_expire_title">記憶自動過期</string>
+  <string name="memory_auto_expire_summary">分隔線以下超過 90 天未核對的記憶節自動移入 # 歸檔，純本機整理、不刪除資料。</string>
+  <string name="memory_pinned_label">每輪全量注入</string>
+  <string name="memory_save_conflict">記憶已在別處變更，請重新進入頁面後再儲存。</string>
+  <string name="memory_no_divider_hint">提示：在頂部內容下方另起一行畫 --- ，即可對其下記憶啟用日期與自動過期約束。</string>
 </resources>

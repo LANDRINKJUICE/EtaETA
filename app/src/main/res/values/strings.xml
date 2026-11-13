@@ -1677,4 +1677,10 @@
 
     <string name="tool_notify_user">Send a proactive notification</string>
     <string name="tool_notify_user_description">Let the agent send a system notification when a background or scheduled task has something worth your attention.</string>
+  <string name="memory_more_settings">More settings</string>
+  <string name="memory_auto_expire_title">Auto-expire memory</string>
+  <string name="memory_auto_expire_summary">Move sections below the divider that have not been verified for over 90 days into # Archive. Local only, keeps data.</string>
+  <string name="memory_pinned_label">Always injected</string>
+  <string name="memory_save_conflict">Memory changed elsewhere; please re-open the page and retry.</string>
+  <string name="memory_no_divider_hint">Tip: add a line with --- below the top section to enable date / auto-expire rules for the rest of the notes.</string>
 </resources>

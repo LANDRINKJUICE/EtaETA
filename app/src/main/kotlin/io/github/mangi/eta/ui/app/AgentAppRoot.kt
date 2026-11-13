@@ -764,6 +764,7 @@ fun AgentAppRoot(
                             is AgentMemoryAction.ToggleRelevance -> memory.setRelevanceEnabled(action.enabled)
                             is AgentMemoryAction.ToggleDistillation -> memory.setDistillationEnabled(action.enabled)
                             is AgentMemoryAction.ToggleSemanticRecall -> memory.setSemanticRecallEnabled(action.enabled)
+                            is AgentMemoryAction.ToggleAutoExpire -> memory.setAutoExpireEnabled(action.enabled)
                             is AgentMemoryAction.DraftChanged -> memory.updateMemoryDraft(action.content)
                             AgentMemoryAction.Save -> memory.saveMemory()
                             AgentMemoryAction.Clear -> memory.clearMemory()

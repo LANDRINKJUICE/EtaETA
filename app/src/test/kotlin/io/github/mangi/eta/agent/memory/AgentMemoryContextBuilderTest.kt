@@ -41,13 +41,14 @@ class AgentMemoryContextBuilderTest {
     }
 
     @Test
-    fun detailsWithoutCoreHeadingAreIndexedButNotAutomaticallyInjected() {
+    fun detailsWithoutCoreHeadingAreInjectedViaFallbackInsteadOfSilentlyEmpty() {
+        // 2026-11-13 改造：没有 # 核心记忆 时不再静默空转，H1 兜底把第一个 H1 区整体常驻注入。
         val context = AgentMemoryContextBuilder.build(
             snapshot("# 项目\n只应按需读取的细节"),
             256_000,
         )
 
-        assertEquals("", context.coreContent)
+        assertEquals("# 项目\n只应按需读取的细节", context.coreContent)
         assertEquals("# 项目", context.headingIndex)
     }
 
@@ -140,6 +141,62 @@ class AgentMemoryContextBuilderTest {
         assertTrue(context.coreTruncated)
         assertEquals("", context.injectedSections)
         assertEquals(0, context.injectedBudgetChars)
+    }
+
+    @Test
+    fun pinnedTopIsInjectedUnconditionallyWithoutQuery() {
+        val content = "我的铁律：随便写、没格式、没日期\n第二条也照进\n\n---\n\n# 核心记忆\n核心内容\n# 细节\n## 部署\n端口 8080"
+        val context = AgentMemoryContextBuilder.build(snapshot(content), 128_000)
+        assertTrue(context.coreContent.contains("我的铁律：随便写、没格式、没日期"))
+        assertTrue(context.coreContent.contains("第二条也照进"))
+        assertTrue(context.injectedSections.isEmpty())
+    }
+
+    @Test
+    fun pinnedTopNeverSilentlyEmptyWhenFileNonEmpty() {
+        val content = "只有顶部一段自由文本\n---\n## 某节\n2026-11-13 内容"
+        val context = AgentMemoryContextBuilder.build(snapshot(content), 128_000)
+        assertTrue(context.coreContent.isNotBlank())
+        assertTrue(context.coreContent.contains("只有顶部一段自由文本"))
+    }
+
+    @Test
+    fun pinnedTopIsIndependentOfQuery() {
+        val content = "顶部固定内容\n---\n## 部署\n2026-11-13 端口 8080"
+        val a = AgentMemoryContextBuilder.build(snapshot(content), 128_000, "部署端口")
+        val b = AgentMemoryContextBuilder.build(snapshot(content), 128_000, "完全无关的话题")
+        assertEquals(a.coreContent, b.coreContent)
+        assertTrue(a.coreContent.contains("顶部固定内容"))
+    }
+
+    @Test
+    fun pinnedTopCoexistsWithLegacyCore() {
+        val content = "顶部\n---\n# 核心记忆\n核心\n# 背景\n## 部署\n2026-11-13 端口"
+        val context = AgentMemoryContextBuilder.build(snapshot(content), 128_000)
+        assertTrue(context.coreContent.contains("顶部"))
+        assertTrue(context.coreContent.contains("核心"))
+        assertFalse(context.coreContent.contains("# 背景"))
+    }
+
+    @Test
+    fun singleH1FallbackInjectsWholeFileNotJustHeading() {
+        // 复审③：只有一个 H1 时兜底取整份，不能只剩标题行
+        val content = "# 项目\n第一段\n## 关系\n家人\n## 偏好\n清淡"
+        val context = AgentMemoryContextBuilder.build(snapshot(content), 128_000)
+        assertTrue(context.coreContent.contains("第一段"))
+        assertTrue(context.coreContent.contains("家人"))
+        assertTrue(context.coreContent.contains("清淡"))
+    }
+
+    @Test
+    fun pinnedFallbackSectionIsNotAlsoInjectedAsRelevant() {
+        // 复审④：分支③常驻区既全量注入，就不能再作为相关性候选被注入一次
+        val content = "# 工作规范\n## 交付\n2026-11-13 出包走 SOP\n# 项目\n## 当前状态\nsome"
+        val context = AgentMemoryContextBuilder.build(snapshot(content), 128_000, "交付 出包 SOP")
+        // 常驻区（第一个 H1 区）已在 coreContent 里
+        assertTrue(context.coreContent.contains("## 交付"))
+        // 相关性注入里不能再出现 ## 交付（避免重复）
+        assertFalse(context.injectedSections.contains("## 交付"))
     }
 
     private fun snapshot(content: String): AgentMemorySnapshot = AgentMemorySnapshot(

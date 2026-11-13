@@ -68,6 +68,20 @@ class EtaApp : Application(), XposedServiceHelper.OnServiceListener {
         }
         PredictiveBackController.apply(applicationInfo, predictiveBackEnabled)
         AgentMemoryRepository.init(this)
+        // 记忆自动过期：启动时按开关做一次本地整理（超阈值节移入 # 归档），纯本地、不发模型回合。
+        applicationScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                AgentMemoryRepository.archiveExpiredIfEnabled(
+                    enabled = io.github.mangi.eta.config.Prefs.isEnabled(
+                        io.github.mangi.eta.config.Prefs.Keys.AGENT_MEMORY_AUTO_EXPIRE_ENABLED,
+                    ),
+                )
+            }.onFailure { throwable ->
+                AndroidAgentLogger.warnThrottled("agent_memory_expiry_startup_failed") {
+                    "Memory auto-expire on startup failed: type=${throwable.javaClass.simpleName}"
+                }
+            }
+        }
         // 用量统计：默认开启、纯本地；埋点异步落盘，初始化失败也不影响主流程。
         AgentUsageRepository.initialize(this)
         ProviderRepository.init(this)

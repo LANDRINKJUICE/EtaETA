@@ -48,7 +48,7 @@ internal object AgentMemoryDistiller {
     fun instruction(): String = buildString {
         appendLine("本轮任务已经结束。现在只做一次极短的记忆沉淀判断，不要重复执行任务、不要继续操作手机或读取数据。")
         appendLine("只有当本轮出现了跨对话仍有价值的稳定事实、用户偏好或纠正、重要关系、进行中的项目、确认过的环境与约定时，才用 memory_write 写入 MEMORY.md：")
-        appendLine("优先 mode=upsert_section 更新已有主题（纠正过期事实），其次 mode=append 新增一节；单节正文不超过 3500 字符。")
+        appendLine("优先 mode=upsert_section 更新已有主题（纠正过期事实），其次 mode=append 新增一节；单节正文不超过 3500 字符、结论先行、不写废话。分割线以下新增/改动的节须带日期：正文写 YYYY-MM-DD，或依赖 upsert/append 自动生成的 created/verified 元数据即可（二者都满足，且作为自动过期的锚）。不要制造同名标题。")
         appendLine("没有值得长期保留的内容就直接结束回复，不要写，也不要为了有产出而编造或复述本轮的一次性结果。")
         appendLine("禁止写入密钥、token、密码、验证码、证件号、银行卡号等凭据与敏感号码；也不写一次性请求、临时状态或与用户无关的推理过程。")
         append("最多调用 ${MAX_TOOL_CALLS} 次工具。完成后用一句话说明写了哪一节；没有写就回答“无需沉淀”。")

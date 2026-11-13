@@ -69,6 +69,12 @@ internal class AgentMemoryStore(
     rootDir: File,
     /** 元数据时间戳来源；测试注入固定日期，运行时取当天。 */
     private val today: () -> LocalDate = { LocalDate.now() },
+    /**
+     * 是否对「分割线以下」套记忆硬约束（日期/同名/字数）。现实 MEMORY.md = true；
+     * 角色剧情记忆 = false（剧情里常见 `---` 场景分隔，不该被现实记忆的日期约束误拦），
+     * 但敏感串扫描始终开启。
+     */
+    private val enforceSectionRules: Boolean = true,
 ) {
     private val memoryDir = File(rootDir, DIRECTORY_NAME)
     private val atomicFile = AtomicFile(File(memoryDir, FILE_NAME))
@@ -110,19 +116,36 @@ internal class AgentMemoryStore(
             is AgentMemoryMutation.UpsertSection -> upsertSection(current, mutation)
             is AgentMemoryMutation.Clear -> ""
         }
-        writeLocked(updated)
+        writeLocked(updated, current.content)
         AgentMemoryWriteResult.Success(snapshotOf(updated))
     }
 
     fun replaceAll(content: String): AgentMemorySnapshot = synchronized(lock) {
-        writeLocked(content)
+        writeLocked(content, snapshotLocked().content)
         snapshotOf(content)
     }
 
     fun replaceAllIfRevision(content: String, revision: String): AgentMemoryWriteResult = synchronized(lock) {
         val current = snapshotLocked()
         if (current.revision != revision) return@synchronized AgentMemoryWriteResult.Conflict(current)
-        writeLocked(content)
+        writeLocked(content, current.content)
+        AgentMemoryWriteResult.Success(snapshotOf(content))
+    }
+
+    /**
+     * 受信任的整篇替换（自动过期整理专用）：带 revision 乐观锁，且只扫敏感串、
+     * 不吃「分割线以下」的用户写入约束（整理是系统内务，不该被日期/重名规则拦）。
+     * 冲突时放弃本轮（下次启动/开开关再整理），不覆盖期间发生的新写入。
+     */
+    fun replaceAllTrustedIfRevision(content: String, revision: String): AgentMemoryWriteResult = synchronized(lock) {
+        val current = snapshotLocked()
+        if (current.revision != revision) return@synchronized AgentMemoryWriteResult.Conflict(current)
+        // 只复用敏感串闸门（enforceSectionRules=false），其余 section 约束跳过。
+        AgentMemoryValidator.validate(content, current.content, enforceSectionRules = false)?.let { violation ->
+            throw AgentMemoryException(code = violation.code, message = violation.message)
+        }
+        // 绕过 writeLocked 的 section 校验，但仍走同一套文件上限/原子写。
+        writeRawLocked(content)
         AgentMemoryWriteResult.Success(snapshotOf(content))
     }
 
@@ -148,7 +171,18 @@ internal class AgentMemoryStore(
         return snapshotOf(content, bytes)
     }
 
-    private fun writeLocked(content: String) {
+    private fun writeLocked(content: String, oldContent: String) {
+        // 单一咽喉：所有写入路径（手编保存 / 清空 / memory_write / 自动沉淀 / 角色记忆 /
+        // replaceAllIfRevision）都会经过这里。分割线以下套硬约束，顶部区豁免；
+        // 增量校验：只卡本次新增/改动的节，存量历史节放行（不追溯老数据）。
+        AgentMemoryValidator.validate(content, oldContent, enforceSectionRules)?.let { violation ->
+            throw AgentMemoryException(code = violation.code, message = violation.message)
+        }
+        writeRawLocked(content)
+    }
+
+    /** 只做文件上限与原子写，不含业务校验；供受信任的内务写入复用。 */
+    private fun writeRawLocked(content: String) {
         val bytes = content.toByteArray(Charsets.UTF_8)
         if (bytes.size > MAX_FILE_BYTES) {
             throw AgentMemoryException(
@@ -429,6 +463,35 @@ internal object AgentMemoryRepository {
     fun replaceAll(content: String): AgentMemorySnapshot {
         ensureInitialized()
         return store.replaceAll(content)
+    }
+
+    /** 带 revision 乐观锁的整篇替换（UI 编辑保存用，避免覆盖进行中 run 的写入）。 */
+    fun replaceAllIfRevision(content: String, revision: String): AgentMemoryWriteResult {
+        ensureInitialized()
+        return store.replaceAllIfRevision(content, revision)
+    }
+
+    /**
+     * 启动时执行一次自动过期整理：开关打开才动；把分割线以下超阈值天数的整节移入 # 归档。
+     * 返回是否发生了改动（供调用方决定是否刷新 UI / 记日志）。纯本地、不发模型回合。
+     */
+    fun archiveExpiredIfEnabled(
+        enabled: Boolean,
+        now: java.time.LocalDate = java.time.LocalDate.now(),
+    ): Boolean {
+        if (!enabled) return false
+        ensureInitialized()
+        // 记忆总开关关着时不整理、不写盘。
+        if (runCatching { kotlinx.coroutines.runBlocking { isEnabled() } }.getOrDefault(true).not()) return false
+        val current = store.snapshot()
+        val updated = io.github.mangi.eta.agent.memory.AgentMemoryExpiry
+            .archiveExpired(current.content, now)
+        if (updated == current.content) return false
+        // 带 revision 乐观锁的受信任写入：冲突就放弃本轮（下次再整理），不覆盖期间的新写入。
+        return when (store.replaceAllTrustedIfRevision(updated, current.revision)) {
+            is AgentMemoryWriteResult.Success -> true
+            is AgentMemoryWriteResult.Conflict -> false
+        }
     }
 
     /** 结构化节视图，供相关性注入与语义检索共用。 */

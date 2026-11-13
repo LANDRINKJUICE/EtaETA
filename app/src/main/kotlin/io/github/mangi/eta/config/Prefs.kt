@@ -63,6 +63,8 @@ internal object Prefs {
         const val AGENT_MEMORY_SEMANTIC_RECALL_ENABLED = "agent_memory_semantic_recall_enabled"
         /** 四期：语义检索使用的 embedding 模型名（OpenAI 兼容 /embeddings）。 */
         const val AGENT_MEMORY_EMBEDDING_MODEL = "agent_memory_embedding_model"
+        /** 分割线以下按日期自动过期、到期移入 # 归档（阈值固定 90 天，默认关闭）。 */
+        const val AGENT_MEMORY_AUTO_EXPIRE_ENABLED = "agent_memory_auto_expire_enabled"
         /** 用量统计：只记录请求计数与 token 数量等元数据，纯本地、默认开启。 */
         const val AGENT_USAGE_STATS_ENABLED = "agent_usage_stats_enabled"
         /**
@@ -107,6 +109,7 @@ internal object Prefs {
             AGENT_MEMORY_RELEVANCE_ENABLED to true,
             AGENT_MEMORY_DISTILL_ENABLED to false,
             AGENT_MEMORY_SEMANTIC_RECALL_ENABLED to false,
+            AGENT_MEMORY_AUTO_EXPIRE_ENABLED to false,
             AGENT_USAGE_STATS_ENABLED to true,
             AGENT_JOB_WAKEUP_ENABLED to true,
         )
@@ -126,6 +129,7 @@ internal object Prefs {
             AGENT_MEMORY_RELEVANCE_ENABLED,
             AGENT_MEMORY_DISTILL_ENABLED,
             AGENT_MEMORY_SEMANTIC_RECALL_ENABLED,
+            AGENT_MEMORY_AUTO_EXPIRE_ENABLED,
             AGENT_USAGE_STATS_ENABLED,
             AGENT_JOB_WAKEUP_ENABLED,
         )

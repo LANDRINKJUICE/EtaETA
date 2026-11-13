@@ -45,8 +45,15 @@ internal object AgentMemoryContextBuilder {
     /**
      * 组装注入内容。
      *
+     * 注入分两块，互不干扰：
+     * - **顶部块（无条件全量）**：文件第 1 行到第一条独立 `---` 分割线之间的原文，
+     *   每轮必进、与 [query] 无关、不受相关性打分与开关影响。按「位置」切而非按标题名找，
+     *   因此只要文件非空就一定有内容，结构上杜绝「找不到 `# 核心记忆` 就静默空转」。
+     *   顶部区归用户自由书写（也可由 Agent 代写），格式/日期校验均豁免。
+     * - **核心节 + 相关节**：沿用既有 `# 核心记忆` core 提取与 top-k 相关性注入，
+     *   仅在顶部块之外生效，行为保持不变。
+     *
      * [query] 为会话最新一条用户消息；为空时不注入非核心节（关闭相关性注入，或本轮没有用户输入）。
-     * 核心节优先占用预算，剩余预算按相关度与新鲜度分给 top-k 非核心节。
      */
     fun build(
         snapshot: AgentMemorySnapshot,
@@ -55,9 +62,46 @@ internal object AgentMemoryContextBuilder {
         now: LocalDate = LocalDate.now(),
         maxSections: Int = MAX_INJECTED_SECTIONS,
     ): AgentMemoryContext {
+        val layout = io.github.mangi.eta.data.repository.MemoryLayout
         val coreBudget = coreBudgetChars(contextWindow)
-        val core = extractCore(snapshot.content)
-        val headings = snapshot.content.lineSequence()
+        val content = snapshot.content
+
+        // 兼容优先 + 空转根治：
+        // ① 有用户画的分割线 → 顶部区（分割线前）无条件全量注入，下面走旧 core/相关节逻辑。
+        // ② 没有分割线但文件本来就有 # 核心记忆 → 完全走旧路径，既有行为零回归。
+        // ③ 既无分割线、又没有 # 核心记忆（旧 core 会空转）→ 用 H1 兜底把第一个 H1 区整体
+        //    作为常驻区，保证每轮都有内容注入；不要求用户先画分割线、不迁移数据。
+        val hasDivider = layout.dividerIndex(content) >= 0
+        var pinned: String
+        val remainder: String
+        val legacyCore: String
+        // 分支③需把常驻区行排除出相关性候选（否则既全量注入又参与打分，重复注入）。
+        var excludeRange: IntRange? = null
+        if (hasDivider) {
+            pinned = layout.pinnedTopByDivider(content)
+            remainder = layout.remainderAfterDivider(content)
+            legacyCore = extractCore(remainder)
+            // 开头就是分割线（顶部区为空）：退回兜底，避免空转复发。
+            if (pinned.isEmpty()) {
+                val fallback = layout.pinnedTopFallback(remainder)
+                if (fallback.isNotBlank()) {
+                    // 此时兜底内容来自 remainder 开头，把它作为常驻区补上。
+                    pinned = fallback
+                }
+            }
+        } else if (layout.hasCoreHeading(content)) {
+            pinned = ""
+            remainder = content
+            legacyCore = extractCore(content)
+        } else {
+            pinned = layout.pinnedTopFallback(content)
+            remainder = content
+            legacyCore = ""
+            val count = layout.pinnedTopFallbackLineCount(content)
+            if (count > 0) excludeRange = 1..count
+        }
+        val core = joinPinnedAndCore(pinned, legacyCore)
+        val headings = content.lineSequence()
             .filter { line -> HEADING.matches(line.trimEnd()) }
             .joinToString("\n")
             .take(MAX_HEADING_INDEX_CHARS)
@@ -66,12 +110,13 @@ internal object AgentMemoryContextBuilder {
             Injected()
         } else {
             injectSections(
-                content = snapshot.content,
+                content = remainder,
                 query = query,
                 now = now,
                 maxSections = maxSections,
                 budget = minOf(MAX_INJECTED_CHARS, remaining),
-                coreRange = extractCoreRange(snapshot.content),
+                coreRange = excludeRange
+                    ?: if (hasDivider || layout.hasCoreHeading(content)) extractCoreRange(remainder) else null,
             )
         }
         return AgentMemoryContext(
@@ -87,6 +132,12 @@ internal object AgentMemoryContextBuilder {
             injectedTruncated = injected.truncated,
             injectedBudgetChars = injected.budget,
         )
+    }
+
+    private fun joinPinnedAndCore(pinned: String, legacyCore: String): String = when {
+        pinned.isEmpty() -> legacyCore
+        legacyCore.isEmpty() -> pinned
+        else -> pinned + "\n\n" + legacyCore
     }
 
     fun coreBudgetChars(contextWindow: Int?): Int {
