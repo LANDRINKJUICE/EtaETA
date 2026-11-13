@@ -117,6 +117,8 @@ internal object NotificationPolicy {
         val priority: Priority,
         /** 是否附带提示音（仅重要级）。 */
         val withSound: Boolean,
+        /** 发起该通知的 UI 会话 id；非空时通知栏回复回到这个会话，null 表示后台/归档来源（不挂回复）。 */
+        val conversationId: String? = null,
     )
 
     /**
@@ -140,6 +142,7 @@ internal object NotificationPolicy {
         notificationKey: String = "$rawTitle|$rawBody",
         importanceDefault: Int,
         importanceHigh: Int,
+        conversationId: String? = null,
     ): Proactive {
         val priority = if (rawPriority?.trim()?.equals("important", ignoreCase = true) == true) {
             Priority.IMPORTANT
@@ -158,8 +161,16 @@ internal object NotificationPolicy {
         } else {
             ""
         }
+        // 把会话 id 并入散列 key：不同会话即使标题/正文相同，也各自一条通知、各自的回复按钮，
+        // 不会被「同主题原地更新」互相覆盖、回复串到另一个会话（多会话「各自对应」的关键）。
+        val normalizedConversationId = conversationId?.trim()?.takeIf { it.isNotBlank() }
+        val effectiveKey = if (normalizedConversationId == null) {
+            notificationKey
+        } else {
+            "$notificationKey|$normalizedConversationId"
+        }
         return Proactive(
-            notificationId = proactiveId(notificationKey),
+            notificationId = proactiveId(effectiveKey),
             channelId = if (priority == Priority.IMPORTANT) CHANNEL_ATTENTION else CHANNEL_PROACTIVE,
             importance = if (priority == Priority.IMPORTANT) importanceHigh else importanceDefault,
             title = title,
@@ -168,6 +179,7 @@ internal object NotificationPolicy {
             context = context,
             priority = priority,
             withSound = priority == Priority.IMPORTANT,
+            conversationId = conversationId?.trim()?.takeIf { it.isNotBlank() },
         )
     }
 
@@ -193,6 +205,17 @@ internal object NotificationPolicy {
     /** 单卡场景的兼容 hash（Presenter 多卡时用 [allocateApprovalNotificationId] 占用检测分配）。 */
     fun approvalAttentionId(requestId: String): Int =
         APPROVAL_ATTENTION_BASE + (stableHash(requestId) % APPROVAL_ATTENTION_RANGE)
+
+    /**
+     * notify_user 通知栏「回复」action 的 PendingIntent requestCode 段：6700..6749。
+     * 必须按通知 ID 分散：PendingIntent 只按 (requestCode, filterEquals) 区分，extras 不参与比较；
+     * 与既有 6001/6002/6010/6020/6030、6200..6299（唤醒）、6400..6699（审批按钮）全部不相交。
+     * 段值同步登记在 NotificationIdRegistry.allRequestCodeSegments（见 notify_user_reply）。
+     */
+    private const val NOTIFY_REPLY_REQUEST_BASE = 6_700
+    private const val NOTIFY_REPLY_REQUEST_RANGE = 50
+    fun notifyReplyRequestCode(notificationId: Int): Int =
+        NOTIFY_REPLY_REQUEST_BASE + kotlin.math.abs(notificationId % NOTIFY_REPLY_REQUEST_RANGE)
 
     /** 行动通知 ID 段起点与宽度：Presenter 做碰撞占用检测时按此分配，避免两张卡 hash 到同一 ID。 */
     fun approvalAttentionBase(): Int = APPROVAL_ATTENTION_BASE

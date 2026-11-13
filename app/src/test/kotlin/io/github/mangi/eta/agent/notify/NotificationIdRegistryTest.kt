@@ -103,6 +103,17 @@ class NotificationIdRegistryTest {
     }
 
     @Test
+    fun `notify user reply request codes stay in their own segment`() {
+        // 通知 ID 段 9300..9349 经 notifyReplyRequestCode 映射到 6700..6749，
+        // 与审批按钮 6400..6699、唤醒 6200..6299 全不相交（防漂移）。
+        val codes = (9_300..9_349).map { NotificationPolicy.notifyReplyRequestCode(it) }
+        assertTrue(codes.all { it in 6_700..6_749 })
+        assertTrue(codes.toSet().size == 50)
+        assertTrue(codes.none { it in 6_400..6_699 })
+        assertTrue(codes.none { it in 6_200..6_299 })
+    }
+
+    @Test
     fun `known single request codes are registered`() {
         // M1 回归：这几个单值 rc 以前散落在各模块、没进表，容易与新增段撞车。
         val registered = NotificationIdRegistry.allRequestCodeSegments.flatMap { it.range.toList() }.toSet()

@@ -127,7 +127,40 @@ internal object AgentNotifications {
         )
     }
 
-    /** 通知主体 / action：打开任务中心指定分区（默认待确认区 APPROVALS）。 */
+    /**
+     * notify_user 通知栏「回复」action 的 PendingIntent：RemoteInput 把用户打的字写进 Intent，
+     * 系统据此启动 MainActivity，由它把这段文字作为一条新用户消息投递进对应会话并触发一轮回应。
+     *
+     * 用 getActivity 而非广播：发送需要驱动 UI 侧现成的会话落库 / run 管线（write-ahead 落库 +
+     * 事件回灌 + 列表刷新），不能在后台另写一套；冷启动时 MainActivity 被拉起并自动选中该会话，
+     * 用户立刻能看到自己刚发的回复与模型的回应。data URI 带 (notificationId, conversationId)，
+     * 避免多条通知的 reply PendingIntent 被 FLAG_UPDATE_CURRENT 互相覆盖；FLAG_MUTABLE 是
+     * RemoteInput 写入结果所必需（与审批卡「后台回复」action 同一套范式）。
+     */
+    private fun conversationReplyIntent(
+        context: Context,
+        notificationId: Int,
+        conversationId: String,
+    ): PendingIntent {
+        val intent = Intent(context, MainActivity::class.java)
+            .setAction(MainActivity.ACTION_REPLY_TO_CONVERSATION)
+            .putExtra(MainActivity.EXTRA_CONVERSATION_ID, conversationId)
+            .putExtra(MainActivity.EXTRA_NOTIFICATION_ID, notificationId)
+            // 本装机令牌：MainActivity exported=true，靠它挡住外部 App 伪造回复注入消息。
+            .putExtra(MainActivity.EXTRA_REPLY_TOKEN, ReplyToken.current(context))
+            .putExtra(MainActivity.EXTRA_REPLY_NONCE, ReplyToken.newNonce())
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            .setData(
+                Uri.Builder().scheme("eta").authority("eta.notify")
+                    .appendPath("reply").appendPath(notificationId.toString())
+                    .appendPath(conversationId).build(),
+            )
+        return PendingIntent.getActivity(
+            context, NotificationPolicy.notifyReplyRequestCode(notificationId), intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
+        )
+    }
+
     fun taskCenterIntent(context: Context, requestCode: Int, tab: String = "APPROVALS"): PendingIntent {
         val intent = Intent(context, MainActivity::class.java)
             .setAction(ACTION_OPEN_TASK_CENTER)
@@ -215,6 +248,9 @@ internal object AgentNotifications {
     fun showProactive(context: Context, spec: NotificationPolicy.Proactive) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         ensureChannels(context)
+        val replyConversationId = spec.conversationId
+        // 点通知主体保持既有行为（草稿注入 / 任务中心 / 仅打开 App）；「回复」按钮才用会话 id 精确路由，
+        // 不改动 notify_user 原有的点击语义，避免破坏已在正常使用的草稿功能。
         val open = when (spec.action) {
             NotificationPolicy.Action.OPEN_TASK_CENTER -> taskCenterIntent(context, spec.notificationId)
             // 只有明确带了 context 才把它作为"新消息草稿"注入；否则只打开 App，
@@ -234,6 +270,23 @@ internal object AgentNotifications {
             .setAutoCancel(true)
             .setOnlyAlertOnce(!spec.withSound)
             .setCategory(Notification.CATEGORY_MESSAGE)
+            .apply {
+                // 带会话 id：给一个 RemoteInput「回复」action，文字作为一条新消息回到该会话并触发回应。
+                // 与审批卡同一套 Direct Reply 范式：SystemUI 托管键盘，锁屏 / 通知栏可直接打字。
+                if (!replyConversationId.isNullOrBlank()) {
+                    val remoteInput = RemoteInput.Builder(MainActivity.REPLY_RESULT_KEY)
+                        .setLabel(context.getString(R.string.notify_reply_hint))
+                        .setAllowFreeFormInput(true)
+                        .build()
+                    addAction(
+                        Notification.Action.Builder(
+                            null,
+                            context.getString(R.string.notify_reply_action),
+                            conversationReplyIntent(context, spec.notificationId, replyConversationId),
+                        ).addRemoteInput(remoteInput).build(),
+                    )
+                }
+            }
             // 普通级也给一个"打开对话"的副动作：带上下文的通知点击进对话，按钮给任务中心。
             .addAction(
                 Notification.Action.Builder(

@@ -38,7 +38,7 @@ class MainActivity : ComponentActivity() {
         var contentReady = false
         installStartupSplash { contentReady }
         enableEdgeToEdge()
-        launchRequests = MainActivityLaunchRequests.restore(savedInstanceState, intent)
+        launchRequests = MainActivityLaunchRequests.restore(savedInstanceState, intent, applicationContext)
         lifecycleScope.launch {
             val initialAppearance = AppearanceSettingsRepository.settings()
             appliedPredictiveBackEnabled = initialAppearance.predictiveBackEnabled
@@ -75,6 +75,11 @@ class MainActivity : ComponentActivity() {
                         requestedArchivedConversation = launchRequests.archivedConversation,
                         onArchivedConversationOpened = {
                             launchRequests = launchRequests.copy(archivedConversation = null)
+                            intent?.action = null
+                        },
+                        conversationReply = launchRequests.conversationReply,
+                        onConversationReplyConsumed = {
+                            launchRequests = launchRequests.copy(conversationReply = null)
                             intent?.action = null
                         },
                         sharedContent = launchRequests.sharedContent,
@@ -130,7 +135,7 @@ class MainActivity : ComponentActivity() {
         val fromLauncher = intent.action == Intent.ACTION_MAIN && intent.hasCategory(Intent.CATEGORY_LAUNCHER)
         AndroidAgentLogger.info("Agent UI new intent: task=$taskId launcher=$fromLauncher")
         setIntent(intent)
-        launchRequests = launchRequests.accept(intent)
+        launchRequests = launchRequests.accept(intent, applicationContext)
     }
 
     override fun onDestroy() {
@@ -200,6 +205,15 @@ class MainActivity : ComponentActivity() {
         /** 运行浮层的结果卡片回到本体：App 发起的 run 带会话 ID，直接打开该会话。 */
         const val ACTION_OPEN_CONVERSATION_ID = "io.github.mangi.eta.action.OPEN_CONVERSATION_ID"
         const val EXTRA_CONVERSATION_ID = "io.github.mangi.eta.extra.CONVERSATION_ID"
+        /** notify_user 通知栏直接回复：RemoteInput 的结果写进 [REPLY_RESULT_KEY] 对应的 Intent extra。 */
+        const val ACTION_REPLY_TO_CONVERSATION = "io.github.mangi.eta.action.REPLY_TO_CONVERSATION"
+        const val REPLY_RESULT_KEY = "eta_reply_text"
+        /** 回复 Intent 的本装机令牌；校验不过一律不接受（防外部 App 伪造注入）。见 ReplyToken。 */
+        const val EXTRA_REPLY_TOKEN = "io.github.mangi.eta.extra.REPLY_TOKEN"
+        /** 一次性 nonce：消费过即丢弃，防进程被杀后用旧 Intent 重建时重复发同一条回复。见 ReplyToken。 */
+        const val EXTRA_REPLY_NONCE = "io.github.mangi.eta.extra.REPLY_NONCE"
+        /** 发出这条通知的 notificationId，回复成功后用于取消那条通知。 */
+        const val EXTRA_NOTIFICATION_ID = "io.github.mangi.eta.extra.NOTIFICATION_ID"
         /** 系统助手等外部入口发起的 run 按来源与会话键归档，回到本体时打开对应的归档会话。 */
         const val ACTION_OPEN_ARCHIVED_CONVERSATION = "io.github.mangi.eta.action.OPEN_ARCHIVED_CONVERSATION"
         const val EXTRA_HANDOFF_SOURCE = "io.github.mangi.eta.extra.HANDOFF_SOURCE"

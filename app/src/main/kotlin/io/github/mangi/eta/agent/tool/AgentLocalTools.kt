@@ -93,6 +93,8 @@ internal class AgentLocalTools(
     private val context: Context,
     private val logger: AgentLogger,
     private val browserRunId: String = "",
+    /** 发起本轮 run 的 UI 会话 id（仅 agent_ui 来源有值）；notify_user 通知栏回复据此回到对应会话。 */
+    private val conversationId: String? = null,
     private val browserToolsEnabled: () -> Boolean = {
         Prefs.isEnabled(Prefs.Keys.AGENT_BROWSER_TOOLS)
     },
@@ -383,7 +385,7 @@ internal class AgentLocalTools(
                 "macro_run" -> macroRun(args)
                 MacroRecordTool.NAME -> textResult(MacroRecordTool.execute(context, args))
                 ScheduledTaskTool.NAME -> textResult(ScheduledTaskTool.execute(context, args))
-                NotifyUserTool.NAME -> textResult(NotifyUserTool.execute(context, args, browserRunId))
+                NotifyUserTool.NAME -> textResult(NotifyUserTool.execute(context, args, browserRunId, conversationId))
                 "macro_delete" -> textResult(
                     try {
                         val deleted = GuiMacroStore.delete(args.getString("name"))

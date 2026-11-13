@@ -79,6 +79,9 @@ internal object NotificationIdRegistry {
         IdSegment("job_wakeup_content", 6_200..6_249, "自动唤醒进会话，按任务分散"),
         IdSegment("job_wakeup_action", 6_250..6_299, "自动唤醒进任务中心，按任务分散"),
         IdSegment("approval_decision", 6_400..6_699, "审批按钮，按 (审批id,选项id) 散列"),
+        IdSegment("notify_user_reply", 6_700..6_749, "notify_user 通知栏回复 RemoteInput action，按通知 ID 分散"),
+        // showProactive 的 contentIntent / 任务中心副按钮直接用 spec.notificationId 当 requestCode（9300..9349）。
+        IdSegment("notify_user_content", 9_300..9_349, "notify_user 通知主体/副按钮，借用通知 ID 作 requestCode"),
         // 下列各模块用的是裸常量 / 单值，不是连续段；列在此处作为「已占用点」登记，
         // 提醒新功能连这些点也不要复用，且 PendingIntent 必须自带唯一 data URI 防覆盖。
         // execution_service_codes 的 0 还被 ReadAloud open、Macro 录制/结果 contentIntent 裸用：

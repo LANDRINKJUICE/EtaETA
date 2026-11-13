@@ -43,4 +43,8 @@
     <string name="assistant_speech_channel">Assistant voice</string>
     <string name="assistant_speech_channel_description">Shown only while the assistant overlay is listening or speaking.</string>
     <string name="assistant_speech_running_note">Runs only while the assistant overlay is visible</string>
+    <!-- notify_user 通知栏直接回复（Direct Reply） -->
+    <string name="notify_reply_action">Reply</string>
+    <string name="notify_reply_hint">Type a reply</string>
+    <string name="notify_reply_failed">Reply could not be sent. Please try again in the conversation.</string>
 </resources>

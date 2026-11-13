@@ -51,6 +51,7 @@ import io.github.mangi.eta.data.model.AppearanceUiStyle
 import io.github.mangi.eta.data.repository.RuntimeConfigRepository
 import io.github.mangi.eta.ui.AppearanceSettingsScreen
 import io.github.mangi.eta.ui.IncomingShareRequest
+import io.github.mangi.eta.ui.ConversationReplyRequest
 import io.github.mangi.eta.ui.SettingsScreen
 import io.github.mangi.eta.ui.components.MiuixDialogActions
 import io.github.mangi.eta.ui.components.coui.CouiConfirmDialog
@@ -127,6 +128,8 @@ fun AgentAppRoot(
     onRequestedConversationOpened: () -> Unit = {},
     requestedArchivedConversation: ArchivedConversationRequest? = null,
     onArchivedConversationOpened: () -> Unit = {},
+    conversationReply: ConversationReplyRequest? = null,
+    onConversationReplyConsumed: () -> Unit = {},
     sharedContent: IncomingShareRequest? = null,
     onSharedContentAccepted: () -> Unit = {},
     openSpeechSettings: Boolean = false,
@@ -251,6 +254,17 @@ fun AgentAppRoot(
         conversationPaneOpen = false
         navigator.popToHome()
         onRequestedConversationOpened()
+    }
+
+    // notify_user 通知栏直接回复：把这段文字作为一条新消息发进对应会话并触发一轮回应。
+    LaunchedEffect(conversationReply) {
+        val reply = conversationReply ?: return@LaunchedEffect
+        // 先消费（清 state + 置空 intent.action）再投递：关掉「已发但 bundle 还没更新时进程被杀 →
+        // 恢复后重放同一条回复」的窗口。失败本来就有 Toast 反馈，不会比先投递更糟。
+        onConversationReplyConsumed()
+        agentState.sendReplyToConversation(reply.conversationId, reply.text, reply.notificationId)
+        conversationPaneOpen = false
+        navigator.popToHome()
     }
 
     LaunchedEffect(requestedArchivedConversation) {

@@ -43,15 +43,20 @@ internal object AgentMemoryContextBuilder {
     )
 
     /**
-     * 组装注入内容。
+     * 组装本轮注入内容，分「顶部常驻区」与「相关记忆节」两层。
      *
-     * 注入分两块，互不干扰：
-     * - **顶部块（无条件全量）**：文件第 1 行到第一条独立 `---` 分割线之间的原文，
-     *   每轮必进、与 [query] 无关、不受相关性打分与开关影响。按「位置」切而非按标题名找，
-     *   因此只要文件非空就一定有内容，结构上杜绝「找不到 `# 核心记忆` 就静默空转」。
-     *   顶部区归用户自由书写（也可由 Agent 代写），格式/日期校验均豁免。
-     * - **核心节 + 相关节**：沿用既有 `# 核心记忆` core 提取与 top-k 相关性注入，
-     *   仅在顶部块之外生效，行为保持不变。
+     * 顶部常驻区按**位置**取、无条件全量注入（与 [query]、相关性开关、打分都无关），
+     * 不再依赖「找 `# 核心记忆` 标题」——只要文件非空就一定有内容，结构上根治空转：
+     * - 有分割线：文件开头到第一条独立 `---` 之间的原文为常驻区（用户自由书写、格式/日期/敏感串之外豁免）；
+     * - 无分割线：按 [io.github.mangi.eta.data.repository.MemoryLayout.pinnedTopFallback] 把「第一个一级标题区整体」兜底为常驻区。
+     *
+     * 为兼容历史文件，仍在「常驻区之外」保留旧 `# 核心记忆` 节的提取（[legacyCoreSection]），
+     * 三分支见下方 `兼容优先 + 空转根治` 注释：有分割线 / 无分割线但有核心标题 / 都没有，
+     * 既保证每轮有内容，又不改动旧文件既有行为。相关记忆节（top-k）只从常驻区与旧核心节之外挑选。
+     *
+     * 术语与 [io.github.mangi.eta.data.repository.MemoryLayout]、系统提示（「写记忆格式约定」）一致：
+     * 「顶部区/常驻区」= 无条件常驻；「旧核心节」= 历史 `# 核心记忆` 兼容内容。
+     * [coreContent] 字段沿用旧名，实际承载「常驻区 + 旧核心节」拼合结果，勿把它理解成只含核心记忆。
      *
      * [query] 为会话最新一条用户消息；为空时不注入非核心节（关闭相关性注入，或本轮没有用户输入）。
      */
@@ -66,11 +71,11 @@ internal object AgentMemoryContextBuilder {
         val coreBudget = coreBudgetChars(contextWindow)
         val content = snapshot.content
 
-        // 兼容优先 + 空转根治：
-        // ① 有用户画的分割线 → 顶部区（分割线前）无条件全量注入，下面走旧 core/相关节逻辑。
-        // ② 没有分割线但文件本来就有 # 核心记忆 → 完全走旧路径，既有行为零回归。
-        // ③ 既无分割线、又没有 # 核心记忆（旧 core 会空转）→ 用 H1 兜底把第一个 H1 区整体
-        //    作为常驻区，保证每轮都有内容注入；不要求用户先画分割线、不迁移数据。
+        // 兼容优先 + 空转根治（顶部区按位置取，旧核心节作兼容）：
+        // ① 有用户画的分割线 → 常驻区 = 分割线前原文，全量注入；其下再按旧核心标题 + 相关节处理。
+        // ② 无分割线但文件本来就有 # 核心记忆 → 常驻区留空、完全走旧核心节路径，既有行为零回归。
+        // ③ 既无分割线、又没 # 核心记忆（旧逻辑会空转）→ 按 H1 兜底把第一个 H1 区整体作为常驻区，
+        //    保证每轮都有内容；不要求用户先画分割线、不迁移数据。
         val hasDivider = layout.dividerIndex(content) >= 0
         var pinned: String
         val remainder: String
@@ -80,7 +85,7 @@ internal object AgentMemoryContextBuilder {
         if (hasDivider) {
             pinned = layout.pinnedTopByDivider(content)
             remainder = layout.remainderAfterDivider(content)
-            legacyCore = extractCore(remainder)
+            legacyCore = legacyCoreSection(remainder)
             // 开头就是分割线（顶部区为空）：退回兜底，避免空转复发。
             if (pinned.isEmpty()) {
                 val fallback = layout.pinnedTopFallback(remainder)
@@ -92,7 +97,7 @@ internal object AgentMemoryContextBuilder {
         } else if (layout.hasCoreHeading(content)) {
             pinned = ""
             remainder = content
-            legacyCore = extractCore(content)
+            legacyCore = legacyCoreSection(content)
         } else {
             pinned = layout.pinnedTopFallback(content)
             remainder = content
@@ -100,12 +105,12 @@ internal object AgentMemoryContextBuilder {
             val count = layout.pinnedTopFallbackLineCount(content)
             if (count > 0) excludeRange = 1..count
         }
-        val core = joinPinnedAndCore(pinned, legacyCore)
+        val pinnedAndLegacy = joinPinnedAndCore(pinned, legacyCore)
         val headings = content.lineSequence()
             .filter { line -> HEADING.matches(line.trimEnd()) }
             .joinToString("\n")
             .take(MAX_HEADING_INDEX_CHARS)
-        val remaining = (coreBudget - minOf(core.length, coreBudget)).coerceAtLeast(0)
+        val remaining = (coreBudget - minOf(pinnedAndLegacy.length, coreBudget)).coerceAtLeast(0)
         val injected = if (remaining <= 0) {
             Injected()
         } else {
@@ -115,16 +120,16 @@ internal object AgentMemoryContextBuilder {
                 now = now,
                 maxSections = maxSections,
                 budget = minOf(MAX_INJECTED_CHARS, remaining),
-                coreRange = excludeRange
-                    ?: if (hasDivider || layout.hasCoreHeading(content)) extractCoreRange(remainder) else null,
+                excludedRange = excludeRange
+                    ?: if (hasDivider || layout.hasCoreHeading(content)) legacyCoreSectionRange(remainder) else null,
             )
         }
         return AgentMemoryContext(
             enabled = true,
             revision = snapshot.revision,
             byteSize = snapshot.byteSize,
-            coreContent = core.take(coreBudget),
-            coreTruncated = core.length > coreBudget,
+            coreContent = pinnedAndLegacy.take(coreBudget),
+            coreTruncated = pinnedAndLegacy.length > coreBudget,
             headingIndex = headings,
             coreBudgetChars = coreBudget,
             injectedSections = injected.content,
@@ -134,6 +139,7 @@ internal object AgentMemoryContextBuilder {
         )
     }
 
+    /** 拼合「顶部常驻区」与「旧核心节」成 coreContent 字段（字段名沿用旧称，见 [build] KDoc）。 */
     private fun joinPinnedAndCore(pinned: String, legacyCore: String): String = when {
         pinned.isEmpty() -> legacyCore
         legacyCore.isEmpty() -> pinned
@@ -159,14 +165,15 @@ internal object AgentMemoryContextBuilder {
         now: LocalDate,
         maxSections: Int,
         budget: Int,
-        coreRange: IntRange?,
+        excludedRange: IntRange?,
     ): Injected {
         if (budget <= 0 || maxSections <= 0 || query.isNullOrBlank() || content.isEmpty()) {
             return Injected(budget = budget.coerceAtLeast(0))
         }
+        // excludedRange 覆盖「顶部常驻区」或「旧核心节」：这些已全量注入，不再参与相关节打分，避免重复。
         val candidates = AgentMemoryEntries.parse(content)
             .filter { entry -> entry.heading.trim() != CORE_HEADING }
-            .filter { entry -> coreRange == null || entry.startLine !in coreRange }
+            .filter { entry -> excludedRange == null || entry.startLine !in excludedRange }
         if (candidates.isEmpty()) return Injected(budget = budget)
         val selected = MemoryRelevance.select(
             entries = candidates,
@@ -236,12 +243,16 @@ internal object AgentMemoryContextBuilder {
     }
 
     /**
-     * 与 [extractCore] 一致的核心块行号（1 起始、闭区间）；没有核心标题时为 null。
+     * 旧格式 `# 核心记忆` 节的行号（1 起始、闭区间）；没有该标题时为 null。
+     *
+     * 这是为兼容历史文件保留的「按标题名找旧核心节」，**不是**当前顶部常驻区的取法
+     * （常驻区按位置取，见 [build] / [io.github.mangi.eta.data.repository.MemoryLayout]）。
+     * 区间同时用于把旧核心节排除出相关记忆节候选，避免重复注入。
      *
      * 标题判定复用 [AgentMemoryEntries.headingIndexes] 的围栏规则：核心节正文里用 ``` 包住的
      * `# 注释` 不会被当成新的 1 级标题，否则核心节会被截断并留下未闭合围栏。
      */
-    private fun extractCoreRange(content: String): IntRange? {
+    private fun legacyCoreSectionRange(content: String): IntRange? {
         if (content.isEmpty()) return null
         val lines = content.split('\n')
         val headings = AgentMemoryEntries.headingIndexes(lines)
@@ -253,8 +264,9 @@ internal object AgentMemoryContextBuilder {
         return (start + 1)..endExclusive
     }
 
-    private fun extractCore(content: String): String {
-        val range = extractCoreRange(content) ?: return ""
+    /** 兼容旧文件：提取 `# 核心记忆` 节正文（去元数据注释行）。新逻辑的常驻区由 [build] 按位置取。 */
+    private fun legacyCoreSection(content: String): String {
+        val range = legacyCoreSectionRange(content) ?: return ""
         val lines = content.split('\n')
         // 元数据注释行不进系统提示，与条目解析口径一致。
         return lines.subList(range.first - 1, range.last)

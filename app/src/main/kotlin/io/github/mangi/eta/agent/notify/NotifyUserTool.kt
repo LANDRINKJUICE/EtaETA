@@ -30,7 +30,7 @@ internal object NotifyUserTool {
     private val rateLimit = NotificationPolicy.RateLimit()
     private val runBudget = NotificationPolicy.RunBudget()
 
-    fun execute(context: Context, args: JSONObject, runId: String = ""): String {
+    fun execute(context: Context, args: JSONObject, runId: String = "", conversationId: String? = null): String {
         val appContext = context.applicationContext
         if (!Prefs.isProactiveNotifyEnabled()) {
             return result(ok = false, code = "NOTIFY_DISABLED", message = "主动沟通开关已关闭", important = false)
@@ -79,6 +79,7 @@ internal object NotifyUserTool {
             defaultTitle = appContext.getString(R.string.notify_default_title),
             importanceDefault = NotificationManager.IMPORTANCE_DEFAULT,
             importanceHigh = NotificationManager.IMPORTANCE_HIGH,
+            conversationId = conversationId,
         )
         AgentNotifications.showProactive(appContext, spec)
         return result(

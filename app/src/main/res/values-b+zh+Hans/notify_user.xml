@@ -33,4 +33,8 @@
     <string name="assistant_speech_channel">助手语音</string>
     <string name="assistant_speech_channel_description">仅在助手浮窗聆听或朗读期间显示。</string>
     <string name="assistant_speech_running_note">仅在助手浮窗可见时运行</string>
+    <!-- notify_user 通知栏直接回复（Direct Reply） -->
+    <string name="notify_reply_action">回复</string>
+    <string name="notify_reply_hint">输入回复内容…</string>
+    <string name="notify_reply_failed">回复发送失败，请在会话里重新发送</string>
 </resources>

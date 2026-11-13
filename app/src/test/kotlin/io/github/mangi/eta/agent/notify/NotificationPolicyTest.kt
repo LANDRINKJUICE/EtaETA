@@ -533,4 +533,23 @@ class NotificationPolicyTest {
         assertTrue("bodies=$bodies", bodies.size > 1)
         assertTrue("actions=$actions", actions.size > 1)
     }
+
+    @Test
+    fun `proactive carries conversation id for notification direct reply`() {
+        fun build(id: String?) = NotificationPolicy.proactive(
+            rawTitle = "价格提醒", rawBody = "降到 299 了", rawPriority = null,
+            rawAction = null, rawContext = null, defaultTitle = "默认标题",
+            importanceDefault = 3, importanceHigh = 4, conversationId = id,
+        )
+        assertEquals("conv-abc", build("conv-abc").conversationId)
+        assertEquals(null, build("   ").conversationId)
+        assertEquals(null, build(null).conversationId)
+        // 不带新参数时保持旧行为（null），现有用例不受影响。
+        assertEquals(null, NotificationPolicy.proactive(
+            rawTitle = "价格提醒", rawBody = "降到 299 了", rawPriority = null,
+            rawAction = null, rawContext = null, defaultTitle = "默认标题",
+            importanceDefault = 3, importanceHigh = 4,
+        ).conversationId)
+    }
+
 }

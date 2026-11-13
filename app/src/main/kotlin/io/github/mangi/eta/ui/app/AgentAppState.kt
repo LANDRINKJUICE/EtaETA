@@ -1217,6 +1217,103 @@ internal class AgentAppState(
         submitOrQueueCurrentMessage(submittedText = submittedText, immediateInterrupt = false)
     }
 
+    /**
+     * 通知栏 Direct Reply 的落点：把 [text] 作为一条新用户消息发进指定 [conversationId] 会话并起一轮 run。
+     *
+     * 不复用 [sendCurrentMessage]：那条会把会话里挂着的待发图片 / 文件一起发出、清空输入草稿，
+     * 且在「编辑并保留后续消息」状态下会把回复吞成对旧消息的改写。通知回复应当是「纯文本新增一条、
+     * 不碰草稿 / 附件 / 编辑态」，故直接走 [dispatchMessageToConversation]（preserveCurrentDraft=true、
+     * 空附件、null editBoundary），仍复用它的 write-ahead 落库 + runStore 登记 + 事件回灌全套。
+     *
+     * 冷启动 / 后台回复时会话可能尚未载入，故先选中并在 [withLoadedConversations] 里等 history 就绪；
+     * 流式 / 压缩 / 编辑态时把回复入队（与 UI 发送一致），避免与进行中的 run 抢登记。仅 UI 会话可用；
+     * 这里再兜一层守卫。失败与静默分支都给可见 Toast，避免「打了字没反应」。
+     *
+     * [notificationId] > 0 时，投递成功后取消那条 notify_user 通知（setAutoCancel 对 RemoteInput
+     * action 不生效，否则会留一条能反复点发、内容已过期的僵尸通知）。
+     */
+    fun sendReplyToConversation(conversationId: String, text: String, notificationId: Int = -1) {
+        fun notifyReplyFailure() {
+            Toast.makeText(
+                appContext,
+                appContext.getString(R.string.notify_reply_failed),
+                Toast.LENGTH_LONG,
+            ).show()
+        }
+        fun failed() {
+            notifyReplyFailure()
+            AndroidAgentLogger.warnThrottled("notify_reply_delivery_failed") {
+                "Notification direct reply rejected: conversation unavailable or read-only"
+            }
+        }
+        val trimmed = text.trim().take(4_000)
+        if (trimmed.isEmpty() || conversationId in pendingConversationDeletes) { failed(); return }
+        if (conversationId.isReadOnlyExternalArchiveConversation()) { failed(); return }
+        if (conversationId !in conversationsById) { failed(); return }
+        scope.launch {
+            val ok = runCatching {
+                withContext(Dispatchers.Main.immediate) {
+                    if (selectedConversationId != conversationId) selectConversation(conversationId)
+                }
+                withLoadedConversations(setOf(conversationId)) {
+                    withContext(Dispatchers.Main.immediate) {
+                        val state = conversationsById[conversationId]
+                        if (
+                            selectedConversationId == conversationId &&
+                            state != null && state.isConversationLoaded
+                        ) {
+                            if (state.isStreaming || state.isCompacting || state.messageEdit != null) {
+                                // 进行中 / 编辑态：入队，等 run 结束由现有 dispatchQueuedMessage 接管；
+                                // 不碰草稿与附件（QueuedMessageUi 只装纯文本）。入队即视为被接纳。
+                                val queued = QueuedMessageUi(
+                                    id = "queue-${UUID.randomUUID()}",
+                                    content = trimmed,
+                                    pendingImages = emptyList(),
+                                    pendingFileReferences = emptyList(),
+                                    immediateInterrupt = false,
+                                )
+                                updateConversation(
+                                    conversationId,
+                                    AgentMessageQueueReducer.enqueue(state, queued),
+                                    updateTimestamp = false,
+                                )
+                                true
+                            } else {
+                                dispatchMessageToConversation(
+                                    conversationId = conversationId,
+                                    state = state,
+                                    prompt = trimmed,
+                                    pendingImages = emptyList(),
+                                    pendingFileReferences = emptyList(),
+                                    editBoundary = null,
+                                    preserveCurrentDraft = true,
+                                )
+                            }
+                        } else {
+                            false
+                        }
+                    }
+                }
+            }.getOrElse { failure ->
+                if (failure is CancellationException) throw failure
+                AndroidAgentLogger.warnThrottled("notify_reply_delivery_failed") {
+                    "Notification direct reply delivery failed: type=${failure.safeLogType()}"
+                }
+                false
+            }
+            if (ok) {
+                if (notificationId > 0) {
+                    runCatching {
+                        appContext.getSystemService(android.app.NotificationManager::class.java)
+                            ?.cancel(notificationId)
+                    }
+                }
+            } else {
+                notifyReplyFailure()
+            }
+        }
+    }
+
     fun interruptAndSendCurrentMessage(submittedText: String? = null) {
         submitOrQueueCurrentMessage(submittedText = submittedText, immediateInterrupt = true)
     }
@@ -1379,7 +1476,7 @@ internal class AgentAppState(
         pendingFileReferences: List<PendingFileReferenceUi>,
         editBoundary: AgentConversationRevisionReducer.Boundary?,
         preserveCurrentDraft: Boolean = false,
-    ) {
+    ): Boolean {
         val fileReferences = pendingFileReferences.map { it.reference }
         val runtimePrompt = AgentFileReferencePromptCodec.format(prompt, fileReferences)
         val runId = "run-${UUID.randomUUID()}"
@@ -1420,7 +1517,7 @@ internal class AgentAppState(
         if (selectedConversationId == conversationId) {
             conversationPaneState = conversationPaneState.copy(selectedConversationId = conversationId)
         }
-        launchConversationRun(
+        return launchConversationRun(
             conversationId = conversationId,
             runId = runId,
             prompt = runtimePrompt,
@@ -1635,8 +1732,8 @@ internal class AgentAppState(
         reasoningEffort: ReasoningEffort,
         operation: String = AgentRuntimeWire.OP_CHAT,
         rewriteTargetMessageId: String? = null,
-    ) {
-        if (conversationId in pendingConversationDeletes || !runStore.register(runId, conversationId)) return
+    ): Boolean {
+        if (conversationId in pendingConversationDeletes || !runStore.register(runId, conversationId)) return false
         // 发送即绑定：会话记住本轮实际使用的模型，回落到默认模型时也随之更新。
         val runModelId = state.effectiveModelId
         val runReasoningEffort = providers.enabledModel(runModelId)?.let { (provider, model) ->
@@ -1789,11 +1886,12 @@ internal class AgentAppState(
                     content = "",
                     error = appContext.getString(R.string.capability_background_failed),
                 ))
-                return
+                return false
             }
             preparationJob.invokeOnCompletion { AgentExecutionService.release(leaseId) }
         }
         preparationJob.start()
+        return true
     }
 
     private fun List<PendingImageUi>.toHistoryImages(): List<AgentModelClient.ModelImage> =
