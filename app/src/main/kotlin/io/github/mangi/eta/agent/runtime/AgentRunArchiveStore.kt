@@ -9,7 +9,6 @@ import io.github.mangi.eta.data.db.RuntimeArchiveEventEntity
 import io.github.mangi.eta.data.db.RuntimeArchiveRunEntity
 import io.github.mangi.eta.data.db.RuntimeArchiveRunWithEvents
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
 
@@ -56,18 +55,6 @@ internal object AgentRunArchiveStore {
                 .mapNotNull { it.toDomain() }
         }
     }
-
-    /**
-     * 归档表变更的实时信号（主键集合快照）。
-     *
-     * 后台唤醒 / 语音 / 自动任务等外部归档 run 在终态把结果写进 [runtime_archive_runs]，
-     * 本 Flow 会随 Room 的 invalidation 立即发射新的主键集合；[io.github.mangi.eta.ui.app.AgentAppState]
-     * 常驻订阅它，归档一落库就把 run 导入会话列表，无需回到前台或点通知。
-     * 这里只暴露"有没有变化"，真正的内容读取仍由 [list] 在导入时统一做（分块文本还原、
-     * 事件反序列化都在那一条路径上），避免把重活放进每次事务提交的回调里。
-     */
-    fun archiveChangeFlow(context: Context): Flow<List<String>> =
-        EtaDatabase.get(context.applicationContext).runtimeRunDao().archivedRunIdsFlow()
 
     fun remove(context: Context, runId: String) {
         if (runId.isBlank()) return
