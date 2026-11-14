@@ -29,6 +29,9 @@
     <string name="job_wakeup_skipped_body">Eta could not start this round (execution was not allowed, or the loop guard was unavailable). Check the task log and handle it yourself.</string>
 
     <string name="job_wakeup_subtext">Background task wakeup</string>
+    <!-- 自动 / 计划任务的会话列表标题与首屏占位（区别于「后台命令唤醒」） -->
+    <string name="schedule_session_subtext">Scheduled task</string>
+    <string name="schedule_session_archive_user">A scheduled task is running; you can follow its progress or reply here.</string>
     <string name="job_wakeup_unknown_subject">background command %1$s</string>
 
     <!-- 归档会话标题（点击通知后进入的那条会话） -->

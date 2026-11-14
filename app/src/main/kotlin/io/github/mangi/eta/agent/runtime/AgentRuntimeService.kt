@@ -448,6 +448,10 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
                 "Agent runtime keep-alive start failed: type=${throwable.safeLogType()}"
             }
         }
+        // 无人值守后台 run（唤醒 / 自动任务 / 未来新增）已登记进 Registry，此刻发统一信号：
+        // 前台 UI 收到即认领这条会话进聊天列表（运行一开始就可观测 / 可对话）。放在 admit 之后
+        // 而非入口，保证 UI 的 queryActiveRuns 必能命中，从根上消除「广播早于 run 提交」的竞态。
+        sendUnattendedRunStarted(this, run.conversationId, run.runId)
         publishExecutionState()
         return run
     }

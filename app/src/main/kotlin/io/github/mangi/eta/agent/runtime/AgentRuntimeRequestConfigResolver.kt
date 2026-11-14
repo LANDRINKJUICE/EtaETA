@@ -25,10 +25,11 @@ internal object AgentRuntimeRequestConfigResolver {
      */
     fun usesDefaultRuntimeConfig(request: AgentRuntimeWire.RunRequest): Boolean =
         request.handoff?.source == AgentRuntimeWire.ETA_VOICE_HANDOFF_SOURCE ||
+            // 兼容旧版（未迁移的）自动任务 handoff；新版自动任务已改用 AGENT_UI + entryTag。
             request.handoff?.source == AgentRuntimeWire.ETA_SCHEDULED_TASK_HANDOFF_SOURCE ||
-            // 后台任务唤醒同样没有用户在线：入口快照里的模型与凭据可能已经过期。
-            // 唤醒轮现在用 AGENT_UI handoff（真实可回复 UI 会话），以 entryTag 识别。
-            AgentUiHandoffPayload.isJobWakeup(request.handoff)
+            // 所有无人值守后台 run（唤醒 / 自动任务）都没有用户在线：入口快照里的模型与凭据
+            // 可能已经过期，统一走 Runtime 当前配置。用 isUnattended 一处判定，新增入口不漏改。
+            AgentUiHandoffPayload.isUnattended(request.handoff)
 
     /**
      * 只用 Runtime 侧的模型与凭据替换入口配置；工具开关保留入口请求的值，

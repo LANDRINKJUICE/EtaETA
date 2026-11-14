@@ -52,6 +52,8 @@ internal data class AgentUiHandoffPayload(
         private const val VERSION = 2
         /** 后台任务自动唤醒轮的入口标记（见 [AgentUiHandoffPayload.entryTag]）。 */
         const val ENTRY_TAG_JOB_WAKEUP = "job_wakeup"
+        /** 自动 / 计划任务的入口标记：与唤醒轮一样是无人值守、可回复的 AGENT_UI 会话。 */
+        const val ENTRY_TAG_SCHEDULED_TASK = "scheduled_task"
 
         /**
          * 这轮是不是「后台任务唤醒轮」：它用 AGENT_UI handoff（真实可回复 UI 会话），
@@ -59,10 +61,26 @@ internal data class AgentUiHandoffPayload(
          * 避免把 source 改回 ETA_JOB_WAKEUP 导致 UI 会话解析链全线失效。
          */
         fun isJobWakeup(handoff: AgentRuntimeWire.EntryHandoff?): Boolean =
+            entryTag(handoff) == ENTRY_TAG_JOB_WAKEUP
+
+        /** 这轮是不是「自动 / 计划任务」。 */
+        fun isScheduledTask(handoff: AgentRuntimeWire.EntryHandoff?): Boolean =
+            entryTag(handoff) == ENTRY_TAG_SCHEDULED_TASK
+
+        /**
+         * 是不是任何一类「无人值守后台 run」（唤醒 / 自动任务）。
+         * 模型配置取 Runtime 当前值、状态层统一投影、UI 主动认领都以这个为统一入口判定，
+         * 不再各处按 source 硬写、避免新增入口时漏改。
+         */
+        fun isUnattended(handoff: AgentRuntimeWire.EntryHandoff?): Boolean =
+            isJobWakeup(handoff) || isScheduledTask(handoff)
+
+        /** 安全读取 entryTag：非 AGENT_UI source / 旧 payload 一律返回空串，不误判。 */
+        private fun entryTag(handoff: AgentRuntimeWire.EntryHandoff?): String =
             handoff
                 ?.takeIf { it.source == AgentRuntimeWire.AGENT_UI_HANDOFF_SOURCE }
-                ?.let { from(it.payload).entryTag == ENTRY_TAG_JOB_WAKEUP }
-                ?: false
+                ?.let { from(it.payload).entryTag }
+                ?: ""
 
         fun from(raw: String): AgentUiHandoffPayload {
             val trimmed = raw.trim()

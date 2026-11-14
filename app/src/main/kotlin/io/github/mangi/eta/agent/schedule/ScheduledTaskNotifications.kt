@@ -56,27 +56,51 @@ internal object ScheduledTaskNotifications {
      * @param stage 当前阶段（已本地化，如"运行中"）；刷新时传入最新阶段即可原地更新。
      * @param elapsedMillis 已运行时长（单调时钟差值）。
      */
-    fun running(context: Context, title: String, stage: String = "", elapsedMillis: Long = 0L): Notification =
-        baseBuilder(context, title)
+    fun running(
+        context: Context,
+        title: String,
+        conversationId: String,
+        stage: String = "",
+        elapsedMillis: Long = 0L,
+    ): Notification {
+        val builder = baseBuilder(context, title)
             .setContentTitle(context.getString(R.string.schedule_notification_running_title))
             .setContentText(runningText(context, stage, elapsedMillis))
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setProgress(0, 0, true)
-            .addAction(
-                Notification.Action.Builder(
-                    null,
-                    context.getString(R.string.notify_action_open_task_center),
-                    AgentNotifications.taskCenterIntent(context, RUNNING_NOTIFICATION_ID, "SCHEDULED"),
-                ).build(),
+        // 按会话深链直达：点进去就是那个正在跑、可实时观测 / 可对话的自动任务会话。
+        if (conversationId.isNotBlank()) {
+            builder.setContentIntent(
+                AgentNotifications.conversationByIdIntent(
+                    context, AgentNotifications.RequestCodes.SCHEDULED_CONTENT, conversationId,
+                    "eta://eta.scheduled/running/$conversationId",
+                ),
             )
-            .build()
+        }
+        builder.addAction(
+            Notification.Action.Builder(
+                null,
+                context.getString(R.string.notify_action_open_task_center),
+                AgentNotifications.taskCenterIntent(context, RUNNING_NOTIFICATION_ID, "SCHEDULED"),
+            ).build(),
+        )
+        return builder.build()
+    }
 
     /** 原地更新"执行中"通知（同一 ID）。调用方负责 ≥1s 节流。 */
-    fun updateRunning(context: Context, title: String, stage: String, elapsedMillis: Long) {
+    fun updateRunning(
+        context: Context,
+        title: String,
+        conversationId: String,
+        stage: String,
+        elapsedMillis: Long,
+    ) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         ensureChannel(context)
-        runCatching { manager.notify(RUNNING_NOTIFICATION_ID, running(context, title, stage, elapsedMillis)) }
+        runCatching {
+            manager.notify(RUNNING_NOTIFICATION_ID, running(context, title, conversationId, stage, elapsedMillis))
+        }
     }
 
     fun runningId(): Int = RUNNING_NOTIFICATION_ID

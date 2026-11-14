@@ -37,6 +37,8 @@ internal class ScheduledTaskService : Service() {
     private val progressHandler = Handler(Looper.getMainLooper())
     private val progressThrottle = NotificationPolicy.Throttle()
     @Volatile private var runningTitle: String = ""
+    /** 本轮自动任务的可回复会话 id：执行中通知按会话深链直达。 */
+    @Volatile private var runningConversationId: String = ""
     @Volatile private var runStartedAtMillis: Long = 0L
     private val progressTick = object : Runnable {
         override fun run() {
@@ -48,7 +50,9 @@ internal class ScheduledTaskService : Service() {
             val bucket = elapsed / NotificationPolicy.SLOW_REFRESH_INTERVAL_MILLIS
             val key = "$stage|$bucket"
             if (progressThrottle.shouldEmit(key, SystemClock.elapsedRealtime())) {
-                ScheduledTaskNotifications.updateRunning(this@ScheduledTaskService, runningTitle, stage, elapsed)
+                ScheduledTaskNotifications.updateRunning(
+                    this@ScheduledTaskService, runningTitle, runningConversationId, stage, elapsed,
+                )
             }
             progressHandler.postDelayed(this, NotificationPolicy.SLOW_REFRESH_INTERVAL_MILLIS)
         }
@@ -71,9 +75,10 @@ internal class ScheduledTaskService : Service() {
         }
         val title = intent.getStringExtra(EXTRA_TASK_TITLE).orEmpty()
             .ifBlank { getString(R.string.schedule_notification_running_title) }
+        val conversationId = intent.getStringExtra(EXTRA_CONVERSATION_ID).orEmpty()
         // 先进入前台：Android 12+ 要求 startForegroundService 后在极短时间内 startForeground。
         val entered = runCatching {
-            val notification = ScheduledTaskNotifications.running(this, title)
+            val notification = ScheduledTaskNotifications.running(this, title, conversationId)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 startForeground(
                     ScheduledTaskNotifications.runningId(),
@@ -97,7 +102,7 @@ internal class ScheduledTaskService : Service() {
         // 只有从"空闲"进入"有任务"时才重置心跳基线；并发叠进来的第二次 start 不该把
         // 已经在跑的这轮计时清零（否则通知里的耗时会突然倒退）。
         if (pendingWork.getAndIncrement() == 0) {
-            startProgressTicker(title)
+            startProgressTicker(title, conversationId)
         }
         // 收尾必须用**本次** startId：期间若来了新任务（新 startId），stopSelfResult 会拒绝停止，
         // 避免旧的收尾把新任务的运行状态一起掐断。
@@ -128,8 +133,9 @@ internal class ScheduledTaskService : Service() {
     }
 
     /** 开始刷新"执行中"通知的耗时；重复调用会重置基线。 */
-    private fun startProgressTicker(title: String) {
+    private fun startProgressTicker(title: String, conversationId: String) {
         runningTitle = title
+        runningConversationId = conversationId
         runStartedAtMillis = SystemClock.elapsedRealtime()
         progressThrottle.reset()
         progressHandler.removeCallbacks(progressTick)
@@ -145,9 +151,13 @@ internal class ScheduledTaskService : Service() {
         const val ACTION_RUN_TASK = "io.github.mangi.eta.agent.schedule.RUN_TASK"
         const val EXTRA_TASK_ID = "task_id"
         const val EXTRA_TASK_TITLE = "task_title"
+        const val EXTRA_CONVERSATION_ID = "conversation_id"
 
         /** 前台服务起不来时的降级路径：普通线程跑一次，进程可能被回收但至少尝试执行。 */
         fun startFallbackWorker(context: Context, taskId: String) {
+            // 前台服务被系统拒绝时的降级路径：没有执行中通知（服务没起来），但 run 仍走完整
+            // Runtime 管线，buildRequest 自己派生稳定 conv-schedule- 会话 id、结果走 run_result
+            // 段统一通知，因此不需要额外传 conversationId。
             Thread({
                 runCatching { ScheduledTaskRunner.execute(context, taskId) }
             }, "scheduled-task-fallback").apply { isDaemon = true }.start()

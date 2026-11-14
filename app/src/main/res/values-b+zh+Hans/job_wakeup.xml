@@ -24,6 +24,8 @@
     <string name="job_wakeup_skipped_body">这次没能启动自动处理（执行未被允许，或防循环账本不可用）。请查看任务日志后手动处理。</string>
 
     <string name="job_wakeup_subtext">后台任务自动唤醒</string>
+    <string name="schedule_session_subtext">自动任务</string>
+    <string name="schedule_session_archive_user">一条计划任务正在执行；你可以在这里查看进度或继续与它对话。</string>
     <string name="job_wakeup_unknown_subject">后台命令 %1$s</string>
 
     <string name="job_wakeup_archive_title">自动处理：%1$s</string>

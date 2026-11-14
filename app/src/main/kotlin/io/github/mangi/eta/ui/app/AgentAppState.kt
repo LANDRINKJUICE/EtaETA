@@ -44,6 +44,7 @@ import io.github.mangi.eta.agent.runtime.AgentRunCheckpointStore
 import io.github.mangi.eta.agent.runtime.AgentRuntimeClient
 import io.github.mangi.eta.agent.runtime.AgentRuntimeWire
 import io.github.mangi.eta.agent.runtime.AgentUiHandoffPayload
+import io.github.mangi.eta.agent.runtime.BackgroundRunPolicy
 import io.github.mangi.eta.config.Prefs
 import io.github.mangi.eta.core.AndroidAgentLogger
 import io.github.mangi.eta.core.safeLogType
@@ -113,6 +114,8 @@ internal class AgentAppState(
     // 导入期间暂停保存：旧状态的增量保存会删除刚导入的会话；导入成功后整体重载，失败时数据库已回滚。
     private var persistencePaused = false
     private val runtimeRecoveryInProgress = AtomicBoolean(false)
+    /** 对账进行期间又来了新的触发（广播 / ON_RESUME）：合并成一次补跑，不丢弃触发。 */
+    private val runtimeRecoveryPending = AtomicBoolean(false)
     private val defaultThinkingEnabled = agentBooleanForUi(Prefs.Keys.AGENT_THINKING_ENABLED)
     @Volatile
     private var conversationPersistence = AgentConversationPersistence(initialConversations)
@@ -188,6 +191,11 @@ internal class AgentAppState(
                 importArchivedExternalRuns()
             } finally {
                 runtimeRecoveryInProgress.set(false)
+                // init 期间到达的「后台 run 启动」等触发会被置进 pending；init 是第二个持锁者，
+                // 必须和 refreshRuntimeResults 一样 drain，否则冷启动窗口内的认领被永久吞掉。
+                if (runtimeRecoveryPending.compareAndSet(true, false)) {
+                    refreshRuntimeResults()
+                }
             }
         }
     }
@@ -251,13 +259,26 @@ internal class AgentAppState(
             ?: AgentModelPickerProjector.project(providers, defaultProviderId, defaultModelId).selectedModel?.id
 
     fun refreshRuntimeResults() {
-        if (!runtimeRecoveryInProgress.compareAndSet(false, true)) return
+        if (!runtimeRecoveryInProgress.compareAndSet(false, true)) {
+            // 合并式互斥：对账正在进行时不丢弃这次触发，标记后由当前对账收尾补跑一次，
+            // 避免「广播到达时 init 对账未结束 → 触发被吞 → 运行期间再无第二次对账」（历史 R3）。
+            runtimeRecoveryPending.set(true)
+            return
+        }
         scope.launch(Dispatchers.IO) {
             try {
-                recoverRuntimeRuns()
-                importArchivedExternalRuns()
+                do {
+                    runtimeRecoveryPending.set(false)
+                    recoverRuntimeRuns()
+                    importArchivedExternalRuns()
+                    // 循环期间新到达的触发会重新置位 pending，再跑一轮；无触发则退出。
+                } while (runtimeRecoveryPending.get())
             } finally {
                 runtimeRecoveryInProgress.set(false)
+                // 极端窗口：finally 释放锁后、循环已退出，才来的触发补一次，避免永久漏掉。
+                if (runtimeRecoveryPending.compareAndSet(true, false)) {
+                    refreshRuntimeResults()
+                }
             }
         }
     }
@@ -407,12 +428,27 @@ internal class AgentAppState(
             activeRunIds = activeRunIds,
             locallyObservedRunIds = locallyObservedRunIds,
         )
-        val knownRunIds = checkpoints.mapTo(mutableSetOf()) { it.runId }.apply {
-            addAll(completedRuns.map { it.result.runId.ifBlank { it.handoff.id } })
-            addAll(locallyObservedRunIds)
-        }
+        val existingConversationIds = withContext(Dispatchers.Main) { conversationsById.keys.toSet() }
+        // 会话该不该补建，唯一判据 = conversationsById 里有没有这条会话，绝不用「有没有 checkpoint」
+        // 近似（后台唤醒 run 一启动就写 checkpoint，旧实现用 runId !in knownRunIds 过滤会把它恒排除，
+        // 导致「运行中进不了列表、结束才出现」——67d0a33 遗留根因）。判定下沉到纯逻辑
+        // BackgroundRunPolicy.conversationsToAdopt，只对 conv-wakeup-/conv-schedule- 会话补建，
+        // 普通用户会话缺失（删除 / 备份替换）不复活，配纯 JVM 单测守住。
+        val adoptionCandidates = (activeRunQuery as? AgentRuntimeClient.ActiveRunsQuery.Known)?.runs.orEmpty()
+            .filter { it.handoffSource == AgentRuntimeWire.AGENT_UI_HANDOFF_SOURCE }
+            .map { BackgroundRunPolicy.AdoptionCandidate(it.runId, it.conversationId, it.operation) }
+        val adoptedIds = BackgroundRunPolicy.conversationsToAdopt(
+            adoptionCandidates, existingConversationIds,
+        ).mapTo(mutableSetOf()) { it.conversationId }
+        val reattachRunIds = plan.reattach.mapTo(mutableSetOf()) { it.runId }
         val preparingRuns = (activeRunQuery as? AgentRuntimeClient.ActiveRunsQuery.Known)?.runs.orEmpty()
-            .filter { it.handoffSource == AgentRuntimeWire.AGENT_UI_HANDOFF_SOURCE && it.runId !in knownRunIds }
+            .filter {
+                it.handoffSource == AgentRuntimeWire.AGENT_UI_HANDOFF_SOURCE &&
+                    it.conversationId in adoptedIds &&
+                    // 有 checkpoint 的 active run 已在 plan.reattach（带 operation/rewriteTarget 还原），
+                    // 由那条路 attach 即可；这里只收「无 checkpoint」的纯新 run，避免重复 attach。
+                    it.runId !in reattachRunIds
+            }
         val recoveringConversationIds = buildSet {
             plan.completed.forEach { add(AgentUiHandoffPayload.from(it.result.handoff.payload).conversationId) }
             plan.interrupted.forEach { add(AgentUiHandoffPayload.from(it.handoff.payload).conversationId) }
@@ -421,10 +457,30 @@ internal class AgentAppState(
         }
         // 后台任务唤醒 / 自动任务等入口以 AGENT_UI handoff 启动，但它们的会话此前不在
         // conversationsById 里（App 没在线发过这条会话）。startReattachedRun 对未知会话会直接
-        // `?: return`，导致"处理中列表看不到、结束后才以只读归档出现"。这里先把这类 active run
-        // 认领成**真实 UI 会话**：UI 自己是唯一写者（随后 persistConversations 落库），零竞态，
-        // 接着 withLoadedConversations/attachRun 就能把实时事件灌进来，会话可回复、可继续对话。
-        ensurePreparingConversations(preparingRuns)
+        // `?: return`，completed/interrupted 缺会话会被 ACK 丢弃（cold-start 结果永久丢失）。
+        // 这里把「active 待认领」与「completed/interrupted 冷启动结果缺失」的无人值守会话
+        // 一并补建成真实 UI 会话：UI 是唯一写者（随后 persistConversations 落库），零竞态，
+        // 接着 withLoadedConversations 会 pin 住它们（防 prune 卸载），attach/apply 灌入实时 / 终态内容。
+        val seedTargets = buildList {
+            preparingRuns.forEach { add(it.conversationId to it.runId) }
+            // 带 checkpoint 的 active run 归 plan.reattach（唤醒轮一启动就写 checkpoint，正是这条），
+            // 会话缺失时同样必须补建，否则 startReattachedRun 仍 `?: return`、运行中进不了列表。
+            plan.reattach.forEach {
+                val id = AgentUiHandoffPayload.from(it.handoff.payload).conversationId
+                if (id !in existingConversationIds) add(id to it.runId)
+            }
+            plan.completed.forEach {
+                val id = AgentUiHandoffPayload.from(it.result.handoff.payload).conversationId
+                if (id !in existingConversationIds) {
+                    add(id to it.result.result.runId.ifBlank { it.result.handoff.id })
+                }
+            }
+            plan.interrupted.forEach {
+                val id = AgentUiHandoffPayload.from(it.handoff.payload).conversationId
+                if (id !in existingConversationIds) add(id to it.runId)
+            }
+        }
+        val seededConversations = seedUnattendedConversations(seedTargets)
         withLoadedConversations(recoveringConversationIds) {
             val orphanRewrites = if (activeStateKnown && terminalStateKnown) withContext(Dispatchers.Main) {
                 val observed = checkpoints.mapTo(mutableSetOf()) { it.runId }.apply {
@@ -539,7 +595,7 @@ internal class AgentAppState(
             }
             // 新建的唤醒会话由 UI 单写者落库：确保杀进程/冷启动后它仍在列表、可继续对话，
             // 不再退化成"只在终态写归档表"的只读副本。
-            if (preparingRuns.isNotEmpty()) {
+            if (seededConversations) {
                 withContext(Dispatchers.Main) { persistConversations() }.await()
             }
         }
@@ -606,31 +662,38 @@ internal class AgentAppState(
     }
 
     /**
-     * 把「App 没在线发过、但 Runtime 已在跑」的 AGENT_UI active run 认领成真实 UI 会话。
+     * 为「App 没在线发过、但 Runtime 已在跑 / 已有终态结果」的无人值守会话补建真实 UI 会话。
      *
-     * 后台任务唤醒轮（[io.github.mangi.eta.agent.terminal.BackgroundJobWakeup]）用
-     * `AGENT_UI_HANDOFF_SOURCE` + 稳定 `conv-wakeup-` 会话 id 启动，但启动那一刻 App 可能
-     * 根本没打开、内存里没有这条会话。若不在这里补建，`startReattachedRun` 会 `?: return`，
-     * 这轮就只能在终态以只读归档形式出现——即用户反馈的"处理中看不到、结束后能看但发消息
-     * 弹新空会话"。
+     * 唤醒 / 自动任务用稳定 `conv-wakeup-` / `conv-schedule-` 会话 id 启动，但那一刻 App 可能
+     * 根本没打开、内存里没有这条会话。active run 若不补建，`startReattachedRun` 会 `?: return`；
+     * completed / interrupted 若不补建，终态结果会被 ACK 丢弃（cold-start 结果永久丢失）。
+     * 这里统一补「已加载的空会话 + 一条用户消息占位」，随后 attach 的 onReplay/onEvent 或
+     * `AgentPendingResultRecovery.apply` 灌入真实内容。UI 是唯一写者、零竞态。
      *
-     * 只建「已加载的空会话 + 一条用户消息占位」，不造 assistant 气泡：随后 `attachRun` 的
-     * onReplay/onEvent 会把 run 的真实事件灌进来生成消息与流式状态。会话由 UI 创建并随后
-     * `persistConversations()` 落库，UI 是唯一写者，不与后台进程抢写，零竞态。
+     * @param seeds (conversationId, runId) 对；runId 仅用于生成占位消息 id，可为空串。
      */
-    private suspend fun ensurePreparingConversations(
-        runs: List<AgentRuntimeWire.ActiveRunSnapshot>,
-    ) = withContext(Dispatchers.Main.immediate) {
+    private suspend fun seedUnattendedConversations(
+        seeds: List<Pair<String, String>>,
+    ): Boolean = withContext(Dispatchers.Main.immediate) {
         val now = System.currentTimeMillis()
-        for (run in runs) {
-            val id = run.conversationId
-            if (id.isBlank() || conversationsById.containsKey(id)) continue
+        var created = false
+        for ((id, runId) in seeds) {
+            // 只认无人值守后台会话；普通用户会话缺失（删除 / 备份替换）不复活，保留既有语义。
+            if (!BackgroundRunPolicy.isUnattendedConversation(id) ||
+                conversationsById.containsKey(id)
+            ) continue
+            // 按会话前缀选文案，避免把自动任务的会话写成「后台命令唤醒」这种并不存在的事实。
+            val scheduled = id.startsWith(BackgroundRunPolicy.SCHEDULED_TASK_PREFIX)
+            val userTextRes = if (scheduled) R.string.schedule_session_archive_user
+                else R.string.job_wakeup_archive_user
+            val titleRes = if (scheduled) R.string.schedule_session_subtext
+                else R.string.job_wakeup_subtext
             val seed = emptyChatState(defaultThinkingEnabled).copy(
                 isConversationLoaded = true,
                 messages = listOf(
                     UserMessageUi(
-                        id = "user-${run.runId}",
-                        content = appContext.getString(R.string.job_wakeup_archive_user),
+                        id = "user-$runId",
+                        content = appContext.getString(userTextRes),
                     ),
                 ),
             )
@@ -638,10 +701,12 @@ internal class AgentAppState(
             conversationUpdatedAt = conversationUpdatedAt + (id to now)
             if (conversationTitles[id].isNullOrBlank()) {
                 // 无参文案（job_wakeup_title 带 %1$s 占位、此处拿不到 subject，别用）。
-                conversationTitles = conversationTitles + (id to appContext.getString(R.string.job_wakeup_subtext))
+                conversationTitles = conversationTitles + (id to appContext.getString(titleRes))
             }
+            created = true
         }
-        if (runs.isNotEmpty()) refreshConversationSummaries()
+        if (created) refreshConversationSummaries()
+        created
     }
 
     private fun startReattachedRun(

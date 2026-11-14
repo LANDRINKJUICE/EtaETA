@@ -36,12 +36,13 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
     private var launchRequests by mutableStateOf(MainActivityLaunchRequests())
     private var appliedPredictiveBackEnabled = true
-    /** 后台唤醒轮启动计数：每次 +1 触发 AgentAppRoot 实时对账（见 wakeupRefreshSignal）。 */
+    /** 任意无人值守后台 run 启动计数：每次 +1 触发 AgentAppRoot 实时对账（见 wakeupRefreshSignal）。 */
     private var wakeupRefreshSignal by mutableIntStateOf(0)
     private var wakeupReceiverRegistered = false
     private val wakeupRunReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            if (intent.action == io.github.mangi.eta.agent.terminal.ACTION_WAKEUP_RUN_STARTED) {
+            // 统一 action：唤醒轮 / 自动任务 / 任何新增后台 run 都由 Runtime admit 成功后发出。
+            if (intent.action == io.github.mangi.eta.agent.runtime.ACTION_UNATTENDED_RUN_STARTED) {
                 // App 在前台时立刻认领这个 active run，让它在会话列表里可见、可对话。
                 wakeupRefreshSignal += 1
             }
@@ -140,7 +141,7 @@ class MainActivity : ComponentActivity() {
         AgentRuntimeService.onEtaUiVisibilityChanged()
         if (!wakeupReceiverRegistered) {
             val filter = IntentFilter(
-                io.github.mangi.eta.agent.terminal.ACTION_WAKEUP_RUN_STARTED,
+                io.github.mangi.eta.agent.runtime.ACTION_UNATTENDED_RUN_STARTED,
             )
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 registerReceiver(wakeupRunReceiver, filter, Context.RECEIVER_NOT_EXPORTED)

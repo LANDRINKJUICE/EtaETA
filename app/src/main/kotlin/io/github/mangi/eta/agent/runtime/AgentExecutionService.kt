@@ -257,9 +257,12 @@ internal class AgentExecutionService : Service() {
                 }
                 instance?.syncElapsedTicker()
                 if ((finished || failed) && !resultPublished && conversationId != null) {
-                    // 前台 UI 聊天一轮说完（成功或失败）：结果/错误就在屏幕上，不再弹通知刷屏、占通知栏。
+                    // 前台「用户正在看着的 UI 聊天」一轮说完：结果/错误就在屏幕上，不弹通知刷屏。
+                    // 但无人值守后台 run（唤醒轮 / 自动任务）虽用 AGENT_UI handoff，却没有用户在线
+                    // 盯着这个会话——必须照发结果通知（可回复 + 按会话深链），否则前台跑完会完全静默。
+                    val unattended = BackgroundRunPolicy.isUnattendedConversation(conversationId.orEmpty())
                     val foregroundUiChat = handoffSource == AgentRuntimeWire.AGENT_UI_HANDOFF_SOURCE &&
-                        MainActivity.isInForeground
+                        MainActivity.isInForeground && !unattended
                     if (!foregroundUiChat) {
                         // 后台/无 UI 的 run 用 archive-/run:/assistant- 前缀会话 id：它们不在可回复的
                         // UI 会话表里，挂回复按钮会「点了必然失败」，所以这类通知不挂回复、查看结果

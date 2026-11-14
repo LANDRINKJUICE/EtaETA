@@ -144,8 +144,8 @@ fun AgentAppRoot(
     onSpeechSettingsOpened: () -> Unit = {},
     onAssistantConversationOpened: (Boolean) -> Unit = {},
     /**
-     * 后台唤醒轮启动的信号（每次 +1）。App 在前台时 MainActivity 收到
-     * [io.github.mangi.eta.agent.terminal.ACTION_WAKEUP_RUN_STARTED] 广播后递增，
+     * 任意无人值守后台 run 启动的信号（每次 +1）。App 在前台时 MainActivity 收到
+     * [io.github.mangi.eta.agent.runtime.ACTION_UNATTENDED_RUN_STARTED] 广播后递增，
      * 这里据此立刻 refreshRuntimeResults() 把那个 active run 认领成会话列表里可见、可对话的会话，
      * 不必等回前台 ON_RESUME。App 未打开时无人收广播、零副作用。
      */

@@ -1,12 +1,13 @@
 package io.github.mangi.eta.agent.terminal
 
 import android.content.Context
-import android.content.Intent
+import android.os.SystemClock
 import io.github.mangi.eta.R
 import io.github.mangi.eta.agent.model.AgentModelClient
 import io.github.mangi.eta.agent.runtime.AgentConversationIdentity
 import io.github.mangi.eta.agent.runtime.AgentRuntimeWire
 import io.github.mangi.eta.agent.runtime.AgentUiHandoffPayload
+import io.github.mangi.eta.agent.runtime.BackgroundRunPolicy
 import io.github.mangi.eta.core.AgentLogger
 import io.github.mangi.eta.core.safeLogType
 import java.io.File
@@ -17,15 +18,11 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
-/**
- * 唤醒轮启动时发出的「有新 UI 会话」信号。App 在前台时 [io.github.mangi.eta.ui.MainActivity]
- * 收到后调 `AgentAppState.refreshRuntimeResults()`，立刻把这个 active run 认领成会话列表里
- * 一条可见、可对话的会话（处理中就看得到），不依赖"回前台 ON_RESUME"或常驻 Room Flow。
- * App 没打开时无人接收、零副作用；无常驻订阅、无轮询，避开 265ef05 被回滚的延迟坑。
- */
-internal const val ACTION_WAKEUP_RUN_STARTED = "io.github.mangi.eta.action.WAKEUP_RUN_STARTED"
-internal const val EXTRA_WAKEUP_CONVERSATION_ID = "io.github.mangi.eta.extra.WAKEUP_CONVERSATION_ID"
+// 统一「后台 run 已启动」信号收敛到 agent.runtime.UnattendedRunSignal（唯一事实源）：
+// 由 AgentRuntimeService.admitRun 成功后发出；入口不再各自发广播，避免「广播早于 run 提交」竞态。
 
 /**
  * 后台命令结束后的自动唤醒接线：判定 -> 通知 -> 申请执行租约 -> 发起一轮 agent run。
@@ -241,9 +238,6 @@ internal class BackgroundJobWakeup(
                     null
                 }
             if (request == null) return
-            // run 即将真正启动：通知前台 UI 立刻把这个 AGENT_UI active run 认领成会话列表里
-            // 一条可见、可对话的会话（无常驻订阅、App 未打开时无人收、零副作用）。
-            notifyUiRunStarted(request)
             outcome = when (val result = runWithTimeout(task, request, signal.watch)) {
                 null -> if (stoppedByUser) JobWakeupPolicy.Finish.STOPPED else JobWakeupPolicy.Finish.TIMED_OUT
                 else -> if (result.ok) JobWakeupPolicy.Finish.DONE else JobWakeupPolicy.Finish.FAILED
@@ -264,11 +258,15 @@ internal class BackgroundJobWakeup(
     }
 
     /**
-     * 在独立线程上跑一轮，并最多等 [RUN_TIMEOUT_MILLIS]。
+     * 在独立线程上跑一轮，用**进展看门狗**收口而不是总墙钟一刀切。
      *
-     * 返回 null 表示这一轮没有正常收尾（等待超时 / 被取消 / 宿主已关闭）；
-     * 返回值里的 `ok` 是 Runtime 给出的真实成败。submit 前后都判 closed：
-     * 关闭过程中提交的新工作没人收尾，通知就会永远停在"正在处理"。
+     * 返回 null 表示这一轮没有正常收尾（无进展超时 / 硬上限 / 被取消 / 宿主已关闭）；
+     * 返回值里的 `ok` 是 Runtime 给出的真实成败。
+     *
+     * 旧实现 `future.get(10min)` 到点就 `cancel(true)`，一轮长思考 / 多工具 / 子代理 / 等模型
+     * 都会被当成超时杀掉——这是用户反馈「后台唤醒常被停止或超时」的确定性根。新实现由
+     * onEvent 刷新 lastProgressAt，等待循环按小片 get 轮询，只有「持续无进展」或「超硬上限」
+     * 才取消，正常的长任务能完整跑完。
      */
     private fun runWithTimeout(
         task: DetachedTask,
@@ -282,9 +280,23 @@ internal class BackgroundJobWakeup(
         val worker = Executors.newSingleThreadExecutor { runnable ->
             Thread(runnable, "eta-job-wakeup-run-${task.id.take(6)}").apply { isDaemon = true }
         }
+        val startedAt = SystemClock.elapsedRealtime()
+        val lastProgressAt = AtomicLong(startedAt)
+        val activeTools = AtomicInteger(0)
         try {
             val future = worker.submit<AgentRuntimeWire.RunResult?> {
                 runWakeup(request) { event ->
+                    // 每个 AgentEvent 都是「这一轮还活着」的证据；用单调时钟，不受系统对时影响。
+                    lastProgressAt.set(SystemClock.elapsedRealtime())
+                    // 工具执行期间没有中间事件，记活跃工具数，看门狗不按 idle 误杀长工具。
+                    when (event) {
+                        is io.github.mangi.eta.agent.runtime.AgentEvent.ToolStarted,
+                        is io.github.mangi.eta.agent.runtime.AgentEvent.HostedToolStarted -> activeTools.incrementAndGet()
+                        is io.github.mangi.eta.agent.runtime.AgentEvent.ToolFinished,
+                        is io.github.mangi.eta.agent.runtime.AgentEvent.HostedToolFinished ->
+                            activeTools.updateAndGet { current -> (current - 1).coerceAtLeast(0) }
+                        else -> Unit
+                    }
                     // 终态已落地后丢弃迟到事件，避免把终态通知复活成 ongoing 僵尸。
                     if (task.id !in finishedTasks) {
                         val text = stageOf(event)
@@ -302,10 +314,30 @@ internal class BackgroundJobWakeup(
                 logger.warn("Background job wakeup cancelled: jobId=${task.id} reason=host_closed")
                 future.cancel(true)
             }
-            return future.get(RUN_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
-        } catch (timeout: TimeoutException) {
-            logger.warn("Background job wakeup exceeded $RUN_TIMEOUT_MILLIS ms; cancelling jobId=${task.id}")
-            return null
+            // 轮询等待：小片 future.get，按「持续无进展 / 硬上限」判定，而不是总墙钟。
+            while (true) {
+                try {
+                    return future.get(WAIT_SLICE_MILLIS, TimeUnit.MILLISECONDS)
+                } catch (sliceTimeout: TimeoutException) {
+                    val now = SystemClock.elapsedRealtime()
+                    if (BackgroundRunPolicy.shouldTimeOut(
+                            nowMillis = now,
+                            startedAtMillis = startedAt,
+                            lastProgressAtMillis = lastProgressAt.get(),
+                            idleTimeoutMillis = IDLE_TIMEOUT_MILLIS,
+                            hardCapMillis = HARD_CAP_MILLIS,
+                            activeTools = activeTools.get(),
+                        )
+                    ) {
+                        logger.warn(
+                            "Background job wakeup watchdog timeout jobId=${task.id} " +
+                                "(idle=${IDLE_TIMEOUT_MILLIS}ms hardCap=${HARD_CAP_MILLIS}ms); cancelling",
+                        )
+                        future.cancel(true)
+                        return null
+                    }
+                }
+            }
         } catch (cancelled: CancellationException) {
             logger.warn("Background job wakeup cancelled: jobId=${task.id}")
             return null
@@ -368,24 +400,7 @@ internal class BackgroundJobWakeup(
         )
     }
 
-    /** 唤醒 run 启动时广播一次，让前台 UI 实时认领（见 [ACTION_WAKEUP_RUN_STARTED]）。 */
-    private fun notifyUiRunStarted(request: AgentRuntimeWire.RunRequest) {
-        val conversationId = request.handoff
-            ?.takeIf { it.source == AgentRuntimeWire.AGENT_UI_HANDOFF_SOURCE }
-            ?.let { AgentUiHandoffPayload.from(it.payload).conversationId }
-            ?.takeIf(String::isNotBlank)
-            ?: return
-        runCatching {
-            val intent = Intent(ACTION_WAKEUP_RUN_STARTED)
-                .setPackage(context.packageName)
-                .putExtra(EXTRA_WAKEUP_CONVERSATION_ID, conversationId)
-            context.applicationContext.sendBroadcast(intent)
-        }.onFailure { failure ->
-            logger.warn("wakeup ui run started broadcast failed: type=${failure.safeLogType()}")
-        }
-    }
-
-    /**
+/**
      * 把一个 Runtime 事件映射成「运行中通知」的阶段文案；null 表示该事件不值得更新。
      * 只挑能告诉用户「在干嘛」的关键节点，避免每个 delta 都重绑通知。
      * 放在 Android 侧（不进纯逻辑 JobWakeupPolicy），因为要读 R.string 与 AgentEvent。
@@ -461,7 +476,17 @@ internal class BackgroundJobWakeup(
     private companion object {
         const val LEASE_PREFIX = "terminal-job-wakeup:"
 
-        /** 无人值守单轮墙钟上限：与 [io.github.mangi.eta.agent.schedule.ScheduledTaskRunner.MAX_RUN_MILLIS] 对齐。 */
-        const val RUN_TIMEOUT_MILLIS = 10L * 60L * 1_000L
+        /**
+         * 无进展超时：持续没有 AgentEvent（长思考 / 卡死 / 模型无响应）才取消，
+         * 不再用「总墙钟 10 分钟」一刀切把正常的长任务误杀（用户反馈「常被停止 / 超时」的根）。
+         * 与 [io.github.mangi.eta.agent.schedule.ScheduledTaskRunner.IDLE_TIMEOUT_MILLIS] 对齐。
+         */
+        // idle 阈值不小于旧的总墙钟 10 分钟：单次长工具（构建 / 下载 / 长命令）期间不发
+        // AgentEvent，若 idle 比旧墙钟还短反而把能跑完的任务误杀。工具在跑时另有 activeTools 保护。
+        const val IDLE_TIMEOUT_MILLIS = 10L * 60L * 1_000L
+        /** 硬上限：无论是否有进展，一轮最多跑 60 分钟，防卡死任务永久占住服务与模型配额。 */
+        const val HARD_CAP_MILLIS = 60L * 60L * 1_000L
+        /** 等待循环轮询片长。 */
+        const val WAIT_SLICE_MILLIS = 2L * 1_000L
     }
 }

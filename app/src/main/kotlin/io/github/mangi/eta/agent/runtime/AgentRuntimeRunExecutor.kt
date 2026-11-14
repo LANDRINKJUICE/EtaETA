@@ -99,7 +99,13 @@ internal class AgentRuntimeRunExecutor(
         var checkpointRecorder: AgentRunCheckpointRecorder? = null
         val timing = AgentRunTiming(AndroidAgentLogger)
         // 任务中心的「运行中」投影：只登记元数据，标题仅存在于内存，不落盘、不写日志。
-        val runSource = AgentRunSource.fromHandoffSource(request.handoff?.source)
+        // 自动任务 / 唤醒轮改用 AGENT_UI handoff 后，单看 source 会被 fromHandoffSource 当成 CHAT，
+        // 用量归因与「运行中」分区会错标；这里按 entryTag 精确还原真实来源。
+        val runSource = when {
+            AgentUiHandoffPayload.isScheduledTask(request.handoff) -> AgentRunSource.SCHEDULED
+            AgentUiHandoffPayload.isJobWakeup(request.handoff) -> AgentRunSource.JOB_WAKEUP
+            else -> AgentRunSource.fromHandoffSource(request.handoff?.source)
+        }
         val runRegistration = agentLiveRuns.begin(
             runId = request.runId,
             source = runSource,
@@ -246,8 +252,8 @@ internal class AgentRuntimeRunExecutor(
                 selfToolsAllowed = roleplayContext == null,
                 // 角色会话不提供会话级工具；自动任务 run 里禁止再次创建自动任务（审查 M3② / M4）。
                 conversationToolsAllowed = roleplayContext == null,
-                scheduledRun = request.handoff?.source ==
-                    AgentRuntimeWire.ETA_SCHEDULED_TASK_HANDOFF_SOURCE,
+                scheduledRun = AgentUiHandoffPayload.isScheduledTask(request.handoff) ||
+                    request.handoff?.source == AgentRuntimeWire.ETA_SCHEDULED_TASK_HANDOFF_SOURCE,
                 // 后台任务失败唤醒的 run：它起的 terminal_job 会被标记来源，完成时不再触发唤醒。
                 jobWakeupRun = jobWakeupRun,
                 screenshotExcludedPackages = {

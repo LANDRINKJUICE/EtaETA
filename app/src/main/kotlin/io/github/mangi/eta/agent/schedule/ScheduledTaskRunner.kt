@@ -4,15 +4,19 @@ import android.content.Context
 import android.content.Intent
 import android.os.SystemClock
 import io.github.mangi.eta.agent.model.AgentModelClient
+import io.github.mangi.eta.agent.runtime.AgentConversationIdentity
 import io.github.mangi.eta.agent.runtime.AgentRuntimeClient
 import io.github.mangi.eta.agent.runtime.AgentRuntimeWire
+import io.github.mangi.eta.agent.runtime.AgentUiHandoffPayload
+import io.github.mangi.eta.agent.runtime.BackgroundRunPolicy
 import io.github.mangi.eta.core.AndroidAgentLogger
 import io.github.mangi.eta.core.safeLogType
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
-import org.json.JSONObject
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * 到点执行一条自动任务。
@@ -25,15 +29,24 @@ import org.json.JSONObject
  * 之后才推进下一次触发，被拦下的任务就再也不会被排期。因此 [advanceSchedule] 在启动服务之前
  * 完成，[execute] 里的闸门只影响"这一次跑不跑"，不影响后续。
  *
- * 这里刻意不复用聊天入口：没有会话、没有 UI handoff，conversationId 由唯一 runId 派生，
- * 因此不会和用户正在进行的对话互相打断；同时仍然走完整的 Runtime 管线（工具、危险闸门、
- * 记忆、技能都在），不是"绕过确认的后门"。
+ * 自动任务与后台唤醒一样，是「无人值守但可回复」的 AGENT_UI 会话：用稳定的
+ * `conv-schedule-<hash(taskId)>` 会话 id（[AgentConversationIdentity.scheduledTaskConversationId]），
+ * 运行一开始就能被 UI 认领进聊天列表、实时看到进度、结束后可继续对话，且统一投影到状态层。
+ * 仍然走完整的 Runtime 管线（工具、危险闸门、记忆、技能都在），不是"绕过确认的后门"。
  */
 internal object ScheduledTaskRunner {
     private const val PROMPT_MAX_CHARS = 4_000
 
-    /** 无人值守单次运行的墙钟上限（审查 m11）：超时取消，避免一条任务长期占住前台服务与模型配额。 */
-    const val MAX_RUN_MILLIS = 10L * 60L * 1_000L
+    /**
+     * 无进展超时：持续没有 AgentEvent（长思考 / 卡死 / 模型无响应）才取消，
+     * 不再用「总墙钟 10 分钟」一刀切把正常的长任务误杀（用户反馈「常被停止 / 超时」的根）。
+     */
+    // idle 阈值不小于旧的总墙钟 10 分钟（见 BackgroundJobWakeup 同款注释）。
+    const val IDLE_TIMEOUT_MILLIS = 10L * 60L * 1_000L
+    /** 硬上限：无论是否有进展，一轮最多跑 60 分钟，防止卡死任务永久占住前台服务与模型配额。 */
+    const val MAX_RUN_MILLIS = 60L * 60L * 1_000L
+    /** 等待循环的轮询片长：兼顾取消灵敏度与线程唤醒开销。 */
+    private const val WAIT_SLICE_MILLIS = 2L * 1_000L
 
     /** 闸门判定"另一个自动任务正在跑"时，一次性任务的重试点间隔。 */
     private const val BUSY_RETRY_DELAY_MILLIS = 2L * 60L * 1_000L
@@ -94,6 +107,11 @@ internal object ScheduledTaskRunner {
             .putExtra(ScheduledTaskService.EXTRA_TASK_ID, taskId)
             // 标题随 Intent 带过去，服务端不必在主线程读任务文件（审查 m6）。
             .putExtra(ScheduledTaskService.EXTRA_TASK_TITLE, title)
+            // 稳定可回复会话 id：执行中通知按会话深链直达，用户点进去就能观测 / 对话这个任务。
+            .putExtra(
+                ScheduledTaskService.EXTRA_CONVERSATION_ID,
+                io.github.mangi.eta.agent.runtime.AgentConversationIdentity.scheduledTaskConversationId(taskId),
+            )
         val started = runCatching { appContext.startForegroundService(intent) }
         if (started.isSuccess) return
         AndroidAgentLogger.warnThrottled("scheduled_task_service_start_failed") {
@@ -163,12 +181,10 @@ internal object ScheduledTaskRunner {
                 // 下一轮已经由 advanceSchedule 写入；这里沿用，不覆盖。
                 nextTriggerAtMillis = task.nextTriggerAtMillis,
             )
-            ScheduledTaskNotifications.showResult(
-                context = appContext,
-                task = updated ?: task,
-                succeeded = succeeded,
-                summary = summary,
-            )
+            // 结果通知统一交给 Runtime 的 run_result 段（AgentExecutionService.showRunResult）：
+            // 自动任务现在是可回复的 UI 会话，那条通知按会话深链、带通知栏回复、成功/失败都有，
+            // 不再用 scheduled_task_result 段单发一条（避免双发 + 深链分叉）。状态层与结果层
+            // 各自收敛到唯一出口，符合通知架构 SOP 的「统一编排、同 ID 变形」。
             AndroidAgentLogger.debug {
                 "Scheduled task ${task.id} finished: ok=$succeeded durationMs=$durationMillis"
             }
@@ -189,22 +205,69 @@ internal object ScheduledTaskRunner {
         val runId = "scheduled-${task.id.take(8)}-${System.currentTimeMillis()}"
         val request = runCatching { buildRequest(context, task, runId) }.getOrElse { throwable ->
             AndroidAgentLogger.warn("Scheduled task request build failed: type=${throwable.safeLogType()}")
-            return failureResult(runId, throwable.message ?: throwable.javaClass.simpleName)
+            // 构建请求就失败 = 根本没进 Runtime，不会触发 run_result 终态通知。
+            // 这里用 scheduled_task_result 段发一条可见的失败兜底，避免「失败完全静默」；
+            // 正常进入 Runtime 的成败仍由 run_result 段统一承担，不会双发。
+            val error = throwable.message ?: throwable.javaClass.simpleName
+            runCatching {
+                ScheduledTaskNotifications.showResult(
+                    context = context,
+                    task = task,
+                    succeeded = false,
+                    summary = ScheduledTask.summarizeResult(error),
+                )
+            }
+            return failureResult(runId, error)
         }
         val executor = Executors.newSingleThreadExecutor { runnable ->
             Thread(runnable, "scheduled-task-run-${task.id.take(6)}").apply { isDaemon = true }
         }
+        val startedAt = SystemClock.elapsedRealtime()
+        val lastProgressAt = AtomicLong(startedAt)
+        val activeTools = AtomicInteger(0)
         return try {
             val future = executor.submit<AgentRuntimeWire.RunResult> {
-                AgentRuntimeClient(context, AndroidAgentLogger).run(request) { }
+                // 每个 AgentEvent 都是「这一轮还活着」的证据；用单调时钟，不受系统对时影响。
+                // 工具执行期间没有中间事件，记活跃工具数，看门狗不按 idle 误杀长工具。
+                AgentRuntimeClient(context, AndroidAgentLogger).run(request) { event ->
+                    lastProgressAt.set(SystemClock.elapsedRealtime())
+                    when (event) {
+                        is io.github.mangi.eta.agent.runtime.AgentEvent.ToolStarted,
+                        is io.github.mangi.eta.agent.runtime.AgentEvent.HostedToolStarted -> activeTools.incrementAndGet()
+                        is io.github.mangi.eta.agent.runtime.AgentEvent.ToolFinished,
+                        is io.github.mangi.eta.agent.runtime.AgentEvent.HostedToolFinished ->
+                            activeTools.updateAndGet { current -> (current - 1).coerceAtLeast(0) }
+                        else -> Unit
+                    }
+                }
             }
-            future.get(MAX_RUN_MILLIS, TimeUnit.MILLISECONDS)
-        } catch (timeout: TimeoutException) {
-            AndroidAgentLogger.warn("Scheduled task ${task.id} exceeded $MAX_RUN_MILLIS ms; cancelling")
-            failureResult(
-                runId,
-                context.getString(io.github.mangi.eta.R.string.schedule_run_timeout),
-            )
+            // 轮询等待：小片 future.get，按「持续无进展 / 硬上限」判定，而不是总墙钟。
+            while (true) {
+                try {
+                    return future.get(WAIT_SLICE_MILLIS, TimeUnit.MILLISECONDS)
+                } catch (sliceTimeout: TimeoutException) {
+                    val now = SystemClock.elapsedRealtime()
+                    if (BackgroundRunPolicy.shouldTimeOut(
+                            nowMillis = now,
+                            startedAtMillis = startedAt,
+                            lastProgressAtMillis = lastProgressAt.get(),
+                            idleTimeoutMillis = IDLE_TIMEOUT_MILLIS,
+                            hardCapMillis = MAX_RUN_MILLIS,
+                            activeTools = activeTools.get(),
+                        )
+                    ) {
+                        AndroidAgentLogger.warn(
+                            "Scheduled task ${task.id} watchdog timeout " +
+                                "(idle=${IDLE_TIMEOUT_MILLIS}ms hardCap=${MAX_RUN_MILLIS}ms); cancelling",
+                        )
+                        future.cancel(true)
+                        return failureResult(
+                            runId,
+                            context.getString(io.github.mangi.eta.R.string.schedule_run_timeout),
+                        )
+                    }
+                }
+            }
         } catch (throwable: Throwable) {
             if (throwable is InterruptedException) Thread.currentThread().interrupt()
             AndroidAgentLogger.warn("Scheduled task run failed: type=${throwable.safeLogType()}")
@@ -229,14 +292,15 @@ internal object ScheduledTaskRunner {
         runId: String,
     ): AgentRuntimeWire.RunRequest {
         val config = AgentModelClient.loadConfig()
+        // 无人值守但可回复的真实 UI 会话：稳定派生、同一任务多次触发 / 用户追问进同一会话。
+        val conversationId = AgentConversationIdentity.scheduledTaskConversationId(task.id)
         val handoff = AgentRuntimeWire.EntryHandoff(
             id = "scheduled-$runId",
-            source = AgentRuntimeWire.ETA_SCHEDULED_TASK_HANDOFF_SOURCE,
-            payload = JSONObject()
-                .put("task_id", task.id)
-                .put("title", task.title)
-                .put("trigger_at", task.nextTriggerAtMillis)
-                .toString(),
+            source = AgentRuntimeWire.AGENT_UI_HANDOFF_SOURCE,
+            payload = AgentUiHandoffPayload(
+                conversationId = conversationId,
+                entryTag = AgentUiHandoffPayload.ENTRY_TAG_SCHEDULED_TASK,
+            ).toJson(),
             dismissEntrySurfaceOnForegroundOperation = false,
         )
         return AgentRuntimeWire.RunRequest(
