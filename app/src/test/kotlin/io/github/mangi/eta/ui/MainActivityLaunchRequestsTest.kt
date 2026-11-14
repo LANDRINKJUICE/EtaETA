@@ -2,7 +2,6 @@ package io.github.mangi.eta.ui
 
 import android.content.ClipData
 import android.content.Intent
-import androidx.test.core.app.ApplicationProvider
 import android.net.Uri
 import android.os.Bundle
 import android.os.Parcel
@@ -13,6 +12,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
@@ -179,7 +179,7 @@ class MainActivityLaunchRequestsTest {
 
     @Test
     fun `通知回复带合法令牌才注入消息`() {
-        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val context = RuntimeEnvironment.getApplication()
         val token = io.github.mangi.eta.agent.notify.ReplyToken.current(context)
         val result = MainActivityLaunchRequests().accept(replyIntent(token, "  继续吧  "), context)
         assertEquals(
@@ -190,7 +190,7 @@ class MainActivityLaunchRequestsTest {
 
     @Test
     fun `通知回复令牌缺失或伪造一律不接受`() {
-        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val context = RuntimeEnvironment.getApplication()
         // 无令牌
         assertEquals(
             null,
@@ -206,7 +206,7 @@ class MainActivityLaunchRequestsTest {
 
     @Test
     fun `同一回复 nonce 第二次被拒不再注入消息`() {
-        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val context = RuntimeEnvironment.getApplication()
         val token = io.github.mangi.eta.agent.notify.ReplyToken.current(context)
         val nonce = io.github.mangi.eta.agent.notify.ReplyToken.newNonce()
         // 第一次：合法令牌 + 首次 nonce → 注入。
