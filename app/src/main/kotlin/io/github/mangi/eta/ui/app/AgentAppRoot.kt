@@ -143,6 +143,13 @@ fun AgentAppRoot(
     onTerminalOpened: () -> Unit = {},
     onSpeechSettingsOpened: () -> Unit = {},
     onAssistantConversationOpened: (Boolean) -> Unit = {},
+    /**
+     * 后台唤醒轮启动的信号（每次 +1）。App 在前台时 MainActivity 收到
+     * [io.github.mangi.eta.agent.terminal.ACTION_WAKEUP_RUN_STARTED] 广播后递增，
+     * 这里据此立刻 refreshRuntimeResults() 把那个 active run 认领成会话列表里可见、可对话的会话，
+     * 不必等回前台 ON_RESUME。App 未打开时无人收广播、零副作用。
+     */
+    wakeupRefreshSignal: Int = 0,
 ) {
     val context = LocalContext.current
     val resources = LocalResources.current
@@ -173,6 +180,10 @@ fun AgentAppRoot(
     var navigationResetKey by rememberSaveable { mutableIntStateOf(0) }
     val appViewModel = viewModel<AgentAppViewModel>()
     val agentState = appViewModel.state
+    // 后台唤醒轮在 App 前台时启动：立刻对账把它认领成会话列表里可见、可对话的会话。
+    LaunchedEffect(wakeupRefreshSignal) {
+        if (wakeupRefreshSignal > 0) agentState.refreshRuntimeResults()
+    }
     val runtimeActive by AgentRuntimeService.keepScreenOn.collectAsState()
     val view = LocalView.current
     val keepScreenOn = backStack.lastOrNull() == AppRoute.Home &&

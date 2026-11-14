@@ -1,7 +1,11 @@
 package io.github.mangi.eta.ui
 
 import android.app.UiModeManager
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
@@ -10,6 +14,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.view.WindowInsetsControllerCompat
@@ -31,6 +36,17 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
     private var launchRequests by mutableStateOf(MainActivityLaunchRequests())
     private var appliedPredictiveBackEnabled = true
+    /** 后台唤醒轮启动计数：每次 +1 触发 AgentAppRoot 实时对账（见 wakeupRefreshSignal）。 */
+    private var wakeupRefreshSignal by mutableIntStateOf(0)
+    private var wakeupReceiverRegistered = false
+    private val wakeupRunReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == io.github.mangi.eta.agent.terminal.ACTION_WAKEUP_RUN_STARTED) {
+                // App 在前台时立刻认领这个 active run，让它在会话列表里可见、可对话。
+                wakeupRefreshSignal += 1
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -109,6 +125,7 @@ class MainActivity : ComponentActivity() {
                                 EtaAssistantOverlayService.notifyHandoffReady(this@MainActivity)
                             }
                         },
+                        wakeupRefreshSignal = wakeupRefreshSignal,
                     )
                 }
             }
@@ -121,12 +138,28 @@ class MainActivity : ComponentActivity() {
         startedInstances.add(this)
         isInForeground = true
         AgentRuntimeService.onEtaUiVisibilityChanged()
+        if (!wakeupReceiverRegistered) {
+            val filter = IntentFilter(
+                io.github.mangi.eta.agent.terminal.ACTION_WAKEUP_RUN_STARTED,
+            )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(wakeupRunReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                @Suppress("UnspecifiedRegisterReceiverFlag")
+                registerReceiver(wakeupRunReceiver, filter)
+            }
+            wakeupReceiverRegistered = true
+        }
     }
 
     override fun onStop() {
         startedInstances.remove(this)
         isInForeground = startedInstances.isNotEmpty() || isChangingConfigurations
         AgentRuntimeService.onEtaUiVisibilityChanged()
+        if (wakeupReceiverRegistered) {
+            runCatching { unregisterReceiver(wakeupRunReceiver) }
+            wakeupReceiverRegistered = false
+        }
         super.onStop()
     }
 

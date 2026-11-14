@@ -23,3 +23,8 @@ if [ -n "$NEW" ]; then
   exit 1
 fi
 echo "未修项闸：✅ 本次改动无新增待修标记"
+
+# 资源引用完整性闸：三方合并 / 改 strings.xml 后，R.string.xxx 必须仍有定义。
+# 本机 aapt2 只验 XML 合法性、纯 JVM 不编译 Android res，丢了字符串只有云端 Kotlin 编译才报；
+# 这道纯文本闸把这类回归挡在推送前（2026-11-14 上游合并踩过 Unresolved reference）。
+python3 "$(dirname "$0")/check-res-refs.py" || exit 1

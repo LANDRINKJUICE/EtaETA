@@ -419,6 +419,12 @@ internal class AgentAppState(
             plan.reattach.forEach { add(AgentUiHandoffPayload.from(it.handoff.payload).conversationId) }
             preparingRuns.forEach { add(it.conversationId) }
         }
+        // 后台任务唤醒 / 自动任务等入口以 AGENT_UI handoff 启动，但它们的会话此前不在
+        // conversationsById 里（App 没在线发过这条会话）。startReattachedRun 对未知会话会直接
+        // `?: return`，导致"处理中列表看不到、结束后才以只读归档出现"。这里先把这类 active run
+        // 认领成**真实 UI 会话**：UI 自己是唯一写者（随后 persistConversations 落库），零竞态，
+        // 接着 withLoadedConversations/attachRun 就能把实时事件灌进来，会话可回复、可继续对话。
+        ensurePreparingConversations(preparingRuns)
         withLoadedConversations(recoveringConversationIds) {
             val orphanRewrites = if (activeStateKnown && terminalStateKnown) withContext(Dispatchers.Main) {
                 val observed = checkpoints.mapTo(mutableSetOf()) { it.runId }.apply {
@@ -531,6 +537,11 @@ internal class AgentAppState(
             preparingRuns.forEach { run ->
                 withContext(Dispatchers.Main) { startReattachedRun(run.runId, run.conversationId, run.operation) }
             }
+            // 新建的唤醒会话由 UI 单写者落库：确保杀进程/冷启动后它仍在列表、可继续对话，
+            // 不再退化成"只在终态写归档表"的只读副本。
+            if (preparingRuns.isNotEmpty()) {
+                withContext(Dispatchers.Main) { persistConversations() }.await()
+            }
         }
     }
 
@@ -592,6 +603,45 @@ internal class AgentAppState(
         conversationUpdatedAt = conversationUpdatedAt +
             (conversationId to checkpoint.updatedAt)
         return true
+    }
+
+    /**
+     * 把「App 没在线发过、但 Runtime 已在跑」的 AGENT_UI active run 认领成真实 UI 会话。
+     *
+     * 后台任务唤醒轮（[io.github.mangi.eta.agent.terminal.BackgroundJobWakeup]）用
+     * `AGENT_UI_HANDOFF_SOURCE` + 稳定 `conv-wakeup-` 会话 id 启动，但启动那一刻 App 可能
+     * 根本没打开、内存里没有这条会话。若不在这里补建，`startReattachedRun` 会 `?: return`，
+     * 这轮就只能在终态以只读归档形式出现——即用户反馈的"处理中看不到、结束后能看但发消息
+     * 弹新空会话"。
+     *
+     * 只建「已加载的空会话 + 一条用户消息占位」，不造 assistant 气泡：随后 `attachRun` 的
+     * onReplay/onEvent 会把 run 的真实事件灌进来生成消息与流式状态。会话由 UI 创建并随后
+     * `persistConversations()` 落库，UI 是唯一写者，不与后台进程抢写，零竞态。
+     */
+    private suspend fun ensurePreparingConversations(
+        runs: List<AgentRuntimeWire.ActiveRunSnapshot>,
+    ) = withContext(Dispatchers.Main.immediate) {
+        val now = System.currentTimeMillis()
+        for (run in runs) {
+            val id = run.conversationId
+            if (id.isBlank() || conversationsById.containsKey(id)) continue
+            val seed = emptyChatState(defaultThinkingEnabled).copy(
+                isConversationLoaded = true,
+                messages = listOf(
+                    UserMessageUi(
+                        id = "user-${run.runId}",
+                        content = appContext.getString(R.string.job_wakeup_archive_user),
+                    ),
+                ),
+            )
+            updateConversation(id, seed, updateTimestamp = false)
+            conversationUpdatedAt = conversationUpdatedAt + (id to now)
+            if (conversationTitles[id].isNullOrBlank()) {
+                // 无参文案（job_wakeup_title 带 %1$s 占位、此处拿不到 subject，别用）。
+                conversationTitles = conversationTitles + (id to appContext.getString(R.string.job_wakeup_subtext))
+            }
+        }
+        if (runs.isNotEmpty()) refreshConversationSummaries()
     }
 
     private fun startReattachedRun(

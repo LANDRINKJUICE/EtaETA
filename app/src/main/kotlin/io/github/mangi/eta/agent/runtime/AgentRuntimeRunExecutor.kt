@@ -200,8 +200,9 @@ internal class AgentRuntimeRunExecutor(
             }
             // 闸门对所有来源统一：命中关键部位照样弹卡、统一 2 分钟超时，不预判"有没有人在线"。
             // job 来源标记：它起的 terminal_job 完成时不再触发唤醒（防循环），语义独立、与闸门无关。
-            val jobWakeupRun = request.handoff?.source ==
-                AgentRuntimeWire.ETA_JOB_WAKEUP_HANDOFF_SOURCE
+            // 唤醒轮用 AGENT_UI handoff（真实可回复 UI 会话）+ entryTag 标记识别；
+            // 保留防循环：它起的 terminal_job 完成时不再触发下一轮唤醒。
+            val jobWakeupRun = AgentUiHandoffPayload.isJobWakeup(request.handoff)
             val approvalGate = AgentToolApprovalGate(
                 coordinator = AgentApprovalCoordinator.shared,
                 grants = AgentSessionApprovalGrants.shared,

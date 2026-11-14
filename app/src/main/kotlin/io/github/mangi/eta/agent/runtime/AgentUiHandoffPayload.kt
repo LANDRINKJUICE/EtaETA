@@ -7,6 +7,12 @@ internal data class AgentUiHandoffPayload(
     val conversationId: String,
     val promptSupplement: Supplement? = null,
     val supplements: List<Supplement> = emptyList(),
+    /**
+     * 入口来源标记。后台任务唤醒轮以 AGENT_UI handoff 启动（这样它是真实可回复的 UI 会话），
+     * 但仍需保留"这是无人值守唤醒轮"的语义，供模型配置 / 防循环 / wakeupOrigin 判定使用。
+     * 见 [ENTRY_TAG_JOB_WAKEUP]。默认空 = 普通用户 UI 会话，旧 payload 反序列化天然兼容。
+     */
+    val entryTag: String = "",
 ) {
     val lastSupplementIndex: Int
         get() = (listOfNotNull(promptSupplement?.index) + supplements.map { it.index }).maxOrNull() ?: 0
@@ -25,6 +31,7 @@ internal data class AgentUiHandoffPayload(
             .put("type", TYPE)
             .put("version", VERSION)
             .put("conversationId", conversationId)
+            .put("entryTag", entryTag)
             .also { json ->
                 promptSupplement?.let { json.put("promptSupplement", it.toJson()) }
             }
@@ -43,6 +50,19 @@ internal data class AgentUiHandoffPayload(
     companion object {
         private const val TYPE = "agent_ui_handoff"
         private const val VERSION = 2
+        /** 后台任务自动唤醒轮的入口标记（见 [AgentUiHandoffPayload.entryTag]）。 */
+        const val ENTRY_TAG_JOB_WAKEUP = "job_wakeup"
+
+        /**
+         * 这轮是不是「后台任务唤醒轮」：它用 AGENT_UI handoff（真实可回复 UI 会话），
+         * 但入口标记仍是唤醒轮。模型配置 / 防循环 / wakeupOrigin 三处判定统一走这里，
+         * 避免把 source 改回 ETA_JOB_WAKEUP 导致 UI 会话解析链全线失效。
+         */
+        fun isJobWakeup(handoff: AgentRuntimeWire.EntryHandoff?): Boolean =
+            handoff
+                ?.takeIf { it.source == AgentRuntimeWire.AGENT_UI_HANDOFF_SOURCE }
+                ?.let { from(it.payload).entryTag == ENTRY_TAG_JOB_WAKEUP }
+                ?: false
 
         fun from(raw: String): AgentUiHandoffPayload {
             val trimmed = raw.trim()
@@ -61,7 +81,8 @@ internal data class AgentUiHandoffPayload(
                         ?.toSupplement(defaultIndex = 1),
                     supplements = (0 until supplementsJson.length()).mapNotNull { index ->
                         supplementsJson.optJSONObject(index)?.toSupplement(index + 1)
-                    }
+                    },
+                    entryTag = json.optString("entryTag"),
                 )
             }.getOrDefault(AgentUiHandoffPayload(conversationId = trimmed))
         }

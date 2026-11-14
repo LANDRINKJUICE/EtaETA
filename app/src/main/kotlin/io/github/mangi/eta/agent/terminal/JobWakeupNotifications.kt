@@ -7,15 +7,15 @@ import android.content.Context
 import io.github.mangi.eta.R
 import io.github.mangi.eta.agent.notify.AgentNotifications
 import io.github.mangi.eta.agent.notify.NotificationPolicy
-import io.github.mangi.eta.agent.runtime.AgentRuntimeWire
 
 /**
  * 后台任务自动唤醒的通知出口。
  *
- * 无人值守的唤醒 run 不在用户的会话列表里，通知是唯一"看得见有人在替你收拾"的地方，
+ * 唤醒轮现在是一个真实、可回复的 UI 会话（conv-wakeup- 前缀，由 AgentAppState 认领并
+ * 实时接事件）；App 在前台时会话列表直接可见，通知是 App 在后台时"看得见有人在替你收拾"的入口。
  * 因此：
- * - 点击通知直接进那一轮处理的归档会话（[AgentNotifications.archivedConversationIntent]），
- *   而不是把用户丢回首页；
+ * - 点击通知按会话 id 直达那一轮处理的真实会话（[AgentNotifications.conversationByIdIntent]），
+ *   处理中看得到实时过程、结束后可在原会话继续发消息/追问，不再进只读归档、不弹新空会话；
  * - 另给一个"打开任务中心"按钮看全部后台任务；
  * - 通知 id 走 [NotificationPolicy.jobWakeupId]（9602..9651），同一任务反复唤醒原地更新；
  * - PendingIntent 的 requestCode 与 data 都按任务派生：固定值 + FLAG_UPDATE_CURRENT 会让
@@ -194,18 +194,20 @@ internal object JobWakeupNotifications {
         channelId: String,
     ): Notification.Builder {
         val conversationKey = JobWakeupPolicy.conversationKey(task.id)
+        // 唤醒轮现在是一个真实、可回复的 UI 会话（不再是只读归档副本）；
+        // 点通知直接按会话 id 打开它，处理中就能看到实时过程，结束后可在原会话继续发消息。
+        val conversationId = io.github.mangi.eta.agent.runtime.AgentConversationIdentity
+            .jobWakeupConversationId(conversationKey)
         return AgentNotifications.builder(context, channelId)
             .setSubText(context.getString(R.string.job_wakeup_subtext))
             .setVisibility(Notification.VISIBILITY_PRIVATE)
             .setOnlyAlertOnce(true)
             .setCategory(Notification.CATEGORY_STATUS)
-            // 主体：进这一轮处理的归档会话，跑完之后用户能看到 Agent 到底做了什么。
             .setContentIntent(
-                AgentNotifications.archivedConversationIntent(
+                AgentNotifications.conversationByIdIntent(
                     context = context,
                     requestCode = NotificationPolicy.jobWakeupRequestCode(task.id),
-                    source = AgentRuntimeWire.ETA_JOB_WAKEUP_HANDOFF_SOURCE,
-                    conversationKey = conversationKey,
+                    conversationId = conversationId,
                     distinctData = "$JOB_WAKEUP_DATA_PREFIX${task.id}",
                 ),
             )

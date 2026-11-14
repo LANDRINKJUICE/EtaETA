@@ -27,7 +27,8 @@ internal object AgentRuntimeRequestConfigResolver {
         request.handoff?.source == AgentRuntimeWire.ETA_VOICE_HANDOFF_SOURCE ||
             request.handoff?.source == AgentRuntimeWire.ETA_SCHEDULED_TASK_HANDOFF_SOURCE ||
             // 后台任务唤醒同样没有用户在线：入口快照里的模型与凭据可能已经过期。
-            request.handoff?.source == AgentRuntimeWire.ETA_JOB_WAKEUP_HANDOFF_SOURCE
+            // 唤醒轮现在用 AGENT_UI handoff（真实可回复 UI 会话），以 entryTag 识别。
+            AgentUiHandoffPayload.isJobWakeup(request.handoff)
 
     /**
      * 只用 Runtime 侧的模型与凭据替换入口配置；工具开关保留入口请求的值，

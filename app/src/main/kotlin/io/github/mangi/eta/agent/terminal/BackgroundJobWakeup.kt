@@ -1,10 +1,12 @@
 package io.github.mangi.eta.agent.terminal
 
 import android.content.Context
+import android.content.Intent
 import io.github.mangi.eta.R
 import io.github.mangi.eta.agent.model.AgentModelClient
-import io.github.mangi.eta.agent.runtime.AgentExternalArchivePayload
+import io.github.mangi.eta.agent.runtime.AgentConversationIdentity
 import io.github.mangi.eta.agent.runtime.AgentRuntimeWire
+import io.github.mangi.eta.agent.runtime.AgentUiHandoffPayload
 import io.github.mangi.eta.core.AgentLogger
 import io.github.mangi.eta.core.safeLogType
 import java.io.File
@@ -15,6 +17,15 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
+
+/**
+ * 唤醒轮启动时发出的「有新 UI 会话」信号。App 在前台时 [io.github.mangi.eta.ui.MainActivity]
+ * 收到后调 `AgentAppState.refreshRuntimeResults()`，立刻把这个 active run 认领成会话列表里
+ * 一条可见、可对话的会话（处理中就看得到），不依赖"回前台 ON_RESUME"或常驻 Room Flow。
+ * App 没打开时无人接收、零副作用；无常驻订阅、无轮询，避开 265ef05 被回滚的延迟坑。
+ */
+internal const val ACTION_WAKEUP_RUN_STARTED = "io.github.mangi.eta.action.WAKEUP_RUN_STARTED"
+internal const val EXTRA_WAKEUP_CONVERSATION_ID = "io.github.mangi.eta.extra.WAKEUP_CONVERSATION_ID"
 
 /**
  * 后台命令结束后的自动唤醒接线：判定 -> 通知 -> 申请执行租约 -> 发起一轮 agent run。
@@ -230,6 +241,9 @@ internal class BackgroundJobWakeup(
                     null
                 }
             if (request == null) return
+            // run 即将真正启动：通知前台 UI 立刻把这个 AGENT_UI active run 认领成会话列表里
+            // 一条可见、可对话的会话（无常驻订阅、App 未打开时无人收、零副作用）。
+            notifyUiRunStarted(request)
             outcome = when (val result = runWithTimeout(task, request, signal.watch)) {
                 null -> if (stoppedByUser) JobWakeupPolicy.Finish.STOPPED else JobWakeupPolicy.Finish.TIMED_OUT
                 else -> if (result.ok) JobWakeupPolicy.Finish.DONE else JobWakeupPolicy.Finish.FAILED
@@ -321,17 +335,26 @@ internal class BackgroundJobWakeup(
         runId: String,
     ): AgentRuntimeWire.RunRequest {
         val conversationKey = JobWakeupPolicy.conversationKey(task.id)
+        // 唤醒轮用「真实、可回复的 UI 会话」而非只读归档：
+        //  - source = AGENT_UI：RuntimeRunRegistry 据 AgentUiHandoffPayload.conversationId
+        //    生成 ActiveRunSnapshot，UI 的 recoverRuntimeRuns/preparingRuns 能认领并 attachRun，
+        //    处理中就能在会话列表看到实时事件；
+        //  - 会话 id 走 conv-wakeup- 前缀（isUiConversation=true），不再是 archive- 只读副本，
+        //    结束后发消息进同一会话、可追问/指挥，不弹新空会话；
+        //  - 不再用 AgentExternalArchivePayload：AgentRuntimeService.persistArchivedRun 对它
+        //    from() 返回 null，不再写归档表，也就没有"终态才导入"的延迟与只读拦截。
+        //  - 刻意不带 promptSupplement：它语义是"用户插话补充"，会把首条 user 消息 id 改成
+        //    user-<runId>-supplement-1；而 UI 认领时造的占位是 user-<runId>，会重复。
+        //    保持默认 user-<runId> 与占位对齐，首屏可见文案由会话标题 + 占位消息承担。
+        val conversationId = AgentConversationIdentity.jobWakeupConversationId(conversationKey)
         val handoff = AgentRuntimeWire.EntryHandoff(
             id = "job-wakeup-$runId",
-            source = AgentRuntimeWire.ETA_JOB_WAKEUP_HANDOFF_SOURCE,
-            // 外部归档 payload：Runtime 侧据此把这一轮归档，通知点击才能回到"对应会话"。
-            payload = AgentExternalArchivePayload(
-                userText = context.getString(R.string.job_wakeup_archive_user),
-                conversationKey = conversationKey,
-                title = context.getString(
-                    R.string.job_wakeup_archive_title,
-                    JobWakeupNotifications.subjectOf(context, task),
-                ),
+            source = AgentRuntimeWire.AGENT_UI_HANDOFF_SOURCE,
+            payload = AgentUiHandoffPayload(
+                conversationId = conversationId,
+                // 保留"这是唤醒轮"的语义：模型配置 / 防循环 / wakeupOrigin 三处判定
+                // 改看这个标记（见 AgentUiHandoffPayload.isJobWakeup），不依赖 source。
+                entryTag = AgentUiHandoffPayload.ENTRY_TAG_JOB_WAKEUP,
             ).toJson(),
             dismissEntrySurfaceOnForegroundOperation = false,
         )
@@ -343,6 +366,23 @@ internal class BackgroundJobWakeup(
             history = emptyList(),
             handoff = handoff,
         )
+    }
+
+    /** 唤醒 run 启动时广播一次，让前台 UI 实时认领（见 [ACTION_WAKEUP_RUN_STARTED]）。 */
+    private fun notifyUiRunStarted(request: AgentRuntimeWire.RunRequest) {
+        val conversationId = request.handoff
+            ?.takeIf { it.source == AgentRuntimeWire.AGENT_UI_HANDOFF_SOURCE }
+            ?.let { AgentUiHandoffPayload.from(it.payload).conversationId }
+            ?.takeIf(String::isNotBlank)
+            ?: return
+        runCatching {
+            val intent = Intent(ACTION_WAKEUP_RUN_STARTED)
+                .setPackage(context.packageName)
+                .putExtra(EXTRA_WAKEUP_CONVERSATION_ID, conversationId)
+            context.applicationContext.sendBroadcast(intent)
+        }.onFailure { failure ->
+            logger.warn("wakeup ui run started broadcast failed: type=${failure.safeLogType()}")
+        }
     }
 
     /**
