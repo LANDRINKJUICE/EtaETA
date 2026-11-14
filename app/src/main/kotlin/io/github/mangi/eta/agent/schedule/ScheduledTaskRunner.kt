@@ -231,43 +231,56 @@ internal object ScheduledTaskRunner {
                 // 工具执行期间没有中间事件，记活跃工具数，看门狗不按 idle 误杀长工具。
                 AgentRuntimeClient(context, AndroidAgentLogger).run(request) { event ->
                     lastProgressAt.set(SystemClock.elapsedRealtime())
+                    // onEvent 是 (AgentEvent) -> Unit：把工具计数当语句执行，显式返回 Unit，
+                    // 别让 incrementAndGet/updateAndGet 的 Int 返回值把 lambda 结果推成 Any。
                     when (event) {
                         is io.github.mangi.eta.agent.runtime.AgentEvent.ToolStarted,
-                        is io.github.mangi.eta.agent.runtime.AgentEvent.HostedToolStarted -> activeTools.incrementAndGet()
+                        is io.github.mangi.eta.agent.runtime.AgentEvent.HostedToolStarted -> {
+                            activeTools.incrementAndGet()
+                            Unit
+                        }
                         is io.github.mangi.eta.agent.runtime.AgentEvent.ToolFinished,
-                        is io.github.mangi.eta.agent.runtime.AgentEvent.HostedToolFinished ->
+                        is io.github.mangi.eta.agent.runtime.AgentEvent.HostedToolFinished -> {
                             activeTools.updateAndGet { current -> (current - 1).coerceAtLeast(0) }
+                            Unit
+                        }
                         else -> Unit
                     }
+                    Unit
                 }
             }
-            // 轮询等待：小片 future.get，按「持续无进展 / 硬上限」判定，而不是总墙钟。
-            while (true) {
-                try {
-                    return future.get(WAIT_SLICE_MILLIS, TimeUnit.MILLISECONDS)
-                } catch (sliceTimeout: TimeoutException) {
-                    val now = SystemClock.elapsedRealtime()
-                    if (BackgroundRunPolicy.shouldTimeOut(
-                            nowMillis = now,
-                            startedAtMillis = startedAt,
-                            lastProgressAtMillis = lastProgressAt.get(),
-                            idleTimeoutMillis = IDLE_TIMEOUT_MILLIS,
-                            hardCapMillis = MAX_RUN_MILLIS,
-                            activeTools = activeTools.get(),
-                        )
-                    ) {
-                        AndroidAgentLogger.warn(
-                            "Scheduled task ${task.id} watchdog timeout " +
-                                "(idle=${IDLE_TIMEOUT_MILLIS}ms hardCap=${MAX_RUN_MILLIS}ms); cancelling",
-                        )
-                        future.cancel(true)
-                        return failureResult(
-                            runId,
-                            context.getString(io.github.mangi.eta.R.string.schedule_run_timeout),
-                        )
+            // 轮询等待收进返回类型明确的局部函数：循环里的 return 是 await 自己的返回，
+            // 让外层 try 块的最后一个表达式是明确的 RunResult（await()），而不是把
+            // while(true) 的 Nothing 推断塞进「try 作为返回值」里退化成 Any（云端编译根因）。
+            fun await(): AgentRuntimeWire.RunResult {
+                while (true) {
+                    try {
+                        return future.get(WAIT_SLICE_MILLIS, TimeUnit.MILLISECONDS)
+                    } catch (sliceTimeout: TimeoutException) {
+                        val now = SystemClock.elapsedRealtime()
+                        if (BackgroundRunPolicy.shouldTimeOut(
+                                nowMillis = now,
+                                startedAtMillis = startedAt,
+                                lastProgressAtMillis = lastProgressAt.get(),
+                                idleTimeoutMillis = IDLE_TIMEOUT_MILLIS,
+                                hardCapMillis = MAX_RUN_MILLIS,
+                                activeTools = activeTools.get(),
+                            )
+                        ) {
+                            AndroidAgentLogger.warn(
+                                "Scheduled task ${task.id} watchdog timeout " +
+                                    "(idle=${IDLE_TIMEOUT_MILLIS}ms hardCap=${MAX_RUN_MILLIS}ms); cancelling",
+                            )
+                            future.cancel(true)
+                            return failureResult(
+                                runId,
+                                context.getString(io.github.mangi.eta.R.string.schedule_run_timeout),
+                            )
+                        }
                     }
                 }
             }
+            await()
         } catch (throwable: Throwable) {
             if (throwable is InterruptedException) Thread.currentThread().interrupt()
             AndroidAgentLogger.warn("Scheduled task run failed: type=${throwable.safeLogType()}")

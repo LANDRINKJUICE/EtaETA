@@ -291,10 +291,15 @@ internal class BackgroundJobWakeup(
                     // 工具执行期间没有中间事件，记活跃工具数，看门狗不按 idle 误杀长工具。
                     when (event) {
                         is io.github.mangi.eta.agent.runtime.AgentEvent.ToolStarted,
-                        is io.github.mangi.eta.agent.runtime.AgentEvent.HostedToolStarted -> activeTools.incrementAndGet()
+                        is io.github.mangi.eta.agent.runtime.AgentEvent.HostedToolStarted -> {
+                            activeTools.incrementAndGet()
+                            Unit
+                        }
                         is io.github.mangi.eta.agent.runtime.AgentEvent.ToolFinished,
-                        is io.github.mangi.eta.agent.runtime.AgentEvent.HostedToolFinished ->
+                        is io.github.mangi.eta.agent.runtime.AgentEvent.HostedToolFinished -> {
                             activeTools.updateAndGet { current -> (current - 1).coerceAtLeast(0) }
+                            Unit
+                        }
                         else -> Unit
                     }
                     // 终态已落地后丢弃迟到事件，避免把终态通知复活成 ongoing 僵尸。
@@ -314,30 +319,34 @@ internal class BackgroundJobWakeup(
                 logger.warn("Background job wakeup cancelled: jobId=${task.id} reason=host_closed")
                 future.cancel(true)
             }
-            // 轮询等待：小片 future.get，按「持续无进展 / 硬上限」判定，而不是总墙钟。
-            while (true) {
-                try {
-                    return future.get(WAIT_SLICE_MILLIS, TimeUnit.MILLISECONDS)
-                } catch (sliceTimeout: TimeoutException) {
-                    val now = SystemClock.elapsedRealtime()
-                    if (BackgroundRunPolicy.shouldTimeOut(
-                            nowMillis = now,
-                            startedAtMillis = startedAt,
-                            lastProgressAtMillis = lastProgressAt.get(),
-                            idleTimeoutMillis = IDLE_TIMEOUT_MILLIS,
-                            hardCapMillis = HARD_CAP_MILLIS,
-                            activeTools = activeTools.get(),
-                        )
-                    ) {
-                        logger.warn(
-                            "Background job wakeup watchdog timeout jobId=${task.id} " +
-                                "(idle=${IDLE_TIMEOUT_MILLIS}ms hardCap=${HARD_CAP_MILLIS}ms); cancelling",
-                        )
-                        future.cancel(true)
-                        return null
+            // 轮询等待收进返回类型明确的局部函数（同 ScheduledTaskRunner）：避免
+            // 「try 作为返回值 + while(true)」的 Nothing 推断把外层类型退化成 Any。
+            fun await(): AgentRuntimeWire.RunResult? {
+                while (true) {
+                    try {
+                        return future.get(WAIT_SLICE_MILLIS, TimeUnit.MILLISECONDS)
+                    } catch (sliceTimeout: TimeoutException) {
+                        val now = SystemClock.elapsedRealtime()
+                        if (BackgroundRunPolicy.shouldTimeOut(
+                                nowMillis = now,
+                                startedAtMillis = startedAt,
+                                lastProgressAtMillis = lastProgressAt.get(),
+                                idleTimeoutMillis = IDLE_TIMEOUT_MILLIS,
+                                hardCapMillis = HARD_CAP_MILLIS,
+                                activeTools = activeTools.get(),
+                            )
+                        ) {
+                            logger.warn(
+                                "Background job wakeup watchdog timeout jobId=${task.id} " +
+                                    "(idle=${IDLE_TIMEOUT_MILLIS}ms hardCap=${HARD_CAP_MILLIS}ms); cancelling",
+                            )
+                            future.cancel(true)
+                            return null
+                        }
                     }
                 }
             }
+            await()
         } catch (cancelled: CancellationException) {
             logger.warn("Background job wakeup cancelled: jobId=${task.id}")
             return null
