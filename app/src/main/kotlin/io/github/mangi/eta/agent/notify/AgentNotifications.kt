@@ -196,11 +196,17 @@ internal object AgentNotifications {
         )
     }
 
-    fun taskCenterIntent(context: Context, requestCode: Int, tab: String = "APPROVALS"): PendingIntent {
+    fun taskCenterIntent(
+        context: Context,
+        requestCode: Int,
+        tab: String = "APPROVALS",
+        distinctData: String? = null,
+    ): PendingIntent {
         val intent = Intent(context, MainActivity::class.java)
             .setAction(ACTION_OPEN_TASK_CENTER)
             .putExtra(EXTRA_TASK_CENTER_TAB, tab)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        distinctData?.takeIf(String::isNotBlank)?.let { intent.data = Uri.parse(it) }
         return PendingIntent.getActivity(
             context, requestCode, intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,

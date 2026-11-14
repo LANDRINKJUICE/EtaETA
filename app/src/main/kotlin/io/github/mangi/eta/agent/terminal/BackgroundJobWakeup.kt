@@ -95,6 +95,9 @@ internal class BackgroundJobWakeup(
     /** 正在跑的那一轮；用户在执行通知里点"停止"时会中断它（客户端随即向 Runtime 发 MSG_CANCEL）。 */
     @Volatile private var activeWorker: java.util.concurrent.Future<*>? = null
 
+    /** 本轮是否因用户停止 / 宿主关闭而中断（区别于墙钟超时）；终态文案据此选 STOPPED 而非 TIMED_OUT。 */
+    @Volatile private var stoppedByUser = false
+
     /**
      * 已收尾的任务 id：超时 / 被停止 / 宿主关闭会先发终态通知再真正结束 run，
      * 期间 Runtime 仍可能回调几个迟到事件。没有这道护栏，updateRunning 会把终态通知
@@ -158,8 +161,10 @@ internal class BackgroundJobWakeup(
         }
         val leaseId = LEASE_PREFIX + task.id
         leaseReleased.set(false)
+        stoppedByUser = false
         if (!acquireLease(leaseId) {
                 // 用户在执行通知里停止任务：正在跑的唤醒 run 也一并中断，不留孤儿。
+                stoppedByUser = true
                 activeWorker?.cancel(true)
             }) {
             leaseReleased.set(true)
@@ -226,7 +231,7 @@ internal class BackgroundJobWakeup(
                 }
             if (request == null) return
             outcome = when (val result = runWithTimeout(task, request, signal.watch)) {
-                null -> JobWakeupPolicy.Finish.TIMED_OUT
+                null -> if (stoppedByUser) JobWakeupPolicy.Finish.STOPPED else JobWakeupPolicy.Finish.TIMED_OUT
                 else -> if (result.ok) JobWakeupPolicy.Finish.DONE else JobWakeupPolicy.Finish.FAILED
             }
             logger.info(
@@ -408,6 +413,7 @@ internal class BackgroundJobWakeup(
     @Synchronized
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
+        stoppedByUser = true
         activeWorker?.cancel(true)
         executor.shutdownNow()
     }

@@ -196,7 +196,6 @@ internal class AgentExecutionService : Service() {
         private const val CHANNEL = "eta_execution"
         private const val NOTIFICATION_ID = 1107
         private const val RESULT_CHANNEL = "eta_run_results"
-        private const val RESULT_NOTIFICATION_ID = 1108
         private const val ACTION_STOP = "io.github.mangi.eta.action.STOP_USER_EXECUTION"
         private val leases = ExecutionLeaseRegistry()
         private val ownerSequence = AtomicLong()
@@ -227,6 +226,8 @@ internal class AgentExecutionService : Service() {
             failed: Boolean = false,
             conversationId: String? = null,
             handoffSource: String? = null,
+            archiveSource: String? = null,
+            archiveKey: String? = null,
         ) {
             mainHandler.post {
                 // 记录/清理本段运行的实际开始时间：用于常驻通知里的实时耗时。
@@ -265,7 +266,7 @@ internal class AgentExecutionService : Service() {
                         // 退回任务中心。UI 会话（App 不在前台时跑完）才挂通知栏回复 + 按会话深链。
                         val uiConversation = AgentConversationIdentity.isUiConversation(conversationId)
                         resultPublished = true
-                        showRunResult(context, failed, detailText, conversationId, uiConversation)
+                        showRunResult(context, failed, detailText, conversationId, uiConversation, archiveSource, archiveKey)
                     }
                 }
             }
@@ -278,8 +279,12 @@ internal class AgentExecutionService : Service() {
             detail: String,
             conversationId: String,
             uiConversation: Boolean,
+            archiveSource: String?,
+            archiveKey: String?,
         ) {
             val manager = context.getSystemService(NotificationManager::class.java) ?: return
+            // 按会话散列：不同会话的结果各占一条，不再被固定 1108 互相覆盖。
+            val notificationId = NotificationPolicy.runResultId(conversationId)
             manager.createNotificationChannel(
                 NotificationChannel(
                     RESULT_CHANNEL,
@@ -295,6 +300,12 @@ internal class AgentExecutionService : Service() {
                     20,
                     conversationId,
                     "eta://eta.runresult/open/$conversationId",
+                )
+            } else if (archiveSource != null && !archiveKey.isNullOrBlank()) {
+                // 后台归档会话：直达那一轮的归档会话，能看到 Agent 到底做了什么。
+                AgentNotifications.archivedConversationIntent(
+                    context, 20, archiveSource, archiveKey,
+                    "eta://eta.runresult/archive/$archiveKey",
                 )
             } else {
                 AgentNotifications.taskCenterIntent(context, 20, "RUNNING")
@@ -320,7 +331,7 @@ internal class AgentExecutionService : Service() {
                 .apply {
                     // 仅 UI 会话挂「回复」：后台归档会话挂了会点了必失败、丢用户打的字。
                     if (uiConversation) {
-                        addAction(AgentNotifications.replyAction(context, RESULT_NOTIFICATION_ID, conversationId))
+                        addAction(AgentNotifications.replyAction(context, notificationId, conversationId))
                     }
                 }
                 .addAction(
@@ -334,11 +345,17 @@ internal class AgentExecutionService : Service() {
                     Notification.Action.Builder(
                         null,
                         context.getString(R.string.notify_action_open_task_center),
-                        AgentNotifications.taskCenterIntent(context, RESULT_NOTIFICATION_ID + 1, "RUNNING"),
+                        AgentNotifications.taskCenterIntent(
+                            context, notificationId + 1, "RUNNING",
+                            "eta://eta.runresult/taskcenter/$notificationId",
+                        ),
                     ).build(),
                 )
                 .build()
-            if (manager.areNotificationsEnabled()) manager.notify(RESULT_NOTIFICATION_ID, notification)
+            // tag=conversationId：即使两会话 hash 撞同一 id，也因 tag 不同而各占一条，彻底不互相覆盖。
+            if (manager.areNotificationsEnabled()) {
+                manager.notify(conversationId, notificationId, notification)
+            }
         }
 
         private fun ongoingSubText(context: Context, taskCount: Int): String? {

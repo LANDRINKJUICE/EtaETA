@@ -26,8 +26,11 @@ class NotificationIdRegistryTest {
 
     @Test
     fun `notification id space and request code space are validated independently`() {
-        // 1108（执行服务通知 ID）与 rc=20、9600（宏录制）数值可在两个空间各出现，不互相打架。
-        assertTrue(NotificationIdRegistry.allIdSegments.any { 1_108 in it.range })
+        // 1107 是执行服务「进行中」通知 ID；结果通知已迁到 run_result 段（9502..9560），
+        // 故 1108 不再作为通知 ID 使用，但仍作为运行时结果浮窗的 requestCode（另一空间）。
+        assertTrue(NotificationIdRegistry.allIdSegments.any { 1_107 in it.range })
+        assertTrue(NotificationIdRegistry.allIdSegments.any { it.owner == "run_result" && 9_502 in it.range })
+        assertTrue(NotificationIdRegistry.allRequestCodeSegments.any { 1_108 in it.range })
         assertTrue(NotificationIdRegistry.allRequestCodeSegments.any { 9_600 in it.range })
         // 两个空间分别都干净 → 全量也干净。
         assertEquals(

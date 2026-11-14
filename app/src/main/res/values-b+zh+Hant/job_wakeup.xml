@@ -43,4 +43,6 @@
     <string name="job_wakeup_stage_round">第 %1$s 輪</string>
     <string name="job_wakeup_busy_title">暫未接手：%1$s</string>
     <string name="job_wakeup_busy_body">上一條背景任務還在處理中，本次未啟動、不會自動重試。</string>
+    <string name="job_wakeup_stopped_title">已停止處理：%1$s</string>
+    <string name="job_wakeup_stopped_body">已停止，未自動重試。</string>
 </resources>

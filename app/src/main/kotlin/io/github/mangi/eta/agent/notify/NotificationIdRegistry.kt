@@ -55,11 +55,11 @@ internal object NotificationIdRegistry {
     /**
      * 全 App 通知 ID 段登记表（含其它模块的历史段）。顺序无意义；[validate] 只关心两两不相交。
      *
-     * 注意：`NotificationPolicy.reservedSegments()` 仍只返回它自己管理的 4 段（保持既有单测语义），
+     * 注意：`NotificationPolicy.reservedSegments()` 只返回它自己管理的段（当前 5 段，随新功能递增），
      * 全量核对走 [allIdSegments] / [validate]，二者不互相替代。
      */
     val allIdSegments: List<IdSegment> = listOf(
-        IdSegment("execution_service", 1_107..1_108, "1107 执行进行中 / 1108 run 结果"),
+        IdSegment("execution_service", 1_107..1_107, "1107 执行进行中（结果通知已迁至 run_result 段）"),
         IdSegment("background_command", 1_124..1_124, "后台命令结果，带 tag=task.id 隔离"),
         IdSegment("voice", 4_203..4_204, "4203 语音浮窗 / 4204 朗读播放"),
         IdSegment("scheduled_task_running", 9_000..9_000, "自动任务执行中常驻单条"),
@@ -67,6 +67,7 @@ internal object NotificationIdRegistry {
         IdSegment("notify_user_proactive", 9_300..9_349, "notify_user 主动沟通，按 key 散列"),
         IdSegment("approval_pending", 9_400..9_400, "N 个操作待确认汇总单条"),
         IdSegment("reserved_9500", 9_500..9_501, "预留，暂未使用"),
+        IdSegment("run_result", 9_502..9_560, "run 结果通知，按 conversationId 散列（多会话不互相覆盖）"),
         IdSegment("macro_recording", 9_600..9_601, "9600 录制中 / 9601 录制结果"),
         IdSegment(OWNER_JOB_WAKEUP, 9_602..9_651, "后台任务失败自动唤醒，按 jobId 散列"),
         IdSegment("approval_attention", 9_660..9_999, "审批卡行动通知，占用检测分配"),
@@ -92,7 +93,8 @@ internal object NotificationIdRegistry {
         // 对象（今天都只是「打开 MainActivity 无 extras」所以无感）；谁先加 extra 就会静默互相覆盖，
         // 这类改动必须先分段，登记表正是把这个存量事实记下来的地方。
         IdSegment("execution_service_codes", 0..1, "1107 open(0)/stop(1)；0 亦被朗读/宏录制裸用"),
-        IdSegment("run_result_code", 20..20, "1108 结果通知 open"),
+        IdSegment("run_result_code", 20..20, "run 结果通知 open（UI/归档/任务中心共用，靠 data+action 区分）"),
+        IdSegment("run_result_task_center", 9_503..9_561, "run 结果通知「打开任务中心」按钮，按 notificationId+1 分散"),
         IdSegment("runtime_result_open", 1_108..1_108, "运行时结果浮窗 open（AgentRuntimeService.RESULT_OPEN_REQUEST_CODE）"),
         IdSegment("voice_handoff", 4_543_553..4_543_553, "语音交接前台会话（0x455441）"),
         IdSegment("macro_codes", 9_600..9_601, "宏录制通知的停止/结果（与通知 ID 同数值不同空间）"),

@@ -574,6 +574,10 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
                 failed = !result.ok && result.error != "已停止",
                 conversationId = run.conversationId,
                 handoffSource = run.request.handoff?.source,
+                archiveSource = run.request.handoff?.source,
+                archiveKey = run.request.handoff?.payload
+                    ?.let { io.github.mangi.eta.agent.runtime.AgentExternalArchivePayload.from(it)?.conversationKey }
+                    ?.takeIf(String::isNotBlank),
             )
             val guiState = guiControl.state.value
             if (lastGuiOwnerRunId != run.runId || guiState.userPaused ||

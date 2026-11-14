@@ -119,12 +119,14 @@ internal object JobWakeupNotifications {
             JobWakeupPolicy.Finish.FAILED -> R.string.job_wakeup_failed_title
             JobWakeupPolicy.Finish.TIMED_OUT -> R.string.job_wakeup_timeout_title
             JobWakeupPolicy.Finish.NOT_STARTED -> R.string.job_wakeup_skipped_title
+            JobWakeupPolicy.Finish.STOPPED -> R.string.job_wakeup_stopped_title
         }
         val bodyId = when (finish) {
             JobWakeupPolicy.Finish.DONE -> R.string.job_wakeup_done_body
             JobWakeupPolicy.Finish.FAILED -> R.string.job_wakeup_failed_body
             JobWakeupPolicy.Finish.TIMED_OUT -> R.string.job_wakeup_timeout_body
             JobWakeupPolicy.Finish.NOT_STARTED -> R.string.job_wakeup_skipped_body
+            JobWakeupPolicy.Finish.STOPPED -> R.string.job_wakeup_stopped_body
         }
         val body = context.getString(bodyId)
         val notification = base(context, task, resolveChannel(manager))

@@ -50,4 +50,6 @@
     <string name="job_wakeup_stage_round">Round %1$s</string>
     <string name="job_wakeup_busy_title">Auto-handling skipped: %1$s</string>
     <string name="job_wakeup_busy_body">Another background task is still being handled; this one was not started. It will not be retried automatically.</string>
+    <string name="job_wakeup_stopped_title">Auto-handling stopped: %1$s</string>
+    <string name="job_wakeup_stopped_body">Stopped before completion; no automatic retry.</string>
 </resources>

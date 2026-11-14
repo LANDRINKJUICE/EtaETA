@@ -552,4 +552,18 @@ class NotificationPolicyTest {
         ).conversationId)
     }
 
+
+    @Test
+    fun `run result ids stay in their own segment and never collide with neighbors`() {
+        val ids = (0 until 400).map { NotificationPolicy.runResultId("conv-$it") }
+        assertTrue("全部落在 9502..9560", ids.all { it in 9_502..9_560 })
+        // 不与相邻的预留 / 宏录制 / 唤醒 / 主动沟通 / 待确认段相交
+        assertTrue(ids.none { it in 9_500..9_501 })
+        assertTrue(ids.none { it in 9_600..9_651 })
+        assertTrue(ids.none { it in 9_300..9_349 })
+        assertTrue(ids.none { it == 9_400 })
+        // 同一会话稳定
+        assertEquals(NotificationPolicy.runResultId("conv-x"), NotificationPolicy.runResultId("conv-x"))
+    }
+
 }

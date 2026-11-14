@@ -82,6 +82,7 @@ internal object JobWakeupPolicy {
         FAILED,
         TIMED_OUT,
         NOT_STARTED,
+        STOPPED,
     }
 
     /** 判定所依据的任务事实；由 Android 侧的 DetachedTask 转换而来，字段全部为基础类型。 */

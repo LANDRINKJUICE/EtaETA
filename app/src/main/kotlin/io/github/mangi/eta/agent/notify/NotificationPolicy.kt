@@ -20,9 +20,9 @@ internal object NotificationPolicy {
     const val CHANNEL_ATTENTION = "eta_attention"
 
     // ---- 通知 ID 分段 ----
-    // 已占用（审查 m4）：9000 自动任务前台、9001..9290 自动任务结果、9500-9501 预留、
-    // 9600 录制中、9601 录制结果；另有 1107/1108 执行服务、1124 后台命令、4203/4204 语音。
-    // 本次取 9300..9349（主动沟通）与 9400（待确认）这一整段空闲区间。
+    // 已占用：9000 自动任务前台、9001..9290 自动任务结果、9300..9349 主动沟通、9400 待确认、
+    // 9500-9501 预留、9502..9560 run 结果(按会话散列)、9600/9601 宏录制、9602..9651 后台唤醒、
+    // 9660..9999 审批卡；另有 1107/1108 执行服务、1124 后台命令、4203/4204 语音。
     /** 主动沟通 notify_user：9300..9349，按 key 散列，互不覆盖、也不与既有段相交。 */
     private const val PROACTIVE_BASE = 9_300
     private const val PROACTIVE_RANGE = 50
@@ -36,6 +36,13 @@ internal object NotificationPolicy {
      */
     private const val JOB_WAKEUP_BASE = 9_602
     private const val JOB_WAKEUP_RANGE = 50
+
+    /** run 结果通知：9502..9560，按 conversationId 散列，避免多条会话结果互相覆盖。 */
+    private const val RUN_RESULT_BASE = 9_502
+    private const val RUN_RESULT_RANGE = 59
+    fun runResultId(conversationId: String): Int =
+        RUN_RESULT_BASE + (stableHash(conversationId) % RUN_RESULT_RANGE)
+
 
     /**
      * 危险审批卡的后台行动通知：9660..9999，按审批 id 散列，同一张卡原地更新。
@@ -408,6 +415,7 @@ internal object NotificationPolicy {
         PROACTIVE_BASE until PROACTIVE_BASE + PROACTIVE_RANGE,
         APPROVAL_PENDING_ID..APPROVAL_PENDING_ID,
         JOB_WAKEUP_BASE until JOB_WAKEUP_BASE + JOB_WAKEUP_RANGE,
+        RUN_RESULT_BASE until RUN_RESULT_BASE + RUN_RESULT_RANGE,
         APPROVAL_ATTENTION_BASE until APPROVAL_ATTENTION_BASE + APPROVAL_ATTENTION_RANGE,
     )
 }
