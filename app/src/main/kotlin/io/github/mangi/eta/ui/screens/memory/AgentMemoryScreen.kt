@@ -57,6 +57,8 @@ import com.itos.coui.layout.Group
 import com.itos.coui.scroll.rememberCouiOverscrollEffect
 import io.github.mangi.eta.R
 import io.github.mangi.eta.data.model.AppearanceUiStyle
+import io.github.mangi.eta.data.repository.AgentMemoryEntries
+import io.github.mangi.eta.data.repository.MemoryLayout
 import io.github.mangi.eta.ui.app.LocalUiStyle
 import io.github.mangi.eta.ui.components.MiuixDialogActions
 import io.github.mangi.eta.ui.components.MiuixScaffold
@@ -292,6 +294,10 @@ private fun MemorySettingsGroup(
     state: AgentMemoryUiState,
     onAction: (AgentMemoryAction) -> Unit,
 ) {
+    // 两层结构：主层只留总闸 + 一条「更多设置」折叠；策略开关、预算、过期全收进折叠层。
+    // 每项长说明默认折叠，点标题才展开，避免一屏密密麻麻。
+    var moreExpanded by rememberSaveable { mutableStateOf(false) }
+
     when (LocalUiStyle.current) {
         AppearanceUiStyle.COUI -> {
             Group {
@@ -304,10 +310,16 @@ private fun MemorySettingsGroup(
                 )
                 Divider()
                 CouiPreference(
-                    title = stringResource(R.string.ui_core_memory_injection_budget_48b5d5),
-                    summary = stringResource(R.string.memory_budget_summary, formatNumber(state.coreBudgetChars)),
-                    showChevron = false,
+                    title = stringResource(R.string.memory_more_settings),
+                    summary = null,
+                    showChevron = true,
+                    onClick = { moreExpanded = !moreExpanded },
                 )
+                AnimatedVisibility(visible = moreExpanded) {
+                    Column {
+                        MemoryAdvancedSettingsCoui(state = state, onAction = onAction)
+                    }
+                }
             }
         }
         AppearanceUiStyle.MIUIX -> {
@@ -324,12 +336,136 @@ private fun MemorySettingsGroup(
                     onCheckedChange = { onAction(AgentMemoryAction.ToggleEnabled(it)) },
                 )
                 BasicComponent(
-                    title = stringResource(R.string.ui_core_memory_injection_budget_48b5d5),
-                    summary = stringResource(R.string.memory_budget_summary, formatNumber(state.coreBudgetChars)),
+                    title = stringResource(R.string.memory_more_settings),
+                    summary = null,
+                    onClick = { moreExpanded = !moreExpanded },
                 )
+                AnimatedVisibility(visible = moreExpanded) {
+                    Column { MemoryAdvancedSettingsMiuix(state = state, onAction = onAction) }
+                }
             }
         }
     }
+}
+
+/** COUI 收起层：4 个策略开关 + 预算 + 自动过期；每项带「点标题展开长说明」。 */
+@Composable
+private fun MemoryAdvancedSettingsCoui(
+    state: AgentMemoryUiState,
+    onAction: (AgentMemoryAction) -> Unit,
+) {
+    MemoryExpandableSwitch(
+        title = stringResource(R.string.memory_relevance_injection),
+        summary = stringResource(R.string.memory_relevance_injection_summary),
+        checked = state.relevanceEnabled,
+        enabled = !state.isLoading,
+        onCheckedChange = { onAction(AgentMemoryAction.ToggleRelevance(it)) },
+    )
+    MemoryExpandableSwitch(
+        title = stringResource(R.string.memory_distillation_title),
+        summary = stringResource(R.string.memory_distillation_summary),
+        checked = state.distillationEnabled,
+        enabled = !state.isLoading,
+        onCheckedChange = { onAction(AgentMemoryAction.ToggleDistillation(it)) },
+    )
+    MemoryExpandableSwitch(
+        title = stringResource(R.string.memory_semantic_recall_title),
+        summary = stringResource(R.string.memory_semantic_recall_summary),
+        checked = state.semanticRecallEnabled,
+        enabled = !state.isLoading,
+        onCheckedChange = { onAction(AgentMemoryAction.ToggleSemanticRecall(it)) },
+    )
+    MemoryExpandableSwitch(
+        title = stringResource(R.string.memory_auto_expire_title),
+        summary = stringResource(R.string.memory_auto_expire_summary),
+        checked = state.autoExpireEnabled,
+        enabled = !state.isLoading,
+        onCheckedChange = { onAction(AgentMemoryAction.ToggleAutoExpire(it)) },
+    )
+    CouiPreference(
+        title = stringResource(R.string.ui_core_memory_injection_budget_48b5d5),
+        summary = stringResource(R.string.memory_budget_summary, formatNumber(state.coreBudgetChars)),
+        showChevron = false,
+    )
+}
+
+/** MIUIX 收起层：同 COUI，用 SwitchPreference/ BasicComponent。 */
+@Composable
+private fun MemoryAdvancedSettingsMiuix(
+    state: AgentMemoryUiState,
+    onAction: (AgentMemoryAction) -> Unit,
+) {
+    MemoryExpandableSwitchMiuix(
+        title = stringResource(R.string.memory_relevance_injection),
+        summary = stringResource(R.string.memory_relevance_injection_summary),
+        checked = state.relevanceEnabled,
+        enabled = !state.isLoading,
+        onCheckedChange = { onAction(AgentMemoryAction.ToggleRelevance(it)) },
+    )
+    MemoryExpandableSwitchMiuix(
+        title = stringResource(R.string.memory_distillation_title),
+        summary = stringResource(R.string.memory_distillation_summary),
+        checked = state.distillationEnabled,
+        enabled = !state.isLoading,
+        onCheckedChange = { onAction(AgentMemoryAction.ToggleDistillation(it)) },
+    )
+    MemoryExpandableSwitchMiuix(
+        title = stringResource(R.string.memory_semantic_recall_title),
+        summary = stringResource(R.string.memory_semantic_recall_summary),
+        checked = state.semanticRecallEnabled,
+        enabled = !state.isLoading,
+        onCheckedChange = { onAction(AgentMemoryAction.ToggleSemanticRecall(it)) },
+    )
+    MemoryExpandableSwitchMiuix(
+        title = stringResource(R.string.memory_auto_expire_title),
+        summary = stringResource(R.string.memory_auto_expire_summary),
+        checked = state.autoExpireEnabled,
+        enabled = !state.isLoading,
+        onCheckedChange = { onAction(AgentMemoryAction.ToggleAutoExpire(it)) },
+    )
+    BasicComponent(
+        title = stringResource(R.string.ui_core_memory_injection_budget_48b5d5),
+        summary = stringResource(R.string.memory_budget_summary, formatNumber(state.coreBudgetChars)),
+    )
+}
+
+/**
+ * COUI 收起层开关：长说明只在「更多设置」展开后可见（默认页看不到），
+ * 因此这里直接显示 summary 即可——整洁由「折叠」这一层保证，不依赖组件 onClick。
+ */
+@Composable
+private fun MemoryExpandableSwitch(
+    title: String,
+    summary: String,
+    checked: Boolean,
+    enabled: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    CouiSwitchPreference(
+        title = title,
+        summary = summary,
+        checked = checked,
+        enabled = enabled,
+        onCheckedChange = onCheckedChange,
+    )
+}
+
+/** MIUIX 收起层开关：同理，summary 仅在展开态出现。 */
+@Composable
+private fun MemoryExpandableSwitchMiuix(
+    title: String,
+    summary: String,
+    checked: Boolean,
+    enabled: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    SwitchPreference(
+        title = title,
+        summary = summary,
+        checked = checked,
+        enabled = enabled,
+        onCheckedChange = onCheckedChange,
+    )
 }
 
 @Composable
@@ -364,7 +500,7 @@ private fun MemoryDocumentCard(
             Spacer(Modifier.width(8.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "MEMORY.md",
+                    text = "MEMORY.md  ·  " + stringResource(R.string.memory_pinned_label),
                     style = MiuixTheme.textStyles.body2,
                     fontWeight = FontWeight.Medium,
                     color = colors.onSurface,
@@ -374,6 +510,14 @@ private fun MemoryDocumentCard(
                     style = MiuixTheme.textStyles.footnote2,
                     color = if (overLimit) colors.error else colors.onSurfaceVariantSummary,
                 )
+                // 无分割线时提示：画一条 --- 才对其下记忆启用日期/自动过期约束（避免功能看似上线却空转）。
+                if (!state.isLoading && state.draft.isNotBlank() && MemoryLayout.dividerIndex(state.draft) < 0) {
+                    Text(
+                        text = stringResource(R.string.memory_no_divider_hint),
+                        style = MiuixTheme.textStyles.footnote2,
+                        color = colors.onSurfaceVariantSummary,
+                    )
+                }
             }
             MemoryModeSwitch(mode = mode, enabled = !state.isLoading, onModeChange = onModeChange)
         }
@@ -461,12 +605,24 @@ private fun MemoryPreview(content: String, onStartEditing: () -> Unit) {
         null
     }
     LazyStaticMarkdown(
-        content = content,
+        content = memoryDisplayContent(content),
         tone = MarkdownTone.Answer,
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
         overscrollEffect = overscroll,
     )
+}
+
+/**
+ * 预览投影：滤掉机器用的 `<!-- eta:... -->` 元数据注释行（它们本不该给人看），
+ * 其余原文保留（含顶部常驻区、分割线）。不动全局 Markdown 渲染器，避免波及聊天消息。
+ */
+private fun memoryDisplayContent(content: String): String {
+    if (content.isEmpty()) return content
+    return content
+        .lineSequence()
+        .filter { line -> AgentMemoryEntries.parseMetadataLine(line) == null }
+        .joinToString("\n")
 }
 
 @Composable

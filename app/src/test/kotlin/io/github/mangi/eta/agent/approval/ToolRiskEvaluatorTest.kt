@@ -1,0 +1,925 @@
+package io.github.mangi.eta.agent.approval
+
+import org.json.JSONObject
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
+import org.junit.Rule
+import org.junit.Test
+import org.junit.rules.Timeout
+
+/**
+ * 危险判定器的规则回归。
+ *
+ * 每条用例都对应一条用户可见的行为约束：系统分区与启动链只可读、只可复制；写入必须确认；
+ * 间接执行与无法静态确认的目标不能漏判；常见只读命令不能被误拦。
+ */
+class ToolRiskEvaluatorTest {
+    @get:Rule
+    val timeout: Timeout = Timeout.seconds(30)
+
+    private fun evaluate(toolName: String, json: String, defaultCwd: String? = null): ToolRiskVerdict =
+        AgentToolRiskEvaluator.evaluate(toolName, JSONObject(json), defaultCwd)
+
+    private fun terminal(
+        command: String,
+        tool: String = "terminal",
+        defaultCwd: String? = null,
+        sessionId: String? = null,
+    ): ToolRiskVerdict = AgentToolRiskEvaluator.evaluate(
+        tool,
+        JSONObject()
+            .put("command", command)
+            .also { json -> sessionId?.let { json.put("session_id", it) } },
+        defaultCwd,
+    )
+
+    private fun assertSafe(command: String, defaultCwd: String? = null) {
+        assertEquals("命令应判定为安全：$command", ToolRiskVerdict.Safe, terminal(command, defaultCwd = defaultCwd))
+    }
+
+    private fun confirm(command: String, defaultCwd: String? = null, sessionId: String? = null): ToolRiskVerdict.NeedsConfirm {
+        val verdict = terminal(command, defaultCwd = defaultCwd, sessionId = sessionId)
+        assertTrue("命令应需要确认：$command", verdict is ToolRiskVerdict.NeedsConfirm)
+        return verdict as ToolRiskVerdict.NeedsConfirm
+    }
+
+    private fun assertCategory(command: String, category: ToolRiskCategory) {
+        val verdict = confirm(command)
+        assertTrue(
+            "命令 $command 应命中 $category，实际 ${verdict.categories}",
+            category in verdict.categories,
+        )
+    }
+
+    // ── 只读放行 ─────────────────────────────────────────────────────
+
+    @Test
+    fun readOnlyAccessToSystemPartitionsIsNotBlocked() {
+        assertSafe("cat /system/build.prop")
+        assertSafe("ls -l /vendor/lib64")
+        assertSafe("getprop ro.build.version.release")
+        assertSafe("stat /dev/block/by-name/boot")
+        assertSafe("sha256sum /system/bin/app_process64")
+        assertSafe("grep -r ro.product.model /system/build.prop")
+        assertSafe("cat /dev/block/by-name/boot | xxd | head")
+        assertSafe("ls /data/data")
+        assertSafe("find /system -name '*.prop'")
+    }
+
+    @Test
+    fun copyingOutOfASystemPartitionIsAllowed() {
+        assertSafe("cp /system/build.prop /sdcard/backup/build.prop")
+        assertSafe("cp -a /vendor/etc/hosts /data/local/tmp/hosts")
+        assertSafe("dd if=/dev/block/by-name/boot of=/sdcard/boot.img")
+        assertSafe("mkdir -p /sdcard/backup && cp /system/build.prop /sdcard/backup/")
+    }
+
+    @Test
+    fun writingToOwnWorkspaceIsAllowed() {
+        assertSafe("echo hi > /data/data/io.github.mangi.eta/files/terminal-user/workspace/a.txt")
+        assertSafe("rm -rf /data/data/io.github.mangi.eta/files/terminal-user/workspace/build")
+        assertSafe("rm -rf /workspace/build")
+        assertSafe("echo x >> /data/local/tmp/eta/log.txt")
+        assertSafe("rm -rf /sdcard/Download/eta-scratch")
+    }
+
+    @Test
+    fun relativePathsInsideTheDefaultWorkspaceAreAllowed() {
+        val cwd = "/data/data/io.github.mangi.eta/files/terminal-user/workspace"
+        assertSafe("mkdir -p build", defaultCwd = cwd)
+        assertSafe("rm -rf build", defaultCwd = cwd)
+        assertSafe("cp notes.md backup/notes.md", defaultCwd = cwd)
+        assertSafe("echo x > out.txt", defaultCwd = cwd)
+    }
+
+    @Test
+    fun routineCommandsAreNotBlocked() {
+        assertSafe("pm list packages")
+        assertSafe("settings get global adb_enabled")
+        assertSafe("dumpsys battery")
+        assertSafe("logcat -d -t 100")
+        assertSafe("mount")
+        assertSafe("setsid sh -c 'cd /workspace && ./run.sh'")
+        assertSafe("mkdir -p /sdcard/Download/eta")
+    }
+
+    // ── 系统分区与启动链写入 ─────────────────────────────────────────
+
+    @Test
+    fun writingToSystemPartitionRequiresConfirmation() {
+        assertCategory("echo x > /system/build.prop", ToolRiskCategory.SYSTEM_PARTITION_WRITE)
+        assertCategory("cp /sdcard/build.prop /system/build.prop", ToolRiskCategory.SYSTEM_PARTITION_WRITE)
+        assertCategory("mv /sdcard/x /vendor/etc/x", ToolRiskCategory.SYSTEM_PARTITION_WRITE)
+        assertCategory("rm -f /system/app/Foo/Foo.apk", ToolRiskCategory.SYSTEM_PARTITION_WRITE)
+        assertCategory("touch /product/etc/foo", ToolRiskCategory.SYSTEM_PARTITION_WRITE)
+        assertCategory("chmod 644 /system_ext/etc/x", ToolRiskCategory.SYSTEM_PARTITION_WRITE)
+        assertCategory("install -m 644 /sdcard/hosts /system/etc/hosts", ToolRiskCategory.SYSTEM_PARTITION_WRITE)
+        assertCategory("echo x > /system_dlkm/etc/x", ToolRiskCategory.SYSTEM_PARTITION_WRITE)
+        assertCategory("echo x > /vendor_dlkm/etc/x", ToolRiskCategory.SYSTEM_PARTITION_WRITE)
+        assertCategory("echo x > /mnt/vendor/x", ToolRiskCategory.SYSTEM_PARTITION_WRITE)
+    }
+
+    @Test
+    fun writingBootChainRequiresConfirmation() {
+        assertCategory("dd if=/sdcard/boot.img of=/dev/block/by-name/boot", ToolRiskCategory.BOOT_CHAIN_WRITE)
+        assertCategory("dd if=/sdcard/boot.img of=/boot", ToolRiskCategory.BOOT_CHAIN_WRITE)
+        assertCategory("cat x > /init_boot", ToolRiskCategory.BOOT_CHAIN_WRITE)
+        assertCategory("cp /sdcard/dtbo.img /dev/block/by-name/dtbo", ToolRiskCategory.BOOT_CHAIN_WRITE)
+        assertCategory("touch /recovery", ToolRiskCategory.BOOT_CHAIN_WRITE)
+        assertCategory("echo x > /debug_ramdisk/x", ToolRiskCategory.BOOT_CHAIN_WRITE)
+        assertCategory("echo x > /first_stage_ramdisk/x", ToolRiskCategory.BOOT_CHAIN_WRITE)
+    }
+
+    @Test
+    fun ddToRawBlockDeviceAlsoCountsAsFormatter() {
+        val verdict = confirm("dd if=/dev/zero of=/dev/block/mmcblk0 bs=1M count=1")
+        assertTrue(ToolRiskCategory.DISK_FORMAT in verdict.categories)
+        assertEquals(ToolRiskLevel.CRITICAL, verdict.level)
+    }
+
+    @Test
+    fun ddToDevSinksIsWhitelisted() {
+        assertSafe("dd if=/sdcard/boot.img of=/dev/null bs=4k")
+        assertSafe("dd if=/dev/zero of=/dev/null count=1")
+        assertSafe("head -c 16 /sdcard/x > /dev/urandom")
+        assertSafe("echo x > /dev/null")
+    }
+
+    @Test
+    fun remountingReadWriteRequiresConfirmation() {
+        assertCategory("mount -o rw,remount /system", ToolRiskCategory.REMOUNT_READ_WRITE)
+        assertCategory("mount -o remount,rw /vendor", ToolRiskCategory.REMOUNT_READ_WRITE)
+        assertCategory("remount", ToolRiskCategory.REMOUNT_READ_WRITE)
+        assertCategory("su -c \"mount -o rw,remount /system_ext\"", ToolRiskCategory.REMOUNT_READ_WRITE)
+    }
+
+    @Test
+    fun readOnlyMountOfSystemImageIsAllowed() {
+        assertSafe("mount -o ro /dev/block/by-name/system /mnt/system")
+    }
+
+    @Test
+    fun quotingAndShellWrappersDoNotHideTheWrite() {
+        assertCategory("sh -c 'echo x > /system/build.prop'", ToolRiskCategory.SYSTEM_PARTITION_WRITE)
+        assertCategory("bash -c \"dd if=/dev/zero of=/dev/block/by-name/boot\"", ToolRiskCategory.BOOT_CHAIN_WRITE)
+        assertCategory("dd if=x of=\"/boot/boot.img\"", ToolRiskCategory.BOOT_CHAIN_WRITE)
+        assertCategory("echo x > /tmp/x && echo y > /system/build.prop", ToolRiskCategory.SYSTEM_PARTITION_WRITE)
+        assertCategory("echo x >> /system/build.prop", ToolRiskCategory.SYSTEM_PARTITION_WRITE)
+        assertCategory("printf x | tee /vendor/etc/x", ToolRiskCategory.SYSTEM_PARTITION_WRITE)
+    }
+
+    @Test
+    fun redirectionOperatorsAreAllRecognized() {
+        assertCategory("echo x >| /system/build.prop", ToolRiskCategory.SYSTEM_PARTITION_WRITE)
+        assertCategory("echo x &> /system/build.prop", ToolRiskCategory.SYSTEM_PARTITION_WRITE)
+        assertCategory("echo x &>> /system/build.prop", ToolRiskCategory.SYSTEM_PARTITION_WRITE)
+        assertCategory("echo x 1>&2 2>/dev/null; echo y > /system/build.prop", ToolRiskCategory.SYSTEM_PARTITION_WRITE)
+        // 文件描述符复制不能被当成写入目标
+        assertSafe("ls -l /system/build.prop >/dev/null 2>&1")
+    }
+
+    @Test
+    fun commandSubstitutionIsAnalyzedRecursively() {
+        assertCategory(
+            "target=$(echo /system/build.prop) && echo x > /system/build.prop",
+            ToolRiskCategory.SYSTEM_PARTITION_WRITE,
+        )
+        assertCategory("[ -f /system/x ] && `echo y > /system/x`", ToolRiskCategory.SYSTEM_PARTITION_WRITE)
+    }
+
+    // ── B1 间接执行 ──────────────────────────────────────────────────
+
+    @Test
+    fun pipedCommandIsAnalyzedInsteadOfOnlyTheShellStage() {
+        // printf ... | sh：把前段当脚本内容分析
+        assertCategory(
+            "printf 'echo x > /system/build.prop\\n' | sh",
+            ToolRiskCategory.SYSTEM_PARTITION_WRITE,
+        )
+        assertCategory(
+            "printf '%s\\n' 'dd if=x of=/dev/block/by-name/boot' | bash",
+            ToolRiskCategory.BOOT_CHAIN_WRITE,
+        )
+        assertCategory(
+            "echo 'mkdir -p /data/adb/modules/x' | sh -s",
+            ToolRiskCategory.SYSTEM_DATA_WRITE,
+        )
+    }
+
+    @Test
+    fun base64DecodedPayloadPipedIntoShellIsIntercepted() {
+        // 解码内容无法静态读取，但"解码后送进 shell"本身就必须确认。
+        val verdict = confirm("base64 -d /sdcard/evil.b64 | sh")
+        assertTrue(
+            "应命中间接执行：${verdict.categories}",
+            ToolRiskCategory.INDIRECT_EXECUTION in verdict.categories,
+        )
+    }
+
+    @Test
+    fun scriptFilesAndInterpretersAreIndirectExecution() {
+        assertCategory("sh /tmp/x.sh", ToolRiskCategory.INDIRECT_EXECUTION)
+        assertCategory("bash ./install.sh", ToolRiskCategory.INDIRECT_EXECUTION)
+        assertCategory("source /sdcard/env.sh", ToolRiskCategory.INDIRECT_EXECUTION)
+        assertCategory(". /sdcard/env.sh", ToolRiskCategory.INDIRECT_EXECUTION)
+        assertCategory("eval \"\$CMD\"", ToolRiskCategory.INDIRECT_EXECUTION)
+        assertCategory("perl -e 'unlink q(/system/x)'", ToolRiskCategory.INDIRECT_EXECUTION)
+        assertCategory("python3 -c \"open('/system/x','w')\"", ToolRiskCategory.INDIRECT_EXECUTION)
+        assertCategory("node -e 'require(\"fs\")'", ToolRiskCategory.INDIRECT_EXECUTION)
+        assertCategory("awk 'BEGIN{print 1 > \"/system/x\"}'", ToolRiskCategory.INDIRECT_EXECUTION)
+        assertCategory("base64 -d /sdcard/x.b64", ToolRiskCategory.INDIRECT_EXECUTION)
+        assertCategory("sh", ToolRiskCategory.INDIRECT_EXECUTION)
+    }
+
+    @Test
+    fun xargsAndFindExecAreIntercepted() {
+        assertCategory("echo /data/adb/modules/x | xargs rm", ToolRiskCategory.INDIRECT_EXECUTION)
+        assertCategory("echo /data/adb/modules/x | xargs rm -rf", ToolRiskCategory.DESTRUCTIVE_DELETE)
+        assertCategory("find /system -name '*.apk' -exec rm {} \\;", ToolRiskCategory.SYSTEM_PARTITION_WRITE)
+        assertCategory("find /data/adb -delete", ToolRiskCategory.DESTRUCTIVE_DELETE)
+        // 收敛后：工作区里的 find -delete 清理不该被硬拦（无人值守轮要照常做完）。
+        assertSafe("find /workspace -name '*.log' -delete")
+        assertSafe("find /data/local/tmp/eta/build -type f -delete")
+        assertCategory("printf '%s\\n' /data/adb/modules/x | xargs -I{} rm -rf {}", ToolRiskCategory.DESTRUCTIVE_DELETE)
+    }
+
+    @Test
+    fun findWithoutExecOrDeleteStaysReadOnly() {
+        assertSafe("find /data/adb/modules -maxdepth 1 -type d")
+        assertSafe("find /system -name build.prop")
+    }
+
+    // ── B2 变量与相对路径 ────────────────────────────────────────────
+
+    @Test
+    fun variableAssignmentsAreResolvedBeforeJudging() {
+        assertCategory(
+            "P=/data/adb/modules/x; mkdir -p \"\$P\"",
+            ToolRiskCategory.SYSTEM_DATA_WRITE,
+        )
+        assertCategory(
+            "P=/dev/block/by-name/boot; dd if=/sdcard/boot.img of=\$P",
+            ToolRiskCategory.BOOT_CHAIN_WRITE,
+        )
+        assertCategory(
+            "export T=/system/etc/hosts; cp /sdcard/hosts \$T",
+            ToolRiskCategory.SYSTEM_PARTITION_WRITE,
+        )
+        // 变量替换后落到工作区里：仍然安全
+        assertSafe(
+            "P=/data/data/io.github.mangi.eta/files/terminal-user/workspace/x; mkdir -p \$P",
+        )
+    }
+
+    @Test
+    fun unresolvedVariablesAreNeverTreatedAsSafe() {
+        assertCategory("mkdir -p \$UNKNOWN_DIR/x", ToolRiskCategory.UNRESOLVED_TARGET)
+        assertCategory("rm -rf \${DIR:-/tmp}/x", ToolRiskCategory.UNRESOLVED_TARGET)
+        assertCategory("dd if=x of=\$TARGET", ToolRiskCategory.UNRESOLVED_TARGET)
+        assertCategory("cp /sdcard/x \"\$(cat /tmp/p)/y\"", ToolRiskCategory.UNRESOLVED_TARGET)
+    }
+
+    @Test
+    fun cdIsTrackedForRelativeTargets() {
+        assertCategory(
+            "cd /data/adb/modules && echo y > x/service.sh",
+            ToolRiskCategory.SYSTEM_DATA_WRITE,
+        )
+        assertCategory(
+            "cd /system/etc && touch hosts",
+            ToolRiskCategory.SYSTEM_PARTITION_WRITE,
+        )
+        // 相对路径但方向是工作区：安全
+        assertSafe(
+            "cd /data/data/io.github.mangi.eta/files/terminal-user/workspace && rm -rf build",
+        )
+    }
+
+    @Test
+    fun unknownWorkingDirectoryMakesRelativeWritesUnresolved() {
+        val verdict = confirm("mkdir -p some/dir")
+        assertTrue(ToolRiskCategory.UNRESOLVED_TARGET in verdict.categories)
+        assertEquals(ToolRiskLevel.MEDIUM, verdict.level)
+    }
+
+    @Test
+    fun persistentSessionEscalatesUnresolvedTargets() {
+        val withSession = confirm("mkdir -p \$DIR/x", sessionId = "session-1")
+        assertEquals(ToolRiskLevel.HIGH, withSession.level)
+        assertTrue(
+            withSession.findings.any { it.category == ToolRiskCategory.UNRESOLVED_TARGET && it.level == ToolRiskLevel.HIGH },
+        )
+        // 同一命令在一次性调用里只是 MEDIUM
+        assertEquals(ToolRiskLevel.MEDIUM, confirm("mkdir -p \$DIR/x").level)
+    }
+
+    // ── 其他危险类别 ─────────────────────────────────────────────────
+
+    @Test
+    fun broadRecursiveDeleteRequiresConfirmation() {
+        assertCategory("rm -rf /data", ToolRiskCategory.DESTRUCTIVE_DELETE)
+        assertCategory("rm -rf /sdcard/", ToolRiskCategory.DESTRUCTIVE_DELETE)
+        assertCategory("rm -rf /data/data/*", ToolRiskCategory.DESTRUCTIVE_DELETE)
+        assertCategory("rm -rf /", ToolRiskCategory.DESTRUCTIVE_DELETE)
+        assertCategory("rm -rf /data/user/0/com.tencent.mobileqq", ToolRiskCategory.FOREIGN_APP_DATA_WRITE)
+    }
+
+    @Test
+    fun mvSourceIsJudgedAsWriteToo() {
+        assertCategory("mv /system/etc/hosts /tmp/", ToolRiskCategory.SYSTEM_PARTITION_WRITE)
+        assertCategory("mv /sdcard/x /data/data/com.tencent.mobileqq/files/x", ToolRiskCategory.FOREIGN_APP_DATA_WRITE)
+        assertSafe("mv /sdcard/a.txt /sdcard/b.txt")
+    }
+
+    @Test
+    fun formattingRequiresConfirmation() {
+        assertCategory("mkfs.ext4 /dev/block/by-name/userdata", ToolRiskCategory.DISK_FORMAT)
+        assertCategory("fdisk /dev/block/mmcblk0", ToolRiskCategory.DISK_FORMAT)
+        assertCategory("wipefs -a /dev/block/sda", ToolRiskCategory.DISK_FORMAT)
+        assertCategory("fastboot flash boot /sdcard/boot.img", ToolRiskCategory.BOOT_CHAIN_WRITE)
+    }
+
+    @Test
+    fun magiskPartitionOperationsRequireConfirmation() {
+        assertCategory("magisk --install-module /sdcard/mod.zip", ToolRiskCategory.SYSTEM_DATA_WRITE)
+        assertCategory("magisk --install /sdcard/boot.img", ToolRiskCategory.BOOT_CHAIN_WRITE)
+        assertCategory("magiskboot unpack /sdcard/boot.img", ToolRiskCategory.BOOT_CHAIN_WRITE)
+        // 恢复/卸载 boot 镜像是确凿启动链写入，不能随 PRIVILEGED 整类放行。
+        assertCategory("magisk --restore /sdcard/stock.img", ToolRiskCategory.BOOT_CHAIN_WRITE)
+        assertSafe("magisk -v")
+    }
+
+    @Test
+    fun persistentPropertiesRequireConfirmation() {
+        assertCategory("setprop persist.sys.foo 1", ToolRiskCategory.PRIVILEGED_SYSTEM_COMMAND)
+        assertCategory("resetprop ro.debuggable 1", ToolRiskCategory.PRIVILEGED_SYSTEM_COMMAND)
+        assertSafe("getprop persist.sys.foo")
+    }
+
+    @Test
+    fun packageMutationRequiresConfirmation() {
+        assertCategory("pm uninstall com.android.settings", ToolRiskCategory.SYSTEM_APP_MUTATION)
+        assertCategory("pm disable-user --user 0 com.android.bluetooth", ToolRiskCategory.SYSTEM_APP_MUTATION)
+        assertCategory("cmd package clear com.tencent.mobileqq", ToolRiskCategory.SYSTEM_APP_MUTATION)
+        assertSafe("pm path com.tencent.mobileqq")
+    }
+
+    @Test
+    fun sensitiveSettingsRequireConfirmation() {
+        assertCategory("settings put global adb_enabled 1", ToolRiskCategory.SENSITIVE_SETTING_WRITE)
+        assertCategory("settings put secure enabled_accessibility_services x", ToolRiskCategory.SENSITIVE_SETTING_WRITE)
+        assertCategory("settings put global http_proxy 10.0.0.1:8080", ToolRiskCategory.SENSITIVE_SETTING_WRITE)
+        assertSafe("settings put system screen_brightness 120")
+        assertSafe("settings get secure android_id")
+    }
+
+    @Test
+    fun foreignAppPrivateDirectoriesRequireConfirmation() {
+        assertCategory(
+            "echo x > /data/data/com.tencent.mobileqq/files/prefs.xml",
+            ToolRiskCategory.FOREIGN_APP_DATA_WRITE,
+        )
+        assertCategory(
+            "rm -f /data/user/0/com.tencent.mm/databases/EnMicroMsg.db",
+            ToolRiskCategory.FOREIGN_APP_DATA_WRITE,
+        )
+        assertCategory(
+            "chmod 777 /data/data/com.android.chrome/cache",
+            ToolRiskCategory.FOREIGN_APP_DATA_WRITE,
+        )
+    }
+
+    @Test
+    fun systemDataWritesRequireConfirmation() {
+        assertCategory("sqlite3 /data/system/users/0/settings_secure.xml", ToolRiskCategory.SYSTEM_DATA_WRITE)
+        assertCategory("mkdir -p /data/adb/modules/foo", ToolRiskCategory.SYSTEM_DATA_WRITE)
+    }
+
+    @Test
+    fun unknownCommandsTouchingProtectedPathsFallBackToConfirmation() {
+        val verdict = confirm("busybox sh -c \"echo x > /system/build.prop\"")
+        assertTrue(ToolRiskCategory.SYSTEM_PARTITION_WRITE in verdict.categories)
+        val custom = confirm("my_tool --write /system/build.prop")
+        assertTrue(ToolRiskCategory.SYSTEM_PARTITION_WRITE in custom.categories)
+        assertEquals(ToolRiskLevel.MEDIUM, custom.level)
+    }
+
+    // ── 非 terminal 工具 ────────────────────────────────────────────
+
+    @Test
+    fun fileToolsTreatThePathAsWriteTarget() {
+        val blocked = evaluate("write_file", """{"path":"/system/etc/hosts","content":"x"}""")
+        assertTrue(blocked is ToolRiskVerdict.NeedsConfirm)
+        assertEquals(
+            ToolRiskCategory.SYSTEM_PARTITION_WRITE,
+            (blocked as ToolRiskVerdict.NeedsConfirm).categories.first(),
+        )
+        val boot = evaluate("edit_file", """{"path":"/boot/boot.img","old_text":"a","new_text":"b"}""")
+        assertEquals(
+            ToolRiskCategory.BOOT_CHAIN_WRITE,
+            (boot as ToolRiskVerdict.NeedsConfirm).categories.first(),
+        )
+        val safe = evaluate("write_file", """{"path":"/sdcard/Download/note.txt","content":"x"}""")
+        assertEquals(ToolRiskVerdict.Safe, safe)
+        val readTool = evaluate("read_file", """{"path":"/system/build.prop"}""")
+        assertEquals(ToolRiskVerdict.Safe, readTool)
+    }
+
+    @Test
+    fun fileToolRelativePathUsesCwd() {
+        val workspace = "/data/data/io.github.mangi.eta/files/terminal-user/workspace"
+        assertEquals(
+            ToolRiskVerdict.Safe,
+            evaluate("write_file", """{"path":"notes/a.txt","content":"x"}""", defaultCwd = workspace),
+        )
+        // 相对路径 + 指向受保护目录的 cwd → 必须拦截
+        val blocked = evaluate(
+            "write_file",
+            """{"path":"hosts","content":"x"}""",
+            defaultCwd = "/system/etc",
+        )
+        assertEquals(
+            ToolRiskCategory.SYSTEM_PARTITION_WRITE,
+            (blocked as ToolRiskVerdict.NeedsConfirm).categories.first(),
+        )
+        // 显式 cwd 优先于默认值
+        val explicit = evaluate(
+            "write_file",
+            """{"path":"hosts","content":"x","cwd":"/vendor/etc"}""",
+            defaultCwd = workspace,
+        )
+        assertEquals(
+            ToolRiskCategory.SYSTEM_PARTITION_WRITE,
+            (explicit as ToolRiskVerdict.NeedsConfirm).categories.first(),
+        )
+    }
+
+    @Test
+    fun fileToolRelativePathWithoutCwdIsUnresolved() {
+        val verdict = evaluate("write_file", """{"path":"notes/a.txt","content":"x"}""")
+        assertTrue(verdict is ToolRiskVerdict.NeedsConfirm)
+        assertEquals(
+            ToolRiskCategory.UNRESOLVED_TARGET,
+            (verdict as ToolRiskVerdict.NeedsConfirm).categories.first(),
+        )
+    }
+
+    @Test
+    fun setSettingToolOnlyBlocksSensitiveKeys() {
+        val secure = evaluate("set_setting", """{"namespace":"secure","key":"enabled_accessibility_services","value":"x"}""")
+        assertTrue(secure is ToolRiskVerdict.NeedsConfirm)
+        val adb = evaluate("set_setting", """{"namespace":"global","key":"adb_enabled","value":"1"}""")
+        assertTrue(adb is ToolRiskVerdict.NeedsConfirm)
+        val brightness = evaluate("set_setting", """{"namespace":"system","key":"screen_brightness","value":"120"}""")
+        assertEquals(ToolRiskVerdict.Safe, brightness)
+    }
+
+    @Test
+    fun appStateControlBlocksFreezingAndSystemForceStop() {
+        val freeze = evaluate("app_state_control", """{"package_name":"com.tencent.mobileqq","action":"freeze"}""")
+        assertTrue(freeze is ToolRiskVerdict.NeedsConfirm)
+        val systemStop = evaluate("app_state_control", """{"package_name":"com.android.phone","action":"force_stop"}""")
+        assertTrue(systemStop is ToolRiskVerdict.NeedsConfirm)
+        val userStop = evaluate("app_state_control", """{"package_name":"com.tencent.mobileqq","action":"force_stop"}""")
+        assertEquals(ToolRiskVerdict.Safe, userStop)
+    }
+
+    @Test
+    fun blankCommandAndUnknownToolsAreSafe() {
+        assertEquals(ToolRiskVerdict.Safe, terminal(""))
+        assertEquals(ToolRiskVerdict.Safe, terminal("   "))
+        assertEquals(ToolRiskVerdict.Safe, evaluate("get_current_context", "{}"))
+        assertFalse(terminal("ls /").toString().contains("NeedsConfirm"))
+    }
+
+
+    // ── Agent 写入 Eta 自身设置（eta_prefs_set）─────────────────────────
+
+    @Test
+    fun prefsSetBlocksAddressCredentialAndEnvironmentKeys() {
+        val address = evaluate(
+            "eta_prefs_set",
+            """{"key":"web.custom_search_url","value":"http://127.0.0.1:8899/search"}""",
+        )
+        val addressVerdict = address as? ToolRiskVerdict.NeedsConfirm
+            ?: fail("服务地址类键必须走确认卡，实际：$address").let { return }
+        assertEquals(listOf(ToolRiskCategory.AGENT_SETTINGS_WRITE), addressVerdict.categories)
+        assertEquals(ToolRiskLevel.MEDIUM, addressVerdict.level)
+        assertTrue(addressVerdict.subject.contains("web.custom_search_url"))
+
+        listOf(
+            "web.deepseek_base_url",
+            "speech.minimax_tts_base_url",
+            "speech.oss_endpoint",
+        ).forEach { key ->
+            val verdict = evaluate("eta_prefs_set", """{"key":"$key","value":"https://example.com"}""")
+            assertTrue("$key 需要确认，实际：$verdict", verdict is ToolRiskVerdict.NeedsConfirm)
+        }
+
+        val credential = evaluate(
+            "eta_prefs_set",
+            """{"key":"speech.oss_access_key_secret","value":"super-secret-value"}""",
+        )
+        val credentialVerdict = credential as? ToolRiskVerdict.NeedsConfirm
+            ?: fail("凭据类键必须走确认卡，实际：$credential").let { return }
+        assertTrue(
+            "确认卡不允许回显凭据明文：${credentialVerdict.subject}",
+            !credentialVerdict.subject.contains("super-secret-value"),
+        )
+
+        val backend = evaluate("eta_prefs_set", """{"key":"linux.backend_debian","value":"proot"}""")
+        assertTrue(backend is ToolRiskVerdict.NeedsConfirm)
+        val distribution = evaluate("eta_prefs_set", """{"key":"linux.distribution","value":"debian"}""")
+        assertTrue(distribution is ToolRiskVerdict.NeedsConfirm)
+    }
+
+    @Test
+    fun prefsSetAllowsOrdinarySwitchesAndReads() {
+        // 普通布尔/枚举（自动朗读、音色、语音识别开关）不该每次都弹确认卡。
+        listOf(
+            """{"key":"speech.auto_speak","value":"true"}""",
+            """{"key":"speech.tts_provider","value":"QWEN"}""",
+            """{"key":"web.search_backend","value":"CUSTOM"}""",
+            """{"key":"speech.gemini_tts_style","value":"平静地朗读"}""",
+        ).forEach { args ->
+            assertEquals("普通开关不该被拦：$args", ToolRiskVerdict.Safe, evaluate("eta_prefs_set", args))
+        }
+        // 未登记的键交给执行侧按白名单拒绝，判定器不制造额外噪音。
+        assertEquals(
+            ToolRiskVerdict.Safe,
+            evaluate("eta_prefs_set", """{"key":"web.not_registered","value":"x"}"""),
+        )
+        assertEquals(ToolRiskVerdict.Safe, evaluate("eta_prefs_list", "{}"))
+        assertEquals(ToolRiskVerdict.Safe, evaluate("eta_prefs_get", """{"key":"web.custom_search_url"}"""))
+    }
+
+    // ── 安全审查 payload 逐条回归 ─────────────────────────────────────
+
+    @Test
+    fun reviewPayloadIndirectExecutionIsNeverSafe() {
+        // B1 原文 payload
+        val payloads = listOf(
+            "printf 'echo x > /system/build.prop' | sh",
+            "sh /tmp/x.sh",
+            "echo /data/adb/modules/x | xargs rm -rf",
+            "find /data/adb -name '*.sh' -exec rm {} \\;",
+            "base64 -d /sdcard/payload.b64 | sh",
+        )
+        payloads.forEach { payload ->
+            val verdict = terminal(payload)
+            assertTrue("payload 不能判 Safe：$payload", verdict is ToolRiskVerdict.NeedsConfirm)
+        }
+        // 管道送进 shell 时，能静态读到的内容要按写判定升级
+        val piped = confirm("printf 'dd if=x of=/dev/block/by-name/boot' | sh")
+        assertTrue(ToolRiskCategory.BOOT_CHAIN_WRITE in piped.categories)
+    }
+
+    @Test
+    fun reviewPayloadVariableAndRelativeWritesAreIntercepted() {
+        // B2 原文 payload
+        assertCategory(
+            "P=/data/adb/modules/x; mkdir -p \$P",
+            ToolRiskCategory.SYSTEM_DATA_WRITE,
+        )
+        assertCategory(
+            "cd /data/adb/modules && echo y > x/service.sh",
+            ToolRiskCategory.SYSTEM_DATA_WRITE,
+        )
+        assertCategory(
+            "P=/dev/block/by-name/boot; dd if=/sdcard/boot.img of=\$P",
+            ToolRiskCategory.BOOT_CHAIN_WRITE,
+        )
+        // 持久会话里同样的 session_id 调用必须是 HIGH（必拦）
+        val sessionVerdict = terminal(
+            "mkdir -p \$P/service.d",
+            sessionId = "session-1",
+        )
+        assertTrue(sessionVerdict is ToolRiskVerdict.NeedsConfirm)
+        assertEquals(ToolRiskLevel.HIGH, (sessionVerdict as ToolRiskVerdict.NeedsConfirm).level)
+    }
+
+    @Test
+    fun reviewPayloadAbsoluteMagiskModulePathStaysBlocked() {
+        // /data/adb/modules 下的脚本会被 Magisk 在开机阶段执行，属于启动链风险面
+        assertCategory("echo y > /data/adb/modules/x/service.sh", ToolRiskCategory.SYSTEM_DATA_WRITE)
+        assertCategory("chmod 755 /data/adb/service.d/boot.sh", ToolRiskCategory.SYSTEM_DATA_WRITE)
+    }
+
+    @Test
+    fun toolRiskGateUsesTerminalJobAndDaemonCommandsToo() {
+        for (tool in listOf("terminal_job", "terminal_daemon")) {
+            val verdict = terminal("dd if=x of=/dev/block/by-name/boot", tool = tool)
+            assertTrue("$tool 应命中启动链写入", verdict is ToolRiskVerdict.NeedsConfirm)
+        }
+    }
+
+    @Test
+    fun `creating a scheduled task needs confirmation`() {
+        // 审查 M3①：创建自动任务把指令持久化进系统并无人值守执行，必须让用户看到内容。
+        val verdict = AgentToolRiskEvaluator.evaluate(
+            "schedule_task",
+            JSONObject()
+                .put("action", "create")
+                .put("title", "夜间整理")
+                .put("prompt", "每晚清理下载目录并汇报")
+                .put(
+                    "schedule",
+                    JSONObject().put("kind", "daily").put("hour", 23).put("minute", 30),
+                ),
+        )
+        assertTrue(verdict is ToolRiskVerdict.NeedsConfirm)
+        verdict as ToolRiskVerdict.NeedsConfirm
+        assertEquals(ToolRiskLevel.MEDIUM, verdict.level)
+        assertEquals(listOf(ToolRiskCategory.AGENT_SCHEDULED_TASK_CREATE), verdict.categories)
+        assertEquals("夜间整理", verdict.subject)
+    }
+
+    @Test
+    fun `reading or deleting scheduled tasks does not need confirmation`() {
+        listOf("list", "enable", "disable", "delete", "run_now").forEach { action ->
+            assertEquals(
+                "action=$action must stay safe",
+                ToolRiskVerdict.Safe,
+                AgentToolRiskEvaluator.evaluate("schedule_task", JSONObject().put("action", action).put("id", "x")),
+            )
+        }
+    }
+
+    @Test
+    fun `schedule create without prompt is not gated`() {
+        // prompt 为空时工具自己会拒绝；判定器不制造额外噪音。
+        assertEquals(
+            ToolRiskVerdict.Safe,
+            AgentToolRiskEvaluator.evaluate("schedule_task", JSONObject().put("action", "create")),
+        )
+    }
+
+    // ── Eta 自管理工具（提供商 / 模型 / MCP / 开关 / 技能）─────────────
+
+    /** 自管理工具写入：确认卡必须同时写出工具名与关键参数（名字、id），且凭据不回显。 */
+    private fun assertSelfBlocked(
+        tool: String,
+        json: String,
+        expectedLevel: ToolRiskLevel,
+        expectedCategory: ToolRiskCategory,
+        vararg expectedInSubject: String,
+    ): ToolRiskVerdict.NeedsConfirm {
+        val verdict = evaluate(tool, json)
+        if (verdict !is ToolRiskVerdict.NeedsConfirm) {
+            fail("$tool 必须走确认卡，实际：$verdict")
+            error("unreachable")
+        }
+        val needsConfirm = verdict
+        assertEquals("$tool 风险类别", listOf(expectedCategory), needsConfirm.categories)
+        assertEquals("$tool 风险等级", expectedLevel, needsConfirm.level)
+        assertTrue("确认卡要展示工具名：${needsConfirm.subject}", needsConfirm.subject.contains(tool))
+        expectedInSubject.forEach { token ->
+            assertTrue(
+                "确认卡要点出关键参数「$token」：${needsConfirm.subject}",
+                needsConfirm.subject.contains(token),
+            )
+        }
+        return needsConfirm
+    }
+
+    @Test
+    fun `eta self config writes need confirmation`() {
+        assertSelfBlocked(
+            "eta_set_config",
+            """{"key":"AGENT_TERMINAL_TOOLS","value":false}""",
+            ToolRiskLevel.MEDIUM,
+            ToolRiskCategory.AGENT_SELF_CONFIG_WRITE,
+            "AGENT_TERMINAL_TOOLS",
+            "关闭",
+        )
+        assertSelfBlocked(
+            "eta_set_tool_enabled",
+            """{"tool":"browser_use","enabled":false}""",
+            ToolRiskLevel.MEDIUM,
+            ToolRiskCategory.AGENT_SELF_CONFIG_WRITE,
+            "browser_use",
+        )
+    }
+
+    @Test
+    fun `eta provider and model writes need confirmation and hide the api key`() {
+        val provider = assertSelfBlocked(
+            "eta_provider_upsert",
+            """{"name":"DeepSeek","base_url":"https://api.deepseek.com","api_key":"sk-live-1234567890abcdef"}""",
+            ToolRiskLevel.MEDIUM,
+            ToolRiskCategory.AGENT_SELF_CONFIG_WRITE,
+            "DeepSeek",
+            "https://api.deepseek.com",
+        )
+        assertTrue(
+            "确认卡不能回显 api_key：${provider.subject} / ${provider.findings.first().detail}",
+            !provider.subject.contains("sk-live") && !provider.findings.first().detail.contains("sk-live"),
+        )
+
+        // 更新已有提供商时至少要让人看到 id，否则用户对不上是哪一条。
+        assertSelfBlocked(
+            "eta_provider_upsert",
+            """{"id":"p1","api_key":""}""",
+            ToolRiskLevel.MEDIUM,
+            ToolRiskCategory.AGENT_SELF_CONFIG_WRITE,
+            "p1",
+            "凭据将被清除",
+        )
+
+        assertSelfBlocked(
+            "eta_model_upsert",
+            """{"provider_id":"p1","model_id":"deepseek-chat","display_name":"DeepSeek Chat"}""",
+            ToolRiskLevel.MEDIUM,
+            ToolRiskCategory.AGENT_SELF_CONFIG_WRITE,
+            "p1",
+            "deepseek-chat",
+        )
+        // 切换默认模型同样改变"之后谁来处理请求"，也要确认。
+        assertSelfBlocked(
+            "eta_model_select",
+            """{"id":"m1"}""",
+            ToolRiskLevel.MEDIUM,
+            ToolRiskCategory.AGENT_SELF_CONFIG_WRITE,
+            "m1",
+        )
+        assertSelfBlocked(
+            "eta_model_select",
+            """{"provider_id":"p1"}""",
+            ToolRiskLevel.MEDIUM,
+            ToolRiskCategory.AGENT_SELF_CONFIG_WRITE,
+            "p1",
+        )
+    }
+
+    @Test
+    fun `eta mcp upsert needs confirmation and hides the bearer token`() {
+        val server = assertSelfBlocked(
+            "eta_mcp_upsert",
+            """{"name":"GitHub","url":"https://api.githubcopilot.com/mcp/","bearer_token":"ghp_abcdefghijklmnop"}""",
+            ToolRiskLevel.MEDIUM,
+            ToolRiskCategory.AGENT_SELF_CONFIG_WRITE,
+            "GitHub",
+            "https://api.githubcopilot.com/mcp/",
+        )
+        assertTrue(
+            "确认卡不能回显 bearer_token：${server.subject}",
+            !server.subject.contains("ghp_abcdefghijklmnop") &&
+                !server.findings.first().detail.contains("ghp_abcdefghijklmnop"),
+        )
+    }
+
+    @Test
+    fun `eta self deletions are high risk`() {
+        assertSelfBlocked(
+            "eta_provider_delete",
+            """{"id":"p1"}""",
+            ToolRiskLevel.HIGH,
+            ToolRiskCategory.AGENT_SELF_DELETE,
+            "p1",
+        )
+        assertSelfBlocked(
+            "eta_model_delete",
+            """{"provider_id":"p1","id":"m1"}""",
+            ToolRiskLevel.HIGH,
+            ToolRiskCategory.AGENT_SELF_DELETE,
+            "m1",
+        )
+        assertSelfBlocked(
+            "eta_mcp_delete",
+            """{"id":"srv1"}""",
+            ToolRiskLevel.HIGH,
+            ToolRiskCategory.AGENT_SELF_DELETE,
+            "srv1",
+        )
+        assertSelfBlocked(
+            "eta_skill_delete",
+            """{"id":"pdf"}""",
+            ToolRiskLevel.HIGH,
+            ToolRiskCategory.AGENT_SELF_DELETE,
+            "pdf",
+        )
+    }
+
+    @Test
+    fun `eta self tools without the required arguments are not gated`() {
+        // 参数不全时执行侧本来就会拒绝（MODEL_TOOL_ERROR / SELF_TOOL_ERROR），
+        // 判定器只制造噪音没有任何收益。
+        listOf(
+            "eta_set_config" to """{"value":true}""",
+            "eta_set_tool_enabled" to """{"tool":"browser_use"}""",
+            "eta_set_tool_enabled" to """{"enabled":false}""",
+            "eta_provider_upsert" to """{}""",
+            "eta_provider_delete" to """{}""",
+            "eta_model_upsert" to """{}""",
+            "eta_model_delete" to """{"provider_id":"p1"}""",
+            "eta_model_select" to """{}""",
+            "eta_mcp_upsert" to """{"discover":false}""",
+            "eta_mcp_delete" to """{}""",
+            "eta_skill_delete" to """{}""",
+        ).forEach { (tool, args) ->
+            assertEquals("参数不全不该弹卡：$tool $args", ToolRiskVerdict.Safe, evaluate(tool, args))
+        }
+    }
+
+    @Test
+    fun `eta read only tools stay safe`() {
+        listOf(
+            "eta_get_config" to "{}",
+            "eta_provider_list" to "{}",
+            "eta_model_list" to """{"provider_id":"p1"}""",
+            "eta_mcp_list" to "{}",
+            "eta_mcp_refresh" to """{"id":"srv1"}""",
+            "eta_skill_list" to "{}",
+            "eta_skill_set_enabled" to """{"id":"pdf","enabled":true}""",
+            "eta_prefs_list" to "{}",
+            "eta_prefs_get" to """{"key":"web.custom_search_url"}""",
+        ).forEach { (tool, args) ->
+            assertEquals("只读工具必须放行：$tool", ToolRiskVerdict.Safe, evaluate(tool, args))
+        }
+    }
+
+    // ── 误拦收紧：工作区深层通配符清理不再弹卡 ──
+    // 背景：判定整体偏紧，`rm -rf build/*` 原本命中 HIGH。
+    // 只收紧「通配符父路径不在保护表」这一类；曾尝试给「Eta 自管脚本」加白名单，审查发现
+    // 会造成「写脚本+执行」两步绕过脚本内容防线，已整体回退——脚本一律 INDIRECT。
+    // 系统分区/启动链/外来应用目录/间接执行判定逐字不动，收紧后另补回根下一级目录兜底。
+
+    @Test
+    fun deepWorkspaceWildcardDeleteIsSafe() {
+        // 深层工作区子目录下的通配符清理：父路径不在 any 保护表，不该算大范围删除。
+        assertSafe("rm -rf /workspace/eta-src/app/build/*")
+        assertSafe("rm -rf /data/local/tmp/eta/build/intermediates/*")
+        // 带明确 cwd 的深层工作区清理：解析后父路径在工作区，放行。
+        assertSafe("rm -rf build/*", defaultCwd = "/workspace/eta-src")
+        assertSafe("rm -f *.log", defaultCwd = "/workspace/eta-src/app/build")
+    }
+
+    @Test
+    fun protectedWildcardDeleteStillNeedsConfirm() {
+        // 收紧不能放过真正的破坏面：受保护/大范围目录下的通配符递归删除仍要拦。
+        assertCategory("rm -rf /data/data/*", ToolRiskCategory.DESTRUCTIVE_DELETE)
+        assertCategory("rm -rf /system/*", ToolRiskCategory.SYSTEM_PARTITION_WRITE)
+        assertCategory("rm -rf /", ToolRiskCategory.DESTRUCTIVE_DELETE)
+        assertCategory("rm -rf /sdcard/", ToolRiskCategory.DESTRUCTIVE_DELETE)
+        // 无 cwd 的根级相对通配符：无法静态确认删除范围，仍保守命中（不应误放行）。
+        assertCategory("rm -f *.log", ToolRiskCategory.DESTRUCTIVE_DELETE)
+    }
+
+    @Test
+    fun scriptsInWorkspaceStillNeedConfirm() {
+        // 审查阻断项 2：曾尝试给「Eta 自管工作区脚本」加白名单放行，但那样等于「写脚本+执行」
+        // 两步即可绕过脚本内容防线（内容完全不分析）。安全代价大于误拦代价，已回退：
+        // 脚本一律 INDIRECT，高频自用的 eta-cleanup.sh 用 allow_session 点一次整轮消音即可。
+        assertCategory("sh /workspace/脚本-Scripts/eta-cleanup.sh", ToolRiskCategory.INDIRECT_EXECUTION)
+        assertCategory("sh /data/local/tmp/eta/脚本-Scripts/eta-cleanup.sh", ToolRiskCategory.INDIRECT_EXECUTION)
+        assertCategory("bash /sdcard/Download/Eta/scripts/build.sh", ToolRiskCategory.INDIRECT_EXECUTION)
+        assertTrue(
+            ToolRiskCategory.INDIRECT_EXECUTION in confirm("sh eta-cleanup.sh", defaultCwd = "/workspace").categories,
+        )
+    }
+
+    @Test
+    fun externalScriptsStillNeedConfirm() {
+        // 外部来源 / 无法解析的脚本仍照旧弹 INDIRECT，不能因为加了白名单就整体放宽。
+        assertCategory("sh /tmp/x.sh", ToolRiskCategory.INDIRECT_EXECUTION)
+        assertCategory("bash ./install.sh", ToolRiskCategory.INDIRECT_EXECUTION)
+        assertCategory("source /sdcard/env.sh", ToolRiskCategory.INDIRECT_EXECUTION)
+        assertCategory("sh /sdcard/Download/not-eta/deploy.sh", ToolRiskCategory.INDIRECT_EXECUTION)
+    }
+
+    @Test
+    fun systemPartitionAndBootChainJudgementUnchanged() {
+        // 回归锚：本次收紧绝不能动系统分区/启动链/间接执行内联代码这些核心破坏面判定。
+        assertCategory("echo x > /system/build.prop", ToolRiskCategory.SYSTEM_PARTITION_WRITE)
+        assertCategory("dd if=x of=/dev/block/by-name/boot", ToolRiskCategory.BOOT_CHAIN_WRITE)
+        assertCategory("python3 -c \"open('/system/x','w')\"", ToolRiskCategory.INDIRECT_EXECUTION)
+        assertCategory("echo /data/adb/modules/x | xargs rm -rf", ToolRiskCategory.DESTRUCTIVE_DELETE)
+        assertCategory("perl -e 'unlink q(/system/x)'", ToolRiskCategory.INDIRECT_EXECUTION)
+    }
+
+    @Test
+    fun cdThenRelativeWildcardDeleteStillNeedsConfirm() {
+        // 审查阻断项 1：broad 必须建立在「按 cwd 解析后」的目标上。
+        // 「先 cd 到根/系统数据根，再用相对通配符清空」曾被收紧后的规则整类漏判成 SAFE。
+        assertCategory("cd / && rm -rf *", ToolRiskCategory.DESTRUCTIVE_DELETE)
+        assertCategory("cd / && rm -rf ./*", ToolRiskCategory.DESTRUCTIVE_DELETE)
+        assertCategory("cd /data && rm -rf *", ToolRiskCategory.DESTRUCTIVE_DELETE)
+        assertCategory("cd /data && rm -rf ./*", ToolRiskCategory.DESTRUCTIVE_DELETE)
+        assertCategory("cd /sdcard && rm -rf *", ToolRiskCategory.DESTRUCTIVE_DELETE)
+        // 变量 / 命令替换 / 花括号展开：删除范围无法静态确认，一律保守命中。
+        assertCategory("rm -rf /data/local/tmp/\$X/*", ToolRiskCategory.DESTRUCTIVE_DELETE)
+        assertCategory("rm -rf /data/{data,app}/*", ToolRiskCategory.DESTRUCTIVE_DELETE)
+    }
+
+    @Test
+    fun rootLevelDirectoryWildcardsStillNeedConfirm() {
+        // 收紧成「父路径受保护才算 broad」后，显式把根下一级目录补回 broad 表，
+        // 避免 /etc、/bin、/lib、/sbin（多为 /system 符号链接）、/dev 等漏判成 SAFE。
+        assertCategory("rm -rf /etc/*", ToolRiskCategory.DESTRUCTIVE_DELETE)
+        assertCategory("rm -rf /bin/*", ToolRiskCategory.DESTRUCTIVE_DELETE)
+        assertCategory("rm -rf /dev/*", ToolRiskCategory.DESTRUCTIVE_DELETE)
+        assertCategory("rm -rf /lib/*", ToolRiskCategory.DESTRUCTIVE_DELETE)
+    }
+}

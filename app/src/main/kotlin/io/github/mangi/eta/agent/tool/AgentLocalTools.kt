@@ -10,11 +10,16 @@ import android.os.SystemClock
 import android.view.Display
 import io.github.mangi.eta.EtaApp
 import io.github.mangi.eta.agent.accessibility.AgentAccessibilityService
+import io.github.mangi.eta.agent.approval.AgentAskUserTool
 import io.github.mangi.eta.agent.browser.AgentBrowserSession
 import io.github.mangi.eta.agent.device.DeviceControlUnavailableException
 import io.github.mangi.eta.agent.device.RootAccess
 import io.github.mangi.eta.agent.device.RootShellDeviceController
 import io.github.mangi.eta.agent.device.BoundedRootCommandExecutor
+import io.github.mangi.eta.agent.notify.NotifyUserTool
+import io.github.mangi.eta.agent.memory.AgentMemorySemanticIndex
+import io.github.mangi.eta.agent.memory.EmbeddingProvider
+import io.github.mangi.eta.agent.memory.SemanticSearchOutcome
 import io.github.mangi.eta.agent.model.AgentModelClient
 import io.github.mangi.eta.agent.model.AgentHttpClient
 import io.github.mangi.eta.agent.device.LocalNetworkPermission
@@ -28,10 +33,12 @@ import io.github.mangi.eta.agent.overlay.AgentHapticFeedback
 import io.github.mangi.eta.agent.overlay.AgentOverlayClearance
 import io.github.mangi.eta.agent.overlay.GestureIndicator
 import io.github.mangi.eta.agent.runtime.AgentAppContext
+import io.github.mangi.eta.agent.schedule.ScheduledTaskTool
 import io.github.mangi.eta.agent.runtime.AgentRunCancelledException
 import io.github.mangi.eta.agent.runtime.GuiControlCoordinator
 import io.github.mangi.eta.agent.virtualdisplay.CanvasRoutingPolicy
 import io.github.mangi.eta.agent.virtualdisplay.VirtualDisplayController
+import io.github.mangi.eta.agent.self.AgentSelfTools
 import io.github.mangi.eta.agent.skill.SkillCompatibilityChecker
 import io.github.mangi.eta.agent.skill.SkillIndexService
 import io.github.mangi.eta.agent.skill.SkillInstallErrorCode
@@ -55,9 +62,11 @@ import io.github.mangi.eta.agent.terminal.SharedFolderMounts
 import io.github.mangi.eta.config.Prefs
 import io.github.mangi.eta.core.AgentLogger
 import io.github.mangi.eta.core.HookSupport
+import io.github.mangi.eta.data.repository.AgentMemoryEntry
 import io.github.mangi.eta.data.repository.AgentMemoryException
 import io.github.mangi.eta.data.repository.AgentMemoryMutation
 import io.github.mangi.eta.data.repository.AgentMemoryRepository
+import io.github.mangi.eta.data.repository.AgentMemorySnapshot
 import io.github.mangi.eta.data.repository.AgentMemoryWriteResult
 import io.github.mangi.eta.data.repository.LinuxEnvironmentSettingsRepository
 import io.github.mangi.eta.data.repository.WebToolsSettingsRepository
@@ -69,10 +78,23 @@ import org.json.JSONArray
 import org.json.JSONObject
 import kotlinx.coroutines.runBlocking
 
+/**
+ * 只在普通会话里公开的工具：角色会话不可见、也不可执行（审查 M4）。
+ */
+private val CONVERSATION_ONLY_TOOLS = setOf(
+    AgentAskUserTool.NAME,
+    ScheduledTaskTool.NAME,
+    "macro_record",
+    // 主动沟通会把用户拉回现实通知，与沉浸式角色会话冲突：角色会话同样拒绝执行。
+    NotifyUserTool.NAME,
+)
+
 internal class AgentLocalTools(
     private val context: Context,
     private val logger: AgentLogger,
     private val browserRunId: String = "",
+    /** 发起本轮 run 的 UI 会话 id（仅 agent_ui 来源有值）；notify_user 通知栏回复据此回到对应会话。 */
+    private val conversationId: String? = null,
     private val browserToolsEnabled: () -> Boolean = {
         Prefs.isEnabled(Prefs.Keys.AGENT_BROWSER_TOOLS)
     },
@@ -92,6 +114,9 @@ internal class AgentLocalTools(
         runBlocking { AgentMemoryRepository.isEnabled() }
     },
     private val memoryWritable: Boolean = true,
+    /** 四期语义检索的向量来源；默认没有（自动降级为关键词检索）。 */
+    private val embeddingProvider: () -> EmbeddingProvider? = { null },
+    private val selfToolsAllowed: Boolean = true,
     private val screenshotExcludedPackages: () -> Set<String> = { emptySet() },
     private val screenObservationProvider: (
         (AgentScreenObservationContract.Options) -> RootShellDeviceController.Observation
@@ -99,6 +124,10 @@ internal class AgentLocalTools(
     private val beforeToolExecution: (String) -> ToolExecutionDecision = {
         ToolExecutionDecision.Allow
     },
+    /** 危险操作闸门：命中规则时挂起等用户在聊天流里确认。null 表示不启用（子进程/测试）。 */
+    private val toolRiskGate: ((String, JSONObject, String?) -> ToolExecutionDecision)? = null,
+    /** ask_user 的桥接：把模型的问题送进聊天流并等待用户点选。 */
+    private val askUserBridge: ((JSONObject) -> String)? = null,
     private val skillIndexService: SkillIndexService? = null,
     private val skillLoader: SkillLoader? = null,
     private val skillResourceReader: SkillResourceReader? = null,
@@ -115,6 +144,22 @@ internal class AgentLocalTools(
     },
     private val lsposedAvailable: () -> Boolean = { EtaApp.serviceInstance != null },
     private val guiControl: GuiControlCoordinator.RunControl? = null,
+    /**
+     * 是否允许会话级工具（ask_user / schedule_task / macro_record）。角色会话为 false：
+     * 这三件工具都会把用户拉回现实交互或写入持久状态，与沉浸式角色会话冲突（审查 M4）。
+     */
+    private val conversationToolsAllowed: Boolean = true,
+    /**
+     * 本次 run 是否由自动任务触发。无人值守的 run 里禁止再创建自动任务，避免任务自增殖（审查 M3②）。
+     */
+    private val scheduledRun: Boolean = false,
+    /**
+     * 本次 run 是否由后台任务失败后的自动唤醒触发。
+     *
+     * 唤醒 run 通常就是为了修复失败任务而存在的，它自己起的 terminal_job 必须被标记来源，
+     * 否则「失败 -> 唤醒 -> 唤醒 run 又起一个会失败的 job -> 再唤醒」会绕开所有防循环计数。
+     */
+    private val jobWakeupRun: Boolean = false,
     browserSession: AgentBrowserSession? = null,
 ) : AgentModelClient.ToolExecutor, AutoCloseable {
 
@@ -157,7 +202,12 @@ internal class AgentLocalTools(
             rootAvailable = rootAvailable,
         ),
         linuxSharedMountsProvider = { SharedFolderMounts.current() },
+        jobWakeupOrigin = jobWakeupRun,
     )
+
+    /** 判定相对路径时使用的默认工作目录（本次运行的默认工作区）。 */
+    private val approvalDefaultCwd: String
+        get() = terminalExecutionContext.androidWorkspacePath
 
     private val publishedObservation = AtomicReference(PublishedObservation())
     private val runAvailableSkillIds = runAvailableSkillIds
@@ -170,6 +220,8 @@ internal class AgentLocalTools(
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
+        // run 结束：清掉本次运行的 notify_user 配额，避免同一 runId 在进程内复用时继承已用次数。
+        NotifyUserTool.releaseRun(browserRunId)
         publishedObservation.set(PublishedObservation())
         if (browserSessionRef.isInitialized()) browserSessionRef.value.interruptAgentAction(browserRunId)
         webTools.close()
@@ -236,6 +288,43 @@ internal class AgentLocalTools(
                     )
                 }
             }
+            // 自动任务无人值守：不允许在任务内部再创建自动任务（审查 M3②）。
+            if (scheduledRun && toolCall.name == ScheduledTaskTool.NAME) {
+                return@runCatching textResult(errorResult(
+                    "SCHEDULED_TASK_READ_ONLY",
+                    "自动任务运行中不能创建或修改自动任务；如需调整，请让用户在聊天里操作",
+                ))
+            }
+            // 角色会话不提供会话级工具（审查 M4）。
+            if (!conversationToolsAllowed && toolCall.name in CONVERSATION_ONLY_TOOLS) {
+                return@runCatching textResult(errorResult(
+                    "TOOL_UNAVAILABLE",
+                    "角色会话不提供 " + toolCall.name + "；请按人物设定继续对话",
+                ))
+            }
+            // 危险操作闸门：与无障碍检查串联，位于工具真正分发之前。闸门只认关键部位类别；
+            // 命中时对所有来源一律照样弹卡、2 分钟没人点则未执行交模型自判，其余类别一律直接放行。
+            val riskGate = toolRiskGate
+            if (riskGate != null) {
+                // 闸门自身故障（含 release 包混淆后才可能出现的 NoClassDefFoundError）必须被收口成
+                // 一个可检索的拒绝码，而不是把每次工具调用都变成不透明的 TOOL_ERROR。
+                val decision = ToolExecutionGuard.check(toolCall.name) {
+                    riskGate(toolCall.name, args, approvalDefaultCwd)
+                }
+                when (val gate = decision) {
+                    ToolExecutionDecision.Allow -> Unit
+                    is ToolExecutionDecision.Reject -> return@runCatching textResult(
+                        errorResult(
+                            code = gate.code,
+                            message = gate.message,
+                        ),
+                    )
+                }
+            }
+            // 宏录制期间：Eta 自己驱动的 GUI 动作不算"用户操作"，短暂抑制录制捕获。
+            if (AgentToolRequirements.requiresGuiControl(toolCall.name)) {
+                MacroRecorder.suppressFor(900L)
+            }
             when (toolCall.name) {
                 "get_current_context" -> textResult(DeviceContextTool.current(context))
                 "search_apps" -> textResult(searchApps(args))
@@ -247,6 +336,12 @@ internal class AgentLocalTools(
                     publishedObservation.set(PublishedObservation())
                     textResult(presentToUser(args))
                 }
+                AgentAskUserTool.NAME -> textResult(
+                    askUserBridge?.invoke(args) ?: errorResult(
+                        "ASK_USER_UNAVAILABLE",
+                        "当前运行不支持向用户提问（没有可用的聊天流界面）；请直接说明你的不确定之处，不要臆测用户的选择",
+                    ),
+                )
                 "open_uri" -> {
                     publishedObservation.set(PublishedObservation())
                     textResult(openUri(args))
@@ -271,6 +366,38 @@ internal class AgentLocalTools(
                 "scroll" -> afterAction(deviceController.scroll(args.optString("direction"), args.optString("amount"), currentActiveDisplayId()))
                 "scroll_element" -> afterAction(scrollElement(args))
                 "type_text" -> afterAction(typeText(args))
+                "gesture_batch" -> gestureBatch(args)
+                "macro_list" -> textResult(
+                    JSONObject().put("ok", true).put("macros", GuiMacroStore.list()).toString(),
+                )
+                "macro_save" -> textResult(
+                    try {
+                        GuiMacroStore.save(
+                            args.getString("name"),
+                            args.optString("description"),
+                            args.getJSONArray("actions"),
+                            overwrite = args.optBoolean("overwrite", false),
+                        ).toString()
+                    } catch (failure: Exception) {
+                        errorResult("MACRO_SAVE_FAILED", failure.message ?: "保存宏失败")
+                    },
+                )
+                "macro_run" -> macroRun(args)
+                MacroRecordTool.NAME -> textResult(MacroRecordTool.execute(context, args))
+                ScheduledTaskTool.NAME -> textResult(ScheduledTaskTool.execute(context, args))
+                NotifyUserTool.NAME -> textResult(NotifyUserTool.execute(context, args, browserRunId, conversationId))
+                "macro_delete" -> textResult(
+                    try {
+                        val deleted = GuiMacroStore.delete(args.getString("name"))
+                        JSONObject()
+                            .put("ok", deleted)
+                            .put("code", if (deleted) JSONObject.NULL else "MACRO_NOT_FOUND")
+                            .put("name", args.optString("name"))
+                            .toString()
+                    } catch (failure: Exception) {
+                        errorResult("INVALID_ARGUMENT", failure.message ?: "宏名非法")
+                    },
+                )
                 // 旧会话或旧入口仍可能请求这些工具名；保留执行路径，但不再出现在模型目录里。
                 "input_text" -> afterAction(inputText(args))
                 "replace_text" -> afterAction(replaceText(args))
@@ -298,6 +425,13 @@ internal class AgentLocalTools(
                 in AgentFileToolCatalog.names -> textResult(terminalTool { terminalController.fileTool(toolCall.name, args) })
                 "memory_get" -> textResult(memoryGet(args))
                 "memory_write" -> textResult(memoryWrite(args))
+                in AgentSelfTools.TOOL_NAMES -> textResult(
+                    if (selfToolsAllowed) {
+                        AgentSelfTools.execute(toolCall.name, args, context)
+                    } else {
+                        errorResult("TOOL_DISABLED", "当前会话不开放 Eta 自身配置工具")
+                    },
+                )
                 "skills_list" -> textResult(skillsList(args))
                 "skills_read" -> textResult(skillsRead(args))
                 "skills_read_resource" -> textResult(skillsReadResource(args))
@@ -321,7 +455,10 @@ internal class AgentLocalTools(
                         is ActiveDisplayUnavailableException -> "DISPLAY_UNAVAILABLE"
                         else -> "TOOL_ERROR"
                     },
-                    message = throwable.message ?: throwable.javaClass.simpleName
+                    // 兜底：message 为空时不要只回一个混淆后的短类名（release 包 R8 之后形如 `wg5`，
+                    // 线上完全不可诊断）。这里固定带上工具名与完整类名，便于对照 mapping.txt。
+                    message = throwable.message?.takeIf(String::isNotBlank)
+                        ?: "工具 ${toolCall.name} 内部错误（无错误信息）：${throwable.javaClass.name}"
                 )
             )
         }.let { result ->
@@ -398,24 +535,101 @@ internal class AgentLocalTools(
     }
 
     private fun memoryGet(args: JSONObject): String = try {
-        val result = AgentMemoryRepository.read(
-            query = args.optString("query").takeIf(String::isNotBlank),
-            startLine = args.optInt("start_line", 1),
-            maxChars = args.optInt("max_chars", 12_000),
-        )
-        JSONObject()
-            .put("ok", true)
-            .put("revision", result.snapshot.revision)
-            .put("bytes", result.snapshot.byteSize)
-            .put("line_count", result.snapshot.lineCount)
-            .put("start_line", result.startLine ?: JSONObject.NULL)
-            .put("end_line", result.endLine ?: JSONObject.NULL)
-            .put("matched_lines", result.matchedLines)
-            .put("has_more", result.hasMore)
-            .put("content", result.content)
-            .toString()
+        val query = args.optString("query").takeIf(String::isNotBlank)
+        val maxChars = args.optInt("max_chars", 12_000)
+        val semanticRecallEnabled = Prefs.isEnabled(Prefs.Keys.AGENT_MEMORY_SEMANTIC_RECALL_ENABLED)
+        val semantic = query?.let { text -> semanticMemoryRead(text, maxChars, semanticRecallEnabled) }
+        val payload = if (semantic != null) {
+            // revision 与 content 的行号必须来自同一次读取，否则模型可能按错行号做 replace_range。
+            val snapshot = semantic.snapshot
+            JSONObject()
+                .put("ok", true)
+                .put("revision", snapshot.revision)
+                .put("bytes", snapshot.byteSize)
+                .put("line_count", snapshot.lineCount)
+                .put("start_line", semantic.outcome.hits.firstOrNull()?.entry?.startLine ?: JSONObject.NULL)
+                .put("end_line", semantic.outcome.hits.lastOrNull()?.entry?.endLine ?: JSONObject.NULL)
+                .put("matched_sections", semantic.outcome.hits.size)
+                .put("has_more", semantic.outcome.hasMore)
+                .put("retrieval", "semantic")
+                .put("indexed_sections", semantic.outcome.indexedEntries)
+                .put("note", "语义检索按节返回，忽略 start_line；行号来自同一次快照读取")
+                .put("content", semantic.outcome.content)
+        } else {
+            val result = AgentMemoryRepository.read(
+                query = query,
+                startLine = args.optInt("start_line", 1),
+                maxChars = maxChars,
+            )
+            JSONObject().apply {
+                put("ok", true)
+                put("revision", result.snapshot.revision)
+                put("bytes", result.snapshot.byteSize)
+                put("line_count", result.snapshot.lineCount)
+                put("start_line", result.startLine ?: JSONObject.NULL)
+                put("end_line", result.endLine ?: JSONObject.NULL)
+                put("matched_lines", result.matchedLines)
+                put("has_more", result.hasMore)
+                // 四期开关关闭时保持原有输出形状，不额外出现 retrieval 字段。
+                if (semanticRecallEnabled) {
+                    put("retrieval", if (query == null) "page" else "keyword")
+                }
+                put("content", result.content)
+            }
+        }
+        if (args.optBoolean("include_metadata", false)) {
+            val entries = AgentMemoryRepository.entries()
+            payload.put("sections", memorySectionsJson(entries.take(MAX_METADATA_SECTIONS)))
+            if (entries.size > MAX_METADATA_SECTIONS) {
+                payload.put("sections_truncated", true)
+            }
+        }
+        payload.toString()
     } catch (failure: AgentMemoryException) {
         errorResult(failure.code, failure.message ?: "记忆读取失败")
+    }
+
+    private class SemanticRead(
+        val snapshot: AgentMemorySnapshot,
+        val outcome: SemanticSearchOutcome,
+    )
+
+    /** 四期：开关打开且向量可用时走语义 top-k；任何不可用都返回 null 由调用方降级。 */
+    private fun semanticMemoryRead(
+        query: String,
+        maxChars: Int,
+        semanticRecallEnabled: Boolean,
+    ): SemanticRead? {
+        if (!semanticRecallEnabled) return null
+        val provider = embeddingProvider() ?: return null
+        return runCatching {
+            val snapshot = AgentMemoryRepository.snapshot()
+            val outcome = runBlocking {
+                AgentMemorySemanticIndex.search(
+                    query = query,
+                    snapshotContent = snapshot.content,
+                    limit = SEMANTIC_MEMORY_LIMIT,
+                    maxChars = maxChars,
+                    provider = provider,
+                )
+            } ?: return null
+            SemanticRead(snapshot, outcome)
+        }.getOrNull()
+    }
+
+    private fun memorySectionsJson(entries: List<AgentMemoryEntry>): JSONArray = JSONArray().also { array ->
+        entries.forEach { entry ->
+            array.put(
+                JSONObject()
+                    .put("id", entry.id)
+                    .put("heading", entry.heading)
+                    .put("start_line", entry.startLine)
+                    .put("end_line", entry.endLine)
+                    .put("created", entry.metadata.created?.toString() ?: JSONObject.NULL)
+                    .put("verified", entry.metadata.verified?.toString() ?: JSONObject.NULL)
+                    .put("type", entry.metadata.type ?: JSONObject.NULL),
+            )
+        }
     }
 
     private fun memoryWrite(args: JSONObject): String = try {
@@ -431,16 +645,27 @@ internal class AgentLocalTools(
                 revision = revision,
                 content = args.requiredText("content"),
             )
+            "upsert_section" -> AgentMemoryMutation.UpsertSection(
+                revision = revision,
+                heading = args.requiredText("heading"),
+                content = args.requiredText("content"),
+            )
             "clear" -> AgentMemoryMutation.Clear(revision)
             else -> error("不支持的记忆写入模式")
         }
         when (val result = AgentMemoryRepository.mutate(mutation)) {
-            is AgentMemoryWriteResult.Success -> JSONObject()
-                .put("ok", true)
-                .put("revision", result.snapshot.revision)
-                .put("bytes", result.snapshot.byteSize)
-                .put("line_count", result.snapshot.lineCount)
-                .toString()
+            is AgentMemoryWriteResult.Success -> {
+                // 四期：写入后异步刷新向量缓存；刷新失败不影响本次写入结果。
+                if (Prefs.isEnabled(Prefs.Keys.AGENT_MEMORY_SEMANTIC_RECALL_ENABLED)) {
+                    AgentMemorySemanticIndex.refreshAsync(embeddingProvider)
+                }
+                JSONObject()
+                    .put("ok", true)
+                    .put("revision", result.snapshot.revision)
+                    .put("bytes", result.snapshot.byteSize)
+                    .put("line_count", result.snapshot.lineCount)
+                    .toString()
+            }
             is AgentMemoryWriteResult.Conflict -> JSONObject()
                 .put("ok", false)
                 .put("code", "MEMORY_CONFLICT")
@@ -581,6 +806,173 @@ internal class AgentLocalTools(
         )
         result.put("after", AgentAfterActionSummary.build(before, after))
         return textResult(result.toString())
+    }
+
+    /** 一次调用执行一串 GUI 动作，中间不观察、不经过模型回合；失败即中断。 */
+    private fun gestureBatch(args: JSONObject): AgentModelClient.ToolResult {
+        val actions = args.optJSONArray("actions")
+            ?: return textResult(errorResult("INVALID_ARGUMENT", "actions 必须是数组"))
+        if (actions.length() !in 1..GuiMacroStore.MAX_ACTIONS) {
+            return textResult(errorResult("INVALID_ARGUMENT", "actions 数量需为 1..${GuiMacroStore.MAX_ACTIONS}"))
+        }
+        val steps = JSONArray()
+        val batchStartedAt = SystemClock.elapsedRealtime()
+        var stoppedAt = -1
+        var failure: JSONObject? = null
+        for (index in 0 until actions.length()) {
+            checkCancellation()
+            if (SystemClock.elapsedRealtime() - batchStartedAt > 60_000) {
+                publishedObservation.set(PublishedObservation(generation = publishedObservation.get().generation))
+                return textResult(
+                    JSONObject()
+                        .put("ok", false)
+                        .put("code", "BATCH_TIMEOUT")
+                        .put("stopped_at", index)
+                        .put("executed", steps.length())
+                        .put("total", actions.length())
+                        .put("steps", steps)
+                        .put("message", "批处理超过 60 秒预算，已中断")
+                        .toString(),
+                )
+            }
+            val action = actions.optJSONObject(index)
+            if (action == null) {
+                stoppedAt = index
+                failure = JSONObject(errorResult("INVALID_ARGUMENT", "第 $index 步不是对象"))
+                break
+            }
+            val type = action.optString("type").trim()
+            val raw = try {
+                executeBatchAction(type, action)
+            } catch (throwable: Throwable) {
+                if (throwable is AgentRunCancelledException) throw throwable
+                errorResult(
+                    when (throwable) {
+                        is InvalidToolArgumentException, is org.json.JSONException -> "INVALID_ARGUMENT"
+                        is ActiveDisplayUnavailableException -> "DISPLAY_UNAVAILABLE"
+                        is DeviceControlUnavailableException -> "ACCESSIBILITY_UNAVAILABLE"
+                        else -> "BATCH_ACTION_FAILED"
+                    },
+                    throwable.message ?: throwable.javaClass.simpleName,
+                )
+            }
+            val parsed = runCatching { JSONObject(raw) }.getOrNull()
+            val ok = parsed?.optBoolean("ok") == true
+            steps.put(
+                JSONObject()
+                    .put("index", index)
+                    .put("type", type)
+                    .put("ok", ok)
+                    .put("result", raw.take(500)),
+            )
+            if (!ok) {
+                stoppedAt = index
+                failure = parsed
+                break
+            }
+        }
+        val result = JSONObject()
+            .put("ok", stoppedAt < 0)
+            .put("completed", actions.length() - steps.length() == 0 && stoppedAt < 0)
+            .put("executed", steps.length())
+            .put("total", actions.length())
+            .put("steps", steps)
+        if (stoppedAt >= 0) {
+            result.put("stopped_at", stoppedAt)
+                .put("error", failure ?: JSONObject.NULL)
+                .put("message", "已在第 $stoppedAt 步中断，未执行后续动作；请根据当前界面决定是否重试")
+            publishedObservation.set(PublishedObservation(generation = publishedObservation.get().generation))
+            return textResult(result.toString())
+        }
+        return if (args.optString("observe", "final") == "final") {
+            afterAction(result.toString())
+        } else {
+            publishedObservation.set(PublishedObservation(generation = publishedObservation.get().generation))
+            textResult(result.toString())
+        }
+    }
+
+    private fun executeBatchAction(type: String, action: JSONObject): String {
+        val requiredTool = when (type) {
+            "tap", "tap_area", "tap_text" -> "tap_area"
+            "long_press" -> "long_press"
+            "swipe" -> "swipe"
+            "scroll" -> "scroll"
+            "type_text" -> "type_text"
+            "press_key" -> "press_key"
+            "wait_ms" -> "wait_for_text"
+            else -> null
+        }
+        if (requiredTool != null && !isToolEnabled(requiredTool)) {
+            return errorResult("TOOL_DISABLED", "动作 $type 对应的工具 $requiredTool 已被用户关闭")
+        }
+        if (!action.has("coordinate_space")) action.put("coordinate_space", "screen")
+        return when (type) {
+            "tap" -> tap(action)
+            "tap_area" -> tapArea(action)
+            "long_press" -> longPress(action)
+            "swipe" -> swipe(action)
+            "scroll" -> deviceController.scroll(
+                action.optString("direction"), action.optString("amount"), currentActiveDisplayId(),
+            )
+            "type_text" -> typeText(action)
+            "press_key" -> deviceController.pressKey(action.optString("button"), currentActiveDisplayId())
+            "wait_ms" -> deviceController.waitMs(action.optInt("ms", 300).coerceIn(100, 2_000))
+            "tap_text" -> tapTextNode(action)
+            else -> errorResult("INVALID_ARGUMENT", "不支持的动作类型：$type")
+        }
+    }
+
+    /** 按可见文字/desc 找节点并点击；每次实时取树，不依赖旧 observation_id。 */
+    private fun tapTextNode(action: JSONObject): String {
+        val text = action.getString("text").trim()
+        if (text.isEmpty()) return errorResult("INVALID_ARGUMENT", "tap_text 需要 text")
+        val displayId = currentActiveDisplayId()
+        val observation = screenObservationProvider?.invoke(TAP_TEXT_OPTIONS)
+            ?: deviceController.observe(
+                includeScreenshot = false, includeUiTree = true, maxNodes = 120, displayId = displayId,
+            )
+        val content = runCatching { JSONObject(observation.content) }.getOrNull()
+        if (content?.optBoolean("ok", true) == false) {
+            return errorResult(
+                content.optString("code").ifBlank { "OBSERVATION_FAILED" },
+                "tap_text 无法读取当前界面：${content.optString("ui_tree_status")}",
+            )
+        }
+        val nodes = observation.elementObservation?.nodes.orEmpty()
+        val exact = nodes.filter { it.text.trim().equals(text, true) || it.desc.trim().equals(text, true) }
+        val partial = nodes.filter {
+            it.text.contains(text, ignoreCase = true) || it.desc.contains(text, ignoreCase = true)
+        }
+        val candidates = exact.ifEmpty { partial }
+        if (candidates.isEmpty()) return errorResult("TEXT_NOT_FOUND", "当前界面未找到文字节点：$text")
+        val enabled = candidates.filter { it.enabled }
+        if (enabled.isEmpty()) return errorResult("TEXT_DISABLED", "文字节点已禁用：$text")
+        // 优先可点击、再取面积最小，避免命中拼接文本的父容器而点到空白。
+        val node = enabled.sortedWith(
+            compareByDescending<RootShellDeviceController.UiNode> { it.clickable }
+                .thenBy { it.bounds.width().toLong() * it.bounds.height() },
+        ).first()
+        return clearOverlay(displayId, ScreenPoint(node.centerX, node.centerY)) {
+            if (!CanvasRoutingPolicy.isVirtualDisplay(displayId)) {
+                AgentHapticFeedback.perform(context, AgentHapticFeedback.Type.TAP)
+            }
+            showTap(node.centerX, node.centerY, displayId)
+            deviceController.tap(node.centerX, node.centerY, displayId)
+        }
+    }
+
+    private fun macroRun(args: JSONObject): AgentModelClient.ToolResult {
+        val name = args.getString("name")
+        val doc = GuiMacroStore.load(name)
+            ?: return textResult(errorResult("MACRO_NOT_FOUND", "宏不存在或已损坏：$name"))
+        val actions = runCatching {
+            GuiMacroStore.substitute(doc.getJSONArray("actions"), args.optJSONObject("params") ?: JSONObject())
+        }.getOrElse { return textResult(errorResult("MACRO_PARAMS", it.message ?: "参数错误")) }
+        val batchArgs = JSONObject()
+            .put("actions", actions)
+            .put("observe", args.optString("observe", "final"))
+        return gestureBatch(batchArgs)
     }
 
     private fun tap(args: JSONObject): String {
@@ -929,8 +1321,11 @@ internal class AgentLocalTools(
         }
         launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
 
+        if (virtualDisplayEnabled() && requestedDisplay != CanvasRoutingPolicy.RequestedDisplay.MAIN && !rootAvailable()) {
+            io.github.mangi.eta.agent.device.RootAccess.awaitOrRetryIfPreviouslyGranted(context)
+        }
         val mainForegroundPkg = AgentAccessibilityService.current()?.currentPackageName(Display.DEFAULT_DISPLAY)
-        val targetCanvas = CanvasRoutingPolicy.decideLaunchTarget(
+        val launchPlan = CanvasRoutingPolicy.decideLaunchPlan(
             virtualDisplayEnabled = virtualDisplayEnabled(),
             backendAvailable = VirtualDisplayController.isBackendAvailable(rootAvailable(), lsposedAvailable()),
             requested = requestedDisplay,
@@ -939,7 +1334,7 @@ internal class AgentLocalTools(
             ownPackage = context.packageName,
         )
 
-        val launchedVirtualId = if (targetCanvas == CanvasRoutingPolicy.CanvasTarget.VIRTUAL_DISPLAY) {
+        val launchedVirtualId = if (launchPlan.target == CanvasRoutingPolicy.CanvasTarget.VIRTUAL_DISPLAY) {
             VirtualDisplayController.launchAppOnVirtualDisplay(
                 context = context,
                 packageName = app.packageName,
@@ -966,6 +1361,13 @@ internal class AgentLocalTools(
         } else {
             CanvasRoutingPolicy.CanvasTarget.MAIN_DISPLAY.wireName
         }
+        val canvasReason = if (finalCanvas == CanvasRoutingPolicy.CanvasTarget.VIRTUAL_DISPLAY.wireName) {
+            launchPlan.reason
+        } else if (launchPlan.target == CanvasRoutingPolicy.CanvasTarget.VIRTUAL_DISPLAY) {
+            "virtual_create_failed"
+        } else {
+            launchPlan.reason
+        }
 
         val verification = AppLaunchVerification.awaitWindow(
             packageName = app.packageName,
@@ -984,13 +1386,19 @@ internal class AgentLocalTools(
             },
             checkCancellation = ::checkCancellation,
         )
-        logger.info("Agent local tool action=launch_app outcome=${verification.launchStatus} canvas=$finalCanvas display=$finalDisplayId")
+        logger.info(
+            "Agent local tool action=launch_app outcome=${verification.launchStatus} " +
+                "canvas=$finalCanvas reason=$canvasReason display=$finalDisplayId " +
+                "root=${io.github.mangi.eta.agent.device.RootAccess.state.value.status.name.lowercase()} " +
+                "lsposed=${lsposedAvailable()}",
+        )
         return JSONObject()
             .put("ok", true)
             .put("tool", "launch_app")
             .put("app_name", app.appName)
             .put("package_name", app.packageName)
             .put("canvas", finalCanvas)
+            .put("canvas_reason", canvasReason)
             .put("display_id", finalDisplayId)
             .put("launch_status", verification.launchStatus)
             .put("window_observation", verification.toJson())
@@ -1042,9 +1450,12 @@ internal class AgentLocalTools(
         if (!HookSupport.resolvesActivity(context, intent)) {
             return errorResult("NO_ACTIVITY", "没有应用可以处理该 URI")
         }
+        if (virtualDisplayEnabled() && !rootAvailable()) {
+            io.github.mangi.eta.agent.device.RootAccess.awaitOrRetryIfPreviouslyGranted(context)
+        }
         val resolvedPkg = context.packageManager.resolveActivity(intent, 0)?.activityInfo?.packageName
         val mainForegroundPkg = AgentAccessibilityService.current()?.currentPackageName(Display.DEFAULT_DISPLAY)
-        val targetCanvas = CanvasRoutingPolicy.decideLaunchTarget(
+        val launchPlan = CanvasRoutingPolicy.decideLaunchPlan(
             virtualDisplayEnabled = virtualDisplayEnabled(),
             backendAvailable = VirtualDisplayController.isBackendAvailable(rootAvailable(), lsposedAvailable()),
             requested = CanvasRoutingPolicy.RequestedDisplay.AUTO,
@@ -1052,7 +1463,7 @@ internal class AgentLocalTools(
             foregroundPackageOnMainDisplay = mainForegroundPkg,
             ownPackage = context.packageName,
         )
-        val virtualId = if (targetCanvas == CanvasRoutingPolicy.CanvasTarget.VIRTUAL_DISPLAY) {
+        val virtualId = if (launchPlan.target == CanvasRoutingPolicy.CanvasTarget.VIRTUAL_DISPLAY) {
             VirtualDisplayController.openUriOnVirtualDisplay(
                 context = context,
                 intent = intent,
@@ -1077,12 +1488,20 @@ internal class AgentLocalTools(
         } else {
             CanvasRoutingPolicy.CanvasTarget.MAIN_DISPLAY.wireName
         }
-        logger.info("Agent local tool action=open_uri outcome=started canvas=$finalCanvas")
+        val canvasReason = if (finalCanvas == CanvasRoutingPolicy.CanvasTarget.VIRTUAL_DISPLAY.wireName) {
+            launchPlan.reason
+        } else if (launchPlan.target == CanvasRoutingPolicy.CanvasTarget.VIRTUAL_DISPLAY) {
+            "virtual_create_failed"
+        } else {
+            launchPlan.reason
+        }
+        logger.info("Agent local tool action=open_uri outcome=started canvas=$finalCanvas reason=$canvasReason")
         return JSONObject()
             .put("ok", true)
             .put("tool", "open_uri")
             .put("scheme", uri.scheme?.lowercase(Locale.ROOT))
             .put("canvas", finalCanvas)
+            .put("canvas_reason", canvasReason)
             .put("display_id", finalDisplayId)
             .also { result ->
                 if (uri.scheme.equals("https", true)) {
@@ -1801,6 +2220,8 @@ internal class AgentLocalTools(
             DEVICE_DIRECT_TOOL_NAMES + DEVICE_SENSITIVE_READ_TOOL_NAMES +
                 DEVICE_SENSITIVE_ACTION_TOOL_NAMES
         val MEMORY_TOOL_NAMES = setOf("memory_get", "memory_write")
+        const val SEMANTIC_MEMORY_LIMIT = 3
+        const val MAX_METADATA_SECTIONS = 100
     }
 }
 
@@ -1808,6 +2229,11 @@ private val AFTER_ACTION_OPTIONS = AgentScreenObservationContract.Options(
     includeScreenshot = false,
     includeUiTree = true,
     maxNodes = 30,
+)
+private val TAP_TEXT_OPTIONS = AgentScreenObservationContract.Options(
+    includeScreenshot = false,
+    includeUiTree = true,
+    maxNodes = 120,
 )
 
 /** append 超过该长度改走粘贴路径；逐字键入的增量重建对长文本既慢又容易被输入法打断。 */

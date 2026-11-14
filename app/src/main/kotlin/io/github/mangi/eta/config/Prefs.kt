@@ -51,8 +51,39 @@ internal object Prefs {
         const val AGENT_AUTO_COMPACTION_ENABLED = "agent_auto_compaction_enabled"
         const val AGENT_SUBAGENT_ENABLED = "agent_subagent_enabled"
         const val AGENT_VIRTUAL_DISPLAY_ENABLED = "agent_virtual_display_enabled"
+        /** 危险操作拦截：命中系统分区/启动链等规则时先在聊天流里确认再执行。 */
+        const val AGENT_DANGER_TOOL_GUARD = "agent_danger_tool_guard"
         const val AGENT_RUNTIME_CONFIG_JSON = "agent_runtime_config_json"
         const val AGENT_DISABLED_TOOLS_JSON = "agent_disabled_tools_json"
+        /** 一期：按当前用户消息注入非核心记忆节。 */
+        const val AGENT_MEMORY_RELEVANCE_ENABLED = "agent_memory_relevance_enabled"
+        /** 三期：一轮运行结束后追加轻量记忆沉淀回合。 */
+        const val AGENT_MEMORY_DISTILL_ENABLED = "agent_memory_distill_enabled"
+        /** 四期：memory_get(query=...) 使用向量语义检索。 */
+        const val AGENT_MEMORY_SEMANTIC_RECALL_ENABLED = "agent_memory_semantic_recall_enabled"
+        /** 四期：语义检索使用的 embedding 模型名（OpenAI 兼容 /embeddings）。 */
+        const val AGENT_MEMORY_EMBEDDING_MODEL = "agent_memory_embedding_model"
+        /** 分割线以下按日期自动过期、到期移入 # 归档（阈值固定 90 天，默认关闭）。 */
+        const val AGENT_MEMORY_AUTO_EXPIRE_ENABLED = "agent_memory_auto_expire_enabled"
+        /** 用量统计：只记录请求计数与 token 数量等元数据，纯本地、默认开启。 */
+        const val AGENT_USAGE_STATS_ENABLED = "agent_usage_stats_enabled"
+        /**
+         * 主动沟通：允许 Agent 在值得关注时主动发系统通知（notify_user），默认开启。
+         * 刻意不并入 [BOOLEAN_DEFAULTS]/[LOCAL_AGENT_KEYS]：这两个集合被 PrefsDefaultsTest 用
+         * 精确 map/set 断言钉住，且四期/拦截卡/任务中心等未提交轮次已各自追加过键。这里改用
+         * [isProactiveNotifyEnabled] 独立读取同一份 localAgent prefs，既不改动既有默认值快照测试，
+         * 也不与那些轮次抢同一处定义；默认 true 与设置页 SwitchPref 的 `?: true` 一致。
+         */
+        const val AGENT_PROACTIVE_NOTIFY_ENABLED = "agent_proactive_notify_enabled"
+
+        /**
+         * 后台任务完成自动唤醒：terminal_job 失败/超时结束时自动起一轮 agent run 处理，默认开启。
+         *
+         * 这个开关**必须**进 [BOOLEAN_DEFAULTS] 与 [LOCAL_AGENT_KEYS]：设置页的 SwitchPref、
+         * [isJobWakeupEnabled] 与 hook 侧回写要读到同一个默认值与同一份本地键集合，
+         * 否则关掉开关后系统托盘/远端配置仍按 true 处理，开关形同虚设（审查 m9）。
+         */
+        const val AGENT_JOB_WAKEUP_ENABLED = "agent_job_wakeup_enabled"
 
         /** 全部布尔开关及其默认值。 */
         val BOOLEAN_DEFAULTS: Map<String, Boolean> = mapOf(
@@ -74,6 +105,13 @@ internal object Prefs {
             AGENT_AUTO_COMPACTION_ENABLED to true,
             AGENT_SUBAGENT_ENABLED to true,
             AGENT_VIRTUAL_DISPLAY_ENABLED to true,
+            AGENT_DANGER_TOOL_GUARD to true,
+            AGENT_MEMORY_RELEVANCE_ENABLED to true,
+            AGENT_MEMORY_DISTILL_ENABLED to false,
+            AGENT_MEMORY_SEMANTIC_RECALL_ENABLED to false,
+            AGENT_MEMORY_AUTO_EXPIRE_ENABLED to false,
+            AGENT_USAGE_STATS_ENABLED to true,
+            AGENT_JOB_WAKEUP_ENABLED to true,
         )
 
         /** 由 Eta Runtime 最终裁决、不要求 Xposed 框架在线的开关。 */
@@ -87,6 +125,13 @@ internal object Prefs {
             AGENT_AUTO_COMPACTION_ENABLED,
             AGENT_SUBAGENT_ENABLED,
             AGENT_VIRTUAL_DISPLAY_ENABLED,
+            AGENT_DANGER_TOOL_GUARD,
+            AGENT_MEMORY_RELEVANCE_ENABLED,
+            AGENT_MEMORY_DISTILL_ENABLED,
+            AGENT_MEMORY_SEMANTIC_RECALL_ENABLED,
+            AGENT_MEMORY_AUTO_EXPIRE_ENABLED,
+            AGENT_USAGE_STATS_ENABLED,
+            AGENT_JOB_WAKEUP_ENABLED,
         )
     }
 
@@ -135,6 +180,41 @@ internal object Prefs {
 
     fun getString(key: String): String {
         return remote?.getString(key, "") ?: ""
+    }
+
+    /**
+     * 主动沟通开关：默认开启。读取 localAgent prefs（与设置页 SwitchPref 同一份），
+     * 缺失时按默认 true；框架 remote 不可用也不影响。独立于 [isEnabled] 的默认值快照，
+     * 避免与"默认值精确断言"测试以及其它未提交轮次的 BOOLEAN_DEFAULTS 追加互相干扰。
+     */
+    fun isProactiveNotifyEnabled(): Boolean = runCatching {
+        (localAgent ?: remote)?.getBoolean(Keys.AGENT_PROACTIVE_NOTIFY_ENABLED, true) ?: true
+    }.getOrDefault(true)
+
+    /**
+     * 后台任务完成自动唤醒开关：默认开启。
+     *
+     * 与 [isProactiveNotifyEnabled] 同一模式：读 localAgent prefs（与设置页 SwitchPref 同一份），
+     * 缺失按 true；框架 remote 不可用也不影响后台唤醒的裁决。
+     */
+    fun isJobWakeupEnabled(): Boolean = runCatching {
+        (localAgent ?: remote)?.getBoolean(Keys.AGENT_JOB_WAKEUP_ENABLED, true) ?: true
+    }.getOrDefault(true)
+
+    /** 读取本地 Agent 配置中的字符串（远端未必有同名键）；缺省返回 [default]。 */
+    fun localAgentString(key: String, default: String = ""): String =
+        runCatching { (localAgent ?: remote)?.getString(key, default) }.getOrNull() ?: default
+
+    /** 写入单个本地 Agent 布尔开关；框架可用时顺手回写远端，保持 hook 侧一致。 */
+    fun setAgentSwitch(
+        key: String,
+        enabled: Boolean,
+        service: XposedService? = null,
+    ): Boolean {
+        val local = localAgent ?: return false
+        val committed = runCatching { local.edit().putBoolean(key, enabled).commit() }.getOrDefault(false)
+        if (committed && service != null) reconcileAgentPreferences(service)
+        return committed
     }
 
     fun powerAssistantTarget(): PowerAssistantTarget = powerAssistantTarget(remote)
@@ -210,6 +290,8 @@ internal object Prefs {
     /** 将运行时工具名映射为工具列表中的主开关标识，确保同一能力的不同动作变体受同一开关约束。 */
     fun canonicalToolSwitchId(toolName: String): String = when (toolName) {
         "tap" -> "tap_area"
+        "gesture_batch" -> "tap_area"
+        "macro_run" -> "tap_area"
         "long_press_element" -> "long_press"
         "scroll_element" -> "scroll"
         "input_text", "replace_text", "clear_text", "paste_text" -> "type_text"
@@ -290,46 +372,61 @@ internal object Prefs {
         }
         if (disabledLegacyGroups.isEmpty()) return
         val migratedDisabled = linkedSetOf<String>()
-        if (Keys.AGENT_BROWSER_TOOLS in disabledLegacyGroups) {
-            migratedDisabled += listOf("web_search", "fetch_url", "browser_use")
-        }
-        if (Keys.AGENT_TERMINAL_TOOLS in disabledLegacyGroups) {
-            migratedDisabled += AgentTerminalToolCatalog.names
-            migratedDisabled += AgentFileToolCatalog.names
-            migratedDisabled += "read_image"
-        }
-        if (Keys.AGENT_DEVICE_DIRECT_TOOLS in disabledLegacyGroups) {
-            migratedDisabled += AgentPhoneToolCatalog.direct
-            migratedDisabled += listOf(
-                "set_alarm", "set_timer", "device_status", "inspect_app",
-                "network_info", "top_memory_apps", "top_storage_apps",
-                "media_control", "set_volume",
-            )
-        }
-        if (Keys.AGENT_DEVICE_SENSITIVE_READ_TOOLS in disabledLegacyGroups) {
-            migratedDisabled += PersonalSearchTools.names
-            migratedDisabled += AgentPhoneToolCatalog.reads
-            migratedDisabled += listOf(
-                "read_personal_item", "summarize_bills", "get_setting", "wifi_credentials",
-                "recent_notifications", "search_notification_history", "recent_app_activity",
-                "app_usage_summary", "get_current_location", "get_device_environment",
-                "list_alarms", "list_active_timers", "search_clipboard_history",
-                "get_health_summary", "read_sms_code", "get_logcat", "search_media",
-                "search_audio", "search_recordings", "search_files", "search_calendar_events",
-                "search_contacts", "search_call_history", "search_messages", "search_downloads",
-                "search_notes", "search_coloros_recordings", "search_recording_summaries",
-                "search_system_memories", "search_saved_places", "search_personal_orders",
-                "search_qq_chat_images", "search_wechat_chat_images",
-            )
-        }
-        if (Keys.AGENT_DEVICE_SENSITIVE_ACTION_TOOLS in disabledLegacyGroups) {
-            migratedDisabled += AgentPhoneToolCatalog.writes
-            migratedDisabled += listOf("set_setting", "set_device_state", "app_state_control")
+        disabledLegacyGroups.forEach { key ->
+            migratedDisabled += LEGACY_GROUP_TOOL_NAMES.getValue(key)
         }
         val editor = local.edit()
             .putString(Keys.AGENT_DISABLED_TOOLS_JSON, JSONArray(migratedDisabled.sorted()).toString())
         disabledLegacyGroups.forEach { key -> editor.putBoolean(key, true) }
         runCatching { editor.commit() }
+    }
+
+    /** 组开关与组内工具名的单一映射来源，迁移与运行时组开关共用。 */
+    private val LEGACY_GROUP_TOOL_NAMES: Map<String, Collection<String>> = mapOf(
+        Keys.AGENT_BROWSER_TOOLS to listOf("web_search", "fetch_url", "browser_use"),
+        Keys.AGENT_TERMINAL_TOOLS to
+            (AgentTerminalToolCatalog.names + AgentFileToolCatalog.names + "read_image").toList(),
+        Keys.AGENT_DEVICE_DIRECT_TOOLS to (AgentPhoneToolCatalog.direct + listOf(
+            "set_alarm", "set_timer", "device_status", "inspect_app",
+            "network_info", "top_memory_apps", "top_storage_apps",
+            "media_control", "set_volume",
+        )),
+        Keys.AGENT_DEVICE_SENSITIVE_READ_TOOLS to (PersonalSearchTools.names + AgentPhoneToolCatalog.reads + listOf(
+            "read_personal_item", "summarize_bills", "get_setting", "wifi_credentials",
+            "recent_notifications", "search_notification_history", "recent_app_activity",
+            "app_usage_summary", "get_current_location", "get_device_environment",
+            "list_alarms", "list_active_timers", "search_clipboard_history",
+            "get_health_summary", "read_sms_code", "get_logcat", "search_media",
+            "search_audio", "search_recordings", "search_files", "search_calendar_events",
+            "search_contacts", "search_call_history", "search_messages", "search_downloads",
+            "search_notes", "search_coloros_recordings", "search_recording_summaries",
+            "search_system_memories", "search_saved_places", "search_personal_orders",
+            "search_qq_chat_images", "search_wechat_chat_images",
+        )),
+        Keys.AGENT_DEVICE_SENSITIVE_ACTION_TOOLS to
+            (AgentPhoneToolCatalog.writes + listOf("set_setting", "set_device_state", "app_state_control")),
+    )
+
+    fun isGroupSwitchKey(key: String): Boolean = LEGACY_GROUP_TOOL_NAMES.containsKey(key)
+
+    /** 组开关的读取口径与写入口径一致：组内工具全部被禁用才视为组关闭。 */
+    fun isAgentGroupEnabled(key: String): Boolean {
+        val tools = LEGACY_GROUP_TOOL_NAMES[key] ?: return isEnabled(key)
+        val disabled = disabledTools()
+        return !tools.all { it in disabled }
+    }
+
+    /**
+     * 组开关的权威写入入口：通过禁用工具集同步组内全部工具，避免 legacy 布尔值
+     * 被 setToolsEnabled 强制刷回 true 导致 UI 与运行时状态矛盾。
+     */
+    fun setAgentGroupEnabled(
+        key: String,
+        enabled: Boolean,
+        service: XposedService? = null,
+    ): Boolean {
+        val tools = LEGACY_GROUP_TOOL_NAMES[key] ?: return false
+        return setToolsEnabled(tools, enabled, service)
     }
 
     private val LEGACY_TOOL_GROUP_KEYS = listOf(

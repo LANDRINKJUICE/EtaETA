@@ -40,6 +40,18 @@ internal object AgentRuntimeWire {
     const val AGENT_UI_HANDOFF_SOURCE = "agent_ui"
     const val ETA_VOICE_HANDOFF_SOURCE = "eta_voice"
 
+    /** 到点自动执行的自动任务；没有用户在线的入口，模型配置一律取 Runtime 侧默认配置。 */
+    const val ETA_SCHEDULED_TASK_HANDOFF_SOURCE = "eta_scheduled_task"
+
+    /**
+     * 后台命令失败 / 超时后自动唤醒 Agent 的一轮运行。
+     *
+     * 与自动任务同理：没有用户在线的入口，模型配置取 Runtime 侧当前配置；
+     * 会话身份由 [AgentConversationIdentity] 从 source + conversationKey 派生，
+     * 与用户会话完全隔离，也不会打断用户正在进行的对话。
+     */
+    const val ETA_JOB_WAKEUP_HANDOFF_SOURCE = "eta_job_wakeup"
+
     internal class PayloadTooLargeException(sizeBytes: Int) : IllegalArgumentException(
         "Agent Runtime 请求元数据过大（$sizeBytes bytes）；请缩短输入或会话历史后重试"
     )
@@ -714,6 +726,8 @@ internal object AgentRuntimeWire {
                 event.tokensBefore?.let { putInt("tokens_before", it) }
                 event.tokensAfter?.let { putInt("tokens_after", it) }
                 putString("reason_code", event.reasonCode)
+                if (event.archiveId.isNotBlank()) putString("compaction_archive_id", event.archiveId)
+                event.usage?.takeUnless { it.isEmpty }?.let { putTokenUsage(it, prefix = "compaction_usage_") }
             }
 
             is AgentEvent.ModelRetryScheduled -> {
@@ -881,6 +895,8 @@ internal object AgentRuntimeWire {
             tokensBefore = bundle.optionalInt("tokens_before"),
             tokensAfter = bundle.optionalInt("tokens_after"),
             reasonCode = bundle.getString("reason_code").orEmpty(),
+            usage = bundle.getTokenUsage(prefix = "compaction_usage_").takeUnless { it.isEmpty },
+            archiveId = bundle.getString("compaction_archive_id").orEmpty(),
         )
         "model_retry_scheduled" -> AgentEvent.ModelRetryScheduled(
             round = bundle.getInt("round"),
@@ -1031,35 +1047,39 @@ internal object AgentRuntimeWire {
             }
         }
 
-    private fun Bundle.putTokenUsage(usage: AgentTokenUsage) {
-        usage.contextTokens?.let { putInt("usage_context", it) }
-        usage.inputTokens?.let { putInt("usage_input", it) }
-        usage.outputTokens?.let { putInt("usage_output", it) }
-        usage.reasoningTokens?.let { putInt("usage_reasoning", it) }
-        usage.cachedTokens?.let { putInt("usage_cache", it) }
-        usage.stepCount?.let { putInt("usage_steps", it) }
-        usage.llmMs?.let { putLong("usage_llm_ms", it) }
-        usage.toolMs?.let { putLong("usage_tool_ms", it) }
-        usage.ttftMs?.let { putLong("usage_ttft_ms", it) }
-        usage.ttftSteps?.let { putInt("usage_ttft_steps", it) }
-        usage.decodeMs?.let { putLong("usage_decode_ms", it) }
-        usage.decodeTokens?.let { putInt("usage_decode_tokens", it) }
+    private fun Bundle.putTokenUsage(usage: AgentTokenUsage, prefix: String = "usage_") {
+        usage.contextTokens?.let { putInt("${prefix}context", it) }
+        usage.inputTokens?.let { putInt("${prefix}input", it) }
+        usage.outputTokens?.let { putInt("${prefix}output", it) }
+        usage.reasoningTokens?.let { putInt("${prefix}reasoning", it) }
+        usage.cachedTokens?.let { putInt("${prefix}cache", it) }
+        usage.cacheWriteTokens?.let { putInt("${prefix}cache_write", it) }
+        usage.requestKind?.takeIf { it.isNotBlank() }?.let { putString("${prefix}request_kind", it) }
+        usage.stepCount?.let { putInt("${prefix}steps", it) }
+        usage.llmMs?.let { putLong("${prefix}llm_ms", it) }
+        usage.toolMs?.let { putLong("${prefix}tool_ms", it) }
+        usage.ttftMs?.let { putLong("${prefix}ttft_ms", it) }
+        usage.ttftSteps?.let { putInt("${prefix}ttft_steps", it) }
+        usage.decodeMs?.let { putLong("${prefix}decode_ms", it) }
+        usage.decodeTokens?.let { putInt("${prefix}decode_tokens", it) }
     }
 
-    private fun Bundle.getTokenUsage(): AgentTokenUsage =
+    private fun Bundle.getTokenUsage(prefix: String = "usage_"): AgentTokenUsage =
         AgentTokenUsage(
-            contextTokens = optionalInt("usage_context"),
-            inputTokens = optionalInt("usage_input"),
-            outputTokens = optionalInt("usage_output"),
-            reasoningTokens = optionalInt("usage_reasoning"),
-            cachedTokens = optionalInt("usage_cache"),
-            stepCount = optionalInt("usage_steps"),
-            llmMs = optionalLong("usage_llm_ms"),
-            toolMs = optionalLong("usage_tool_ms"),
-            ttftMs = optionalLong("usage_ttft_ms"),
-            ttftSteps = optionalInt("usage_ttft_steps"),
-            decodeMs = optionalLong("usage_decode_ms"),
-            decodeTokens = optionalInt("usage_decode_tokens"),
+            contextTokens = optionalInt("${prefix}context"),
+            inputTokens = optionalInt("${prefix}input"),
+            outputTokens = optionalInt("${prefix}output"),
+            reasoningTokens = optionalInt("${prefix}reasoning"),
+            cachedTokens = optionalInt("${prefix}cache"),
+            cacheWriteTokens = optionalInt("${prefix}cache_write"),
+            requestKind = getString("${prefix}request_kind")?.takeIf { it.isNotBlank() },
+            stepCount = optionalInt("${prefix}steps"),
+            llmMs = optionalLong("${prefix}llm_ms"),
+            toolMs = optionalLong("${prefix}tool_ms"),
+            ttftMs = optionalLong("${prefix}ttft_ms"),
+            ttftSteps = optionalInt("${prefix}ttft_steps"),
+            decodeMs = optionalLong("${prefix}decode_ms"),
+            decodeTokens = optionalInt("${prefix}decode_tokens"),
         )
 
     private fun decodeCustomHeaders(raw: String?): List<CustomHeader> =

@@ -1,5 +1,7 @@
 package io.github.mangi.eta.ui
 
+import android.app.RemoteInput
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -7,6 +9,7 @@ import androidx.core.content.IntentCompat
 import io.github.mangi.eta.agent.voice.EtaAssistantOverlayService
 import io.github.mangi.eta.ui.app.ArchivedConversationRequest
 import io.github.mangi.eta.ui.voice.ACTION_SPEECH_SETTINGS
+import io.github.mangi.eta.ui.navigation.TaskCenterDeepLink
 
 data class IncomingShareRequest(
     val uris: List<String> = emptyList(),
@@ -14,20 +17,63 @@ data class IncomingShareRequest(
     val text: String? = null,
 )
 
+/** notify_user 通知栏直接回复：把 [text] 作为新消息发进 [conversationId] 对应会话。 */
+data class ConversationReplyRequest(
+    val conversationId: String,
+    val text: String,
+    val notificationId: Int = -1,
+)
+
 internal data class MainActivityLaunchRequests(
     val assistantConversationKey: String? = null,
     val conversationId: String? = null,
     val archivedConversation: ArchivedConversationRequest? = null,
+    val conversationReply: ConversationReplyRequest? = null,
     val sharedContent: IncomingShareRequest? = null,
     val speechSettings: Boolean = false,
     val terminal: Boolean = false,
+    val taskCenterTab: String? = null,
 ) {
-    fun accept(intent: Intent?): MainActivityLaunchRequests = when (intent?.action) {
+    fun accept(intent: Intent?, context: Context? = null): MainActivityLaunchRequests = when (intent?.action) {
         MainActivity.ACTION_OPEN_TERMINAL -> copy(terminal = true)
+        TaskCenterDeepLink.ACTION_OPEN_TASK_CENTER -> TaskCenterDeepLink.resolveTab(
+            action = intent.action,
+            rawTab = intent.getStringExtra(TaskCenterDeepLink.EXTRA_TASK_CENTER_TAB),
+        )?.let { tab -> copy(taskCenterTab = tab) } ?: this
         ACTION_SPEECH_SETTINGS -> copy(speechSettings = true)
         MainActivity.ACTION_OPEN_CONVERSATION_ID -> copy(
             conversationId = intent.nonBlankExtra(MainActivity.EXTRA_CONVERSATION_ID),
         )
+        MainActivity.ACTION_REPLY_TO_CONVERSATION -> {
+            val conversationId = intent.nonBlankExtra(MainActivity.EXTRA_CONVERSATION_ID)
+            val text = RemoteInput.getResultsFromIntent(intent)
+                ?.getCharSequence(MainActivity.REPLY_RESULT_KEY)
+                ?.toString()?.trim()?.takeIf(String::isNotBlank)
+            // 归属校验：令牌不等 / 缺失一律不接受，挡住外部 App 伪造 Intent 注入消息并驱动 run。
+            val token = io.github.mangi.eta.agent.notify.ReplyToken
+            val trusted = context != null && token.valid(
+                context,
+                intent.getStringExtra(MainActivity.EXTRA_REPLY_TOKEN),
+            )
+            // nonce 一次性消费：原子、持久化。二次 accept（含进程被杀重建）命中「已消费」直接丢弃，
+            // 从根上关掉「同一条通知回复被发两次」的重放窗口。只在「真的要注入消息」时才消费。
+            val fresh = trusted && context != null && conversationId != null && text != null &&
+                token.consumeNonce(context, intent.getStringExtra(MainActivity.EXTRA_REPLY_NONCE))
+            when {
+                // 令牌合法 + nonce 首次 + 有会话 + 有正文：作为一条新消息发进该会话。
+                fresh -> copy(
+                    conversationReply = ConversationReplyRequest(
+                        conversationId = conversationId,
+                        text = text,
+                        notificationId = intent.getIntExtra(MainActivity.EXTRA_NOTIFICATION_ID, -1),
+                    ),
+                )
+                // 令牌合法但没打正文 / 会话缺失：至少打开那个会话，别停在空白首页（不注入消息）。
+                trusted && conversationId != null -> copy(conversationId = conversationId)
+                // 伪造 / 非法：什么都不做。
+                else -> this
+            }
+        }
         MainActivity.ACTION_OPEN_ARCHIVED_CONVERSATION -> {
             val source = intent.nonBlankExtra(MainActivity.EXTRA_HANDOFF_SOURCE)
             val key = intent.nonBlankExtra(MainActivity.EXTRA_CONVERSATION_KEY)
@@ -54,6 +100,9 @@ internal data class MainActivityLaunchRequests(
             putString("conversation_id", conversationId)
             putString("archive_source", archivedConversation?.source)
             putString("archive_conversation_key", archivedConversation?.conversationKey)
+            putString("conversation_reply_id", conversationReply?.conversationId)
+            putString("conversation_reply_text", conversationReply?.text)
+            putInt("conversation_reply_notification_id", conversationReply?.notificationId ?: -1)
             sharedContent?.let { share ->
                 putStringArrayList("share_uris", ArrayList(share.uris))
                 putString("share_mime_type", share.mimeType)
@@ -61,16 +110,17 @@ internal data class MainActivityLaunchRequests(
             }
             putBoolean("speech_settings", speechSettings)
             putBoolean("terminal", terminal)
+            putString("task_center_tab", taskCenterTab)
         })
     }
 
     companion object {
         private const val STATE_KEY = "eta_pending_launch_requests"
 
-        fun restore(savedInstanceState: Bundle?, intent: Intent?): MainActivityLaunchRequests {
+        fun restore(savedInstanceState: Bundle?, intent: Intent?, context: Context? = null): MainActivityLaunchRequests {
             // 系统可能保留最初的启动 Intent；空的待办状态也必须保存，防止重建后重放已消费的跳转。
             val saved = savedInstanceState?.getBundle(STATE_KEY)
-                ?: return MainActivityLaunchRequests().accept(intent)
+                ?: return MainActivityLaunchRequests().accept(intent, context)
             val source = saved.getString("archive_source")
             val key = saved.getString("archive_conversation_key")
             val shareUris = saved.getStringArrayList("share_uris")
@@ -85,6 +135,19 @@ internal data class MainActivityLaunchRequests(
                 archivedConversation = if (source != null && key != null) {
                     ArchivedConversationRequest(source, key)
                 } else null,
+                conversationReply = saved.getString("conversation_reply_id")
+                    ?.takeIf(String::isNotBlank)
+                    ?.let { id ->
+                        saved.getString("conversation_reply_text")
+                            ?.takeIf(String::isNotBlank)
+                            ?.let { text ->
+                                ConversationReplyRequest(
+                                    conversationId = id,
+                                    text = text,
+                                    notificationId = saved.getInt("conversation_reply_notification_id", -1),
+                                )
+                            }
+                    },
                 sharedContent = if (shareUris.isNotEmpty() || shareText != null) {
                     IncomingShareRequest(
                         uris = shareUris,
@@ -94,6 +157,7 @@ internal data class MainActivityLaunchRequests(
                 } else null,
                 speechSettings = saved.getBoolean("speech_settings"),
                 terminal = saved.getBoolean("terminal"),
+                taskCenterTab = saved.getString("task_center_tab"),
             )
         }
     }

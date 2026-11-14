@@ -51,6 +51,7 @@ import io.github.mangi.eta.data.model.AppearanceUiStyle
 import io.github.mangi.eta.data.repository.RuntimeConfigRepository
 import io.github.mangi.eta.ui.AppearanceSettingsScreen
 import io.github.mangi.eta.ui.IncomingShareRequest
+import io.github.mangi.eta.ui.ConversationReplyRequest
 import io.github.mangi.eta.ui.SettingsScreen
 import io.github.mangi.eta.ui.components.MiuixDialogActions
 import io.github.mangi.eta.ui.components.coui.CouiConfirmDialog
@@ -67,6 +68,7 @@ import io.github.mangi.eta.ui.model.AgentToolsAction
 import io.github.mangi.eta.ui.model.ConversationSummaryUi
 import io.github.mangi.eta.ui.model.LOCAL_NETWORK_PERMISSION_ITEM_ID
 import io.github.mangi.eta.ui.model.PermissionHealthAction
+import io.github.mangi.eta.ui.model.PermissionStatusUi
 import io.github.mangi.eta.ui.model.roleplayChatUi
 import io.github.mangi.eta.ui.navigation.AgentNavigator
 import io.github.mangi.eta.ui.navigation.AppRoute
@@ -87,7 +89,12 @@ import io.github.mangi.eta.ui.screens.home.AgentHomeScreen
 import io.github.mangi.eta.ui.screens.mcp.McpServerDetailScreen
 import io.github.mangi.eta.ui.screens.mcp.McpServersScreen
 import io.github.mangi.eta.ui.screens.memory.AgentMemoryScreen
+import io.github.mangi.eta.ui.model.TaskCenterActions
+import io.github.mangi.eta.ui.model.TaskCenterTab
+import io.github.mangi.eta.ui.screens.taskcenter.TaskCenterScreen
 import io.github.mangi.eta.ui.screens.permissions.PermissionHealthScreen
+import io.github.mangi.eta.ui.screens.settings.AssistantOverlaySettingsScreen
+import io.github.mangi.eta.ui.screens.settings.ConversationTitleSettingsScreen
 import io.github.mangi.eta.ui.screens.skills.AgentSkillsScreen
 import io.github.mangi.eta.ui.screens.subagent.SubagentSettingsScreen
 import io.github.mangi.eta.ui.screens.terminal.LinuxEnvironmentScreen
@@ -124,13 +131,25 @@ fun AgentAppRoot(
     onRequestedConversationOpened: () -> Unit = {},
     requestedArchivedConversation: ArchivedConversationRequest? = null,
     onArchivedConversationOpened: () -> Unit = {},
+    conversationReply: ConversationReplyRequest? = null,
+    onConversationReplyConsumed: () -> Unit = {},
     sharedContent: IncomingShareRequest? = null,
     onSharedContentAccepted: () -> Unit = {},
     openSpeechSettings: Boolean = false,
     openTerminal: Boolean = false,
+    /** 主动沟通 / 待确认通知点击后要打开的任务中心分区名（空串表示默认分区）。 */
+    openTaskCenterTab: String? = null,
+    onTaskCenterOpened: () -> Unit = {},
     onTerminalOpened: () -> Unit = {},
     onSpeechSettingsOpened: () -> Unit = {},
     onAssistantConversationOpened: (Boolean) -> Unit = {},
+    /**
+     * 任意无人值守后台 run 启动的信号（每次 +1）。App 在前台时 MainActivity 收到
+     * [io.github.mangi.eta.agent.runtime.ACTION_UNATTENDED_RUN_STARTED] 广播后递增，
+     * 这里据此立刻 refreshRuntimeResults() 把那个 active run 认领成会话列表里可见、可对话的会话，
+     * 不必等回前台 ON_RESUME。App 未打开时无人收广播、零副作用。
+     */
+    wakeupRefreshSignal: Int = 0,
 ) {
     val context = LocalContext.current
     val resources = LocalResources.current
@@ -148,10 +167,23 @@ fun AgentAppRoot(
             onTerminalOpened()
         }
     }
+    // 主动沟通 / 待确认通知：点通知直达任务中心指定分区（待确认区默认 APPROVALS）。
+    LaunchedEffect(openTaskCenterTab) {
+        val tab = openTaskCenterTab ?: return@LaunchedEffect
+        // 先归一化再比较：同一个分区可能有多种写法（空串 / 历史名 / 大小写），
+        // 直接用原始字符串比较会把"已经在待确认区"的通知再压一次栈，返回时要多点一次。
+        val route = AppRoute.TaskCenter(TaskCenterTab.fromNameOrDefault(tab).name)
+        if (backStack.lastOrNull() != route) backStack.add(route)
+        onTaskCenterOpened()
+    }
     val navigator = remember(backStack) { AgentNavigator(backStack) }
     var navigationResetKey by rememberSaveable { mutableIntStateOf(0) }
     val appViewModel = viewModel<AgentAppViewModel>()
     val agentState = appViewModel.state
+    // 后台唤醒轮在 App 前台时启动：立刻对账把它认领成会话列表里可见、可对话的会话。
+    LaunchedEffect(wakeupRefreshSignal) {
+        if (wakeupRefreshSignal > 0) agentState.refreshRuntimeResults()
+    }
     val runtimeActive by AgentRuntimeService.keepScreenOn.collectAsState()
     val view = LocalView.current
     val keepScreenOn = backStack.lastOrNull() == AppRoute.Home &&
@@ -238,6 +270,17 @@ fun AgentAppRoot(
         onRequestedConversationOpened()
     }
 
+    // notify_user 通知栏直接回复：把这段文字作为一条新消息发进对应会话并触发一轮回应。
+    LaunchedEffect(conversationReply) {
+        val reply = conversationReply ?: return@LaunchedEffect
+        // 先消费（清 state + 置空 intent.action）再投递：关掉「已发但 bundle 还没更新时进程被杀 →
+        // 恢复后重放同一条回复」的窗口。失败本来就有 Toast 反馈，不会比先投递更糟。
+        onConversationReplyConsumed()
+        agentState.sendReplyToConversation(reply.conversationId, reply.text, reply.notificationId)
+        conversationPaneOpen = false
+        navigator.popToHome()
+    }
+
     LaunchedEffect(requestedArchivedConversation) {
         val request = requestedArchivedConversation ?: return@LaunchedEffect
         // 外部入口的结果要先导入归档才有会话；找不到时停在当前界面，不切到无关的会话。
@@ -309,8 +352,14 @@ fun AgentAppRoot(
     @Composable
     fun RoutedShell(
         route: AppRoute,
-        content: @Composable () -> Unit,
+        applyShellPadding: Boolean = true,
+        content: @Composable (androidx.compose.foundation.layout.PaddingValues) -> Unit,
     ) {
+        val isHome = route is AppRoute.Home
+        val hasPermissionAttention = permissionHealth.permissionHealthState.items.any { item ->
+            item.id in CorePermissionAttentionIds &&
+                (item.status == PermissionStatusUi.Missing || item.status == PermissionStatusUi.Warning)
+        }
         AgentAppShell(
             currentRoute = route,
             isCurrentRoute = backStack.lastOrNull() == route,
@@ -343,6 +392,7 @@ fun AgentAppRoot(
             onStopKimiWeb = appViewModel::stopKimiWeb,
             onRefreshKimiWeb = appViewModel::refreshKimiWeb,
             onOpenBrowser = { openConversationBrowser() },
+            onOpenTaskCenter = { pushRoute(AppRoute.TaskCenter()) },
             onSelectConversation = { conversationId -> selectConversation(conversationId) },
             onConversationTogglePin = { conversation ->
                 agentState.toggleConversationPin(conversation.id)
@@ -368,7 +418,12 @@ fun AgentAppRoot(
             onOpenPermissions = { pushRoute(AppRoute.Permissions) },
             onOpenSettings = { pushRoute(AppRoute.Settings) },
             onOpenModelProviders = { pushRoute(AppRoute.ModelProviders) },
-            homeCharacter = if (route is AppRoute.Home) agentState.homeState.roleplayChatUi() else null,
+            homeTitle = if (isHome) agentState.currentConversationTitle else null,
+            homeCharacter = if (isHome) agentState.homeState.roleplayChatUi() else null,
+            homeModelPickerState = if (isHome) agentState.modelPickerState else null,
+            isHomeStreaming = isHome && agentState.homeState.isStreaming,
+            hasPermissionAttention = isHome && hasPermissionAttention,
+            onHomeModelSelected = agentState::selectModel,
             onOpenCharacter = {
                 agentState.homeState.roleplay?.let { pushRoute(AppRoute.CharacterDetail(it.characterId)) }
             },
@@ -376,9 +431,9 @@ fun AgentAppRoot(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(padding)
+                    .then(if (applyShellPadding) Modifier.padding(padding) else Modifier)
             ) {
-                content()
+                content(padding)
             }
         }
     }
@@ -400,12 +455,13 @@ fun AgentAppRoot(
             ),
         ) {
             entry<AppRoute.Home>(swipeDismiss = swipeDismiss) {
-                RoutedShell(route = AppRoute.Home) {
+                RoutedShell(route = AppRoute.Home, applyShellPadding = false) { shellPadding ->
                     AgentHomeScreen(
                         state = agentState.homeState,
                         modelPickerState = agentState.modelPickerState,
                         isBranching = agentState.isBranchingCurrentConversation,
                         conversationKey = agentState.conversationPaneState.selectedConversationId,
+                        topInset = shellPadding.calculateTopPadding(),
                         onAction = { action ->
                             when (action) {
                                 is AgentHomeAction.ReasoningEffortChanged ->
@@ -499,6 +555,12 @@ fun AgentAppRoot(
             }
             entry<AppRoute.Subagents>(swipeDismiss = swipeDismiss) {
                 SubagentSettingsScreen(onBack = ::popRoute)
+            }
+            entry<AppRoute.ConversationTitleSettings>(swipeDismiss = swipeDismiss) {
+                ConversationTitleSettingsScreen(onBack = ::popRoute)
+            }
+            entry<AppRoute.AssistantOverlaySettings>(swipeDismiss = swipeDismiss) {
+                AssistantOverlaySettingsScreen(onBack = ::popRoute)
             }
             entry<AppRoute.Skills>(swipeDismiss = swipeDismiss) {
                 LaunchedEffect(Unit) {
@@ -745,12 +807,26 @@ fun AgentAppRoot(
                         when (action) {
                             AgentMemoryAction.NavigateBack -> popRoute()
                             is AgentMemoryAction.ToggleEnabled -> memory.setMemoryEnabled(action.enabled)
+                            is AgentMemoryAction.ToggleRelevance -> memory.setRelevanceEnabled(action.enabled)
+                            is AgentMemoryAction.ToggleDistillation -> memory.setDistillationEnabled(action.enabled)
+                            is AgentMemoryAction.ToggleSemanticRecall -> memory.setSemanticRecallEnabled(action.enabled)
+                            is AgentMemoryAction.ToggleAutoExpire -> memory.setAutoExpireEnabled(action.enabled)
                             is AgentMemoryAction.DraftChanged -> memory.updateMemoryDraft(action.content)
                             AgentMemoryAction.Save -> memory.saveMemory()
                             AgentMemoryAction.Clear -> memory.clearMemory()
                             AgentMemoryAction.DismissNotice -> memory.dismissMemoryNotice()
                         }
                     },
+                )
+            }
+            // 旧的「自动任务」路由保留：直接打开任务中心的自动任务分区，不再有第二套列表实现。
+            entry<AppRoute.ScheduledTasks>(swipeDismiss = swipeDismiss) {
+                TaskCenterRoute(initialTab = TaskCenterTab.SCHEDULED, onBack = ::popRoute)
+            }
+            entry<AppRoute.TaskCenter>(swipeDismiss = swipeDismiss) { taskRoute ->
+                TaskCenterRoute(
+                    initialTab = TaskCenterTab.fromNameOrDefault(taskRoute.tab),
+                    onBack = ::popRoute,
                 )
             }
             entry<AppRoute.LinuxEnvironment>(swipeDismiss = swipeDismiss) {
@@ -1034,7 +1110,46 @@ fun AgentAppRoot(
     }
 }
 
+private val CorePermissionAttentionIds = setOf(
+    "background",
+    "overlay",
+    "accessibility",
+    "notifications",
+)
+
 private data class MessageMutationTarget(
     val messageId: String,
     val laterTurnCount: Int,
 )
+
+/**
+ * 任务中心的装配点。
+ *
+ * 路由只决定"先看哪个分区"，页面状态由 [TaskCenterStore] 持有并对外暴露单一 StateFlow；
+ * 旧的自动任务路由与新路由共用这一份实现，避免同一个列表出现两套 UI / 两套逻辑。
+ */
+@Composable
+private fun TaskCenterRoute(initialTab: TaskCenterTab, onBack: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val store = remember(initialTab) { TaskCenterStore(context, scope, initialTab) }
+    LaunchedEffect(initialTab) { store.refresh() }
+    val state by store.state.collectAsState()
+    TaskCenterScreen(
+        state = state,
+        actions = TaskCenterActions(
+            onSelectTab = store::selectTab,
+            onDecideApproval = store::decide,
+            onStopRun = store::stopRun,
+            onStopTerminalTask = store::stopTerminalTask,
+            onToggleScheduled = store::toggleScheduled,
+            onDeleteScheduled = store::deleteScheduled,
+            onRunScheduledNow = store::runScheduledNow,
+            onDeleteMacro = store::deleteMacro,
+            onToggleUsageStats = store::setUsageStatsEnabled,
+            onRefresh = store::refresh,
+            onDismissNotice = store::dismissNotice,
+        ),
+        onBack = onBack,
+    )
+}

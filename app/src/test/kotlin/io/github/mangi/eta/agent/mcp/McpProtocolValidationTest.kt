@@ -388,6 +388,28 @@ data: "id":1,"result":{"resultType":"complete","ttlMs":1000,"tools":[]}}
     }
 
     @Test
+    fun bearerTokenWithPrefixedBearerSchemeIsNormalizedToSingleHeader() {
+        val authorization = AtomicReference<String>()
+        val server = localServer { exchange ->
+            authorization.set(exchange.requestHeaders.getFirst("Authorization"))
+            exchange.respond(
+                200,
+                """{"jsonrpc":"2.0","id":1,"result":{"resultType":"complete","tools":[]}}""",
+            )
+        }
+        try {
+            val configured = McpServerSetting(id = "test", name = "Test", url = server.url())
+            // 用户常连 "Bearer " 一起粘贴进 token 框；归一化后必须只发一次 Bearer。
+            McpHttpClient(configured, bearerToken = "Bearer  ghp_secretToken123 ").use {
+                it.discoverTools()
+            }
+            assertEquals("Bearer ghp_secretToken123", authorization.get())
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    @Test
     fun modernDiscoveryKeepsSchemaKeywordsWithoutAvailabilityGate() {
         val schema = JSONObject(
             """{"type":"object","anyOf":[{"required":["query"]},{"required":["filter"]}],"properties":{"query":{"${'$'}ref":"#/${'$'}defs/query"}},"${'$'}defs":{"query":{"type":"string"}}}"""

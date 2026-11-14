@@ -258,6 +258,10 @@ internal class AgentTraceFormatter {
         }
         if (json?.optString("status") == "unconfirmed") return "操作已提交，效果未确认"
         if (!isSuccessResult(result)) return summarizeFailure(json)
+        if ((toolName == "gesture_batch" || toolName == "macro_run") && json?.optBoolean("ok") == true) {
+            return "已执行 ${json.optInt("executed")}/${json.optInt("total")} 步"
+        }
+
         if (json != null) {
             val summary = AgentDeviceResultFormatter.summarize(toolName, json)
                 ?: AgentPhoneResultFormatter.summarize(toolName, json)

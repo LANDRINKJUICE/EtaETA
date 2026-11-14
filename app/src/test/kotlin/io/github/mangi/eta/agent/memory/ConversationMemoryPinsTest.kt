@@ -32,4 +32,19 @@ class ConversationMemoryPinsTest {
         val switched = ConversationMemoryPins.contextFor(id, snapshot("# 核心记忆\n写入", "r10"), 32_000)
         assertEquals(AgentMemoryContextBuilder.coreBudgetChars(32_000), switched.coreBudgetChars)
     }
+
+    @Test
+    fun relevanceSelectionOnlyRefreshesTheSnapshotWhenTheSelectedSectionsChange() {
+        val id = "conv-rel-${System.nanoTime()}"
+        val content = "# 核心记忆\n偏好\n# 细节\n## 部署\n端口 8080\n## 饮食\n喜欢清淡的川菜"
+        val snapshot = snapshot(content, "r1")
+
+        val first = ConversationMemoryPins.contextFor(id, snapshot, 128_000, "部署在哪")
+        val sameSelection = ConversationMemoryPins.contextFor(id, snapshot, 128_000, "端口部署了没")
+        val otherSelection = ConversationMemoryPins.contextFor(id, snapshot, 128_000, "川菜吃什么")
+
+        assertEquals(listOf("## 部署"), first.injectedHeadings)
+        assertSame(first, sameSelection)
+        assertEquals(listOf("## 饮食"), otherSelection.injectedHeadings)
+    }
 }

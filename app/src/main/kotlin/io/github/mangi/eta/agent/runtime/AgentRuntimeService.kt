@@ -313,7 +313,7 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
                 } else {
                     val runtimeConfig = runBlocking {
                         if (AgentRuntimeRequestConfigResolver.usesDefaultRuntimeConfig(request)) {
-                            RuntimeConfigRepository.currentRuntimeConfig()
+                            RuntimeConfigRepository.assistantOverlayRuntimeConfig()
                         } else {
                             RuntimeConfigRepository.oauthRuntimeConfigFor(
                                 providerId = request.config.providerId,
@@ -448,6 +448,10 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
                 "Agent runtime keep-alive start failed: type=${throwable.safeLogType()}"
             }
         }
+        // 无人值守后台 run（唤醒 / 自动任务 / 未来新增）已登记进 Registry，此刻发统一信号：
+        // 前台 UI 收到即认领这条会话进聊天列表（运行一开始就可观测 / 可对话）。放在 admit 之后
+        // 而非入口，保证 UI 的 queryActiveRuns 必能命中，从根上消除「广播早于 run 提交」的竞态。
+        sendUnattendedRunStarted(this, run.conversationId, run.runId)
         publishExecutionState()
         return run
     }
@@ -564,6 +568,21 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
         mainHandler.post {
             if (destroyed) return@post
             run.completedContext = completedContext
+            AgentExecutionService.updateRunStatus(
+                this,
+                null,
+                activeRunCount = runs.all().count { !it.session.isTerminal },
+                round = run.overlayState.round,
+                detailText = (if (result.ok) result.content else result.error.orEmpty()).take(240),
+                finished = result.ok,
+                failed = !result.ok && result.error != "已停止",
+                conversationId = run.conversationId,
+                handoffSource = run.request.handoff?.source,
+                archiveSource = run.request.handoff?.source,
+                archiveKey = run.request.handoff?.payload
+                    ?.let { io.github.mangi.eta.agent.runtime.AgentExternalArchivePayload.from(it)?.conversationKey }
+                    ?.takeIf(String::isNotBlank),
+            )
             val guiState = guiControl.state.value
             if (lastGuiOwnerRunId != run.runId || guiState.userPaused ||
                 (guiState.ownerRunId != null && guiState.ownerRunId != run.runId)) return@post
@@ -976,10 +995,16 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
         } else {
             (owner ?: activeRuns.firstOrNull())?.overlayState?.status
         }
+        val overlay = (owner ?: activeRuns.firstOrNull())?.overlayState
         AgentExecutionService.updateRunStatus(
             this,
             status,
             activeRunCount = activeRuns.size,
+            round = overlay?.round ?: 0,
+            detailText = overlay?.detailText.orEmpty(),
+            thought = overlay?.thought.orEmpty(),
+            finished = overlay?.phase == io.github.mangi.eta.agent.overlay.AgentOverlayPhase.FINISHED,
+            failed = overlay?.phase == io.github.mangi.eta.agent.overlay.AgentOverlayPhase.FAILED,
         )
     }
 

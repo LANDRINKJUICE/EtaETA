@@ -13,8 +13,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.MenuBook
 import androidx.compose.material.icons.rounded.AccessibilityNew
+import androidx.compose.material.icons.rounded.Alarm
 import androidx.compose.material.icons.rounded.AccountTree
+import androidx.compose.material.icons.rounded.BarChart
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.BugReport
+import androidx.compose.material.icons.rounded.ChatBubble
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.Dashboard
@@ -24,6 +28,7 @@ import androidx.compose.material.icons.rounded.GppMaybe
 import androidx.compose.material.icons.rounded.Hearing
 import androidx.compose.material.icons.rounded.Hub
 import androidx.compose.material.icons.rounded.ImportContacts
+import androidx.compose.material.icons.rounded.Insights
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Inventory
 import androidx.compose.material.icons.rounded.Inventory2
@@ -31,11 +36,13 @@ import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Mic
+import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.rounded.Psychology
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.SettingsVoice
 import androidx.compose.material.icons.rounded.Smartphone
 import androidx.compose.material.icons.rounded.SportsBar
@@ -99,6 +106,7 @@ import io.github.mangi.eta.ui.components.coui.CouiPreference
 import io.github.mangi.eta.ui.components.coui.CouiScaffoldPage
 import io.github.mangi.eta.ui.components.coui.CouiSettingsIcon
 import io.github.mangi.eta.ui.components.coui.CouiSwitchPreference
+import io.github.mangi.eta.ui.model.TaskCenterTab
 import io.github.mangi.eta.ui.navigation.AppRoute
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -386,6 +394,54 @@ private fun SettingsPageContent(
                     )
                 }
 
+                Group(title = stringResource(R.string.task_center_settings_group)) {
+                    CouiPreference(
+                        title = stringResource(R.string.task_center_title),
+                        summary = stringResource(R.string.task_center_settings_summary),
+                        icon = { CouiSettingsIcon(Icons.Rounded.Dashboard, SettingsIconColors.Green) },
+                        onClick = { onNavigate(AppRoute.TaskCenter()) },
+                    )
+                    CouiIconDivider()
+                    CouiPreference(
+                        title = stringResource(R.string.task_center_usage_title),
+                        summary = stringResource(R.string.task_center_usage_settings_summary),
+                        icon = { CouiSettingsIcon(Icons.Rounded.Insights, SettingsIconColors.Orange) },
+                        onClick = { onNavigate(AppRoute.TaskCenter(TaskCenterTab.USAGE.name)) },
+                    )
+                    CouiIconDivider()
+                    SwitchPref(
+                        context = context,
+                        prefs = agentPrefs,
+                        title = stringResource(R.string.task_center_usage_switch),
+                        summary = stringResource(R.string.task_center_usage_switch_summary),
+                        key = Prefs.Keys.AGENT_USAGE_STATS_ENABLED,
+                        icon = Icons.Rounded.BarChart,
+                        iconTint = SettingsIconColors.Blue,
+                    )
+                    CouiIconDivider()
+                    // 主动沟通：让 Agent 在值得关注时主动通知（notify_user），默认开。
+                    SwitchPref(
+                        context = context,
+                        prefs = agentPrefs,
+                        title = stringResource(R.string.settings_proactive_notify),
+                        summary = stringResource(R.string.settings_proactive_notify_summary),
+                        key = Prefs.Keys.AGENT_PROACTIVE_NOTIFY_ENABLED,
+                        icon = Icons.Rounded.NotificationsActive,
+                        iconTint = SettingsIconColors.Orange,
+                    )
+                    CouiIconDivider()
+                    // 后台任务失败自动唤醒：terminal_job 失败/超时时起一轮 run 接手，默认开。
+                    SwitchPref(
+                        context = context,
+                        prefs = agentPrefs,
+                        title = stringResource(R.string.settings_job_wakeup),
+                        summary = stringResource(R.string.settings_job_wakeup_summary),
+                        key = Prefs.Keys.AGENT_JOB_WAKEUP_ENABLED,
+                        icon = Icons.Rounded.NotificationsActive,
+                        iconTint = SettingsIconColors.Green,
+                    )
+                }
+
                 Group(title = stringResource(R.string.settings_context_extensions)) {
                     SwitchPref(
                         context = context,
@@ -397,6 +453,12 @@ private fun SettingsPageContent(
                     )
                     CouiIconDivider()
                     CouiPreference(
+                        title = stringResource(R.string.conversation_title_settings_title),
+                        icon = { CouiSettingsIcon(Icons.Rounded.AutoAwesome, SettingsIconColors.Blue) },
+                        onClick = { onNavigate(AppRoute.ConversationTitleSettings) },
+                    )
+                    CouiIconDivider()
+                    CouiPreference(
                         title = stringResource(R.string.ui_memory_b55ff5),
                         icon = {
                             CouiSettingsIcon(
@@ -405,6 +467,12 @@ private fun SettingsPageContent(
                             )
                         },
                         onClick = { onNavigate(AppRoute.Memory) },
+                    )
+                    CouiIconDivider()
+                    CouiPreference(
+                        title = stringResource(R.string.route_scheduled_tasks),
+                        icon = { CouiSettingsIcon(Icons.Rounded.Alarm, SettingsIconColors.Yellow) },
+                        onClick = { onNavigate(AppRoute.ScheduledTasks) },
                     )
                     CouiIconDivider()
                     CouiPreference(
@@ -474,6 +542,16 @@ private fun SettingsPageContent(
                         iconTint = SettingsIconColors.Blue,
                     )
                     CouiIconDivider()
+                    SwitchPref(
+                        context = context,
+                        prefs = agentPrefs,
+                        title = stringResource(R.string.settings_danger_tool_guard_title),
+                        summary = stringResource(R.string.settings_danger_tool_guard_summary),
+                        key = Prefs.Keys.AGENT_DANGER_TOOL_GUARD,
+                        icon = Icons.Rounded.Shield,
+                        iconTint = SettingsIconColors.Orange,
+                    )
+                    CouiIconDivider()
                     CouiPreference(
                         title = stringResource(R.string.ui_linux_tool_environment_314d22),
                         icon = {
@@ -504,6 +582,17 @@ private fun SettingsPageContent(
                             )
                         },
                         onClick = openAssistantSettings,
+                    )
+                    CouiIconDivider()
+                    CouiPreference(
+                        title = stringResource(R.string.assistant_overlay_settings_title),
+                        icon = {
+                            CouiSettingsIcon(
+                                Icons.Rounded.ChatBubble,
+                                SettingsIconColors.Blue,
+                            )
+                        },
+                        onClick = { onNavigate(AppRoute.AssistantOverlaySettings) },
                     )
                     if (prefs != null || hasConnectedFramework) {
                         CouiIconDivider()
@@ -805,6 +894,63 @@ private fun SettingsPageContent(
                     }
                 }
 
+                item(key = "section_task_center") {
+                    SmallTitle(stringResource(R.string.task_center_settings_group))
+                    SettingsGroupCard {
+                        ArrowPreference(
+                            title = stringResource(R.string.task_center_title),
+                            summary = stringResource(R.string.task_center_settings_summary),
+                            startAction = {
+                                SettingsIcon(
+                                    icon = Icons.Rounded.Dashboard,
+                                    tint = SettingsIconColors.Green,
+                                )
+                            },
+                            onClick = { onNavigate(AppRoute.TaskCenter()) },
+                        )
+                        ArrowPreference(
+                            title = stringResource(R.string.task_center_usage_title),
+                            summary = stringResource(R.string.task_center_usage_settings_summary),
+                            startAction = {
+                                SettingsIcon(
+                                    icon = Icons.Rounded.Insights,
+                                    tint = SettingsIconColors.Orange,
+                                )
+                            },
+                            onClick = { onNavigate(AppRoute.TaskCenter(TaskCenterTab.USAGE.name)) },
+                        )
+                        SwitchPref(
+                            context = context,
+                            prefs = agentPrefs,
+                            title = stringResource(R.string.task_center_usage_switch),
+                            summary = stringResource(R.string.task_center_usage_switch_summary),
+                            key = Prefs.Keys.AGENT_USAGE_STATS_ENABLED,
+                            icon = Icons.Rounded.BarChart,
+                            iconTint = SettingsIconColors.Blue,
+                        )
+                        CouiIconDivider()
+                        SwitchPref(
+                            context = context,
+                            prefs = agentPrefs,
+                            title = stringResource(R.string.settings_proactive_notify),
+                            summary = stringResource(R.string.settings_proactive_notify_summary),
+                            key = Prefs.Keys.AGENT_PROACTIVE_NOTIFY_ENABLED,
+                            icon = Icons.Rounded.NotificationsActive,
+                            iconTint = SettingsIconColors.Orange,
+                        )
+                        CouiIconDivider()
+                        SwitchPref(
+                            context = context,
+                            prefs = agentPrefs,
+                            title = stringResource(R.string.settings_job_wakeup),
+                            summary = stringResource(R.string.settings_job_wakeup_summary),
+                            key = Prefs.Keys.AGENT_JOB_WAKEUP_ENABLED,
+                            icon = Icons.Rounded.NotificationsActive,
+                            iconTint = SettingsIconColors.Green,
+                        )
+                    }
+                }
+
                 item(key = "section_context_extensions") {
                     SmallTitle(stringResource(R.string.settings_context_extensions))
                     SettingsGroupCard {
@@ -817,6 +963,16 @@ private fun SettingsPageContent(
                             iconTint = SettingsIconColors.Blue,
                         )
                         ArrowPreference(
+                            title = stringResource(R.string.conversation_title_settings_title),
+                            startAction = {
+                                SettingsIcon(
+                                    icon = Icons.Rounded.AutoAwesome,
+                                    tint = SettingsIconColors.Blue,
+                                )
+                            },
+                            onClick = { onNavigate(AppRoute.ConversationTitleSettings) },
+                        )
+                        ArrowPreference(
                             title = stringResource(R.string.ui_memory_b55ff5),
                             startAction = {
                                 SettingsIcon(
@@ -825,6 +981,16 @@ private fun SettingsPageContent(
                                 )
                             },
                             onClick = { onNavigate(AppRoute.Memory) },
+                        )
+                        ArrowPreference(
+                            title = stringResource(R.string.route_scheduled_tasks),
+                            startAction = {
+                                SettingsIcon(
+                                    icon = Icons.Rounded.Alarm,
+                                    tint = SettingsIconColors.Yellow,
+                                )
+                            },
+                            onClick = { onNavigate(AppRoute.ScheduledTasks) },
                         )
                         ArrowPreference(
                             title = "Subagent",
@@ -895,6 +1061,15 @@ private fun SettingsPageContent(
                             icon = Icons.Rounded.Layers,
                             iconTint = SettingsIconColors.Blue,
                         )
+                        SwitchPref(
+                            context = context,
+                            prefs = agentPrefs,
+                            title = stringResource(R.string.settings_danger_tool_guard_title),
+                            summary = stringResource(R.string.settings_danger_tool_guard_summary),
+                            key = Prefs.Keys.AGENT_DANGER_TOOL_GUARD,
+                            icon = Icons.Rounded.Shield,
+                            iconTint = SettingsIconColors.Orange,
+                        )
                         ArrowPreference(
                             title = stringResource(R.string.ui_linux_tool_environment_314d22),
                             startAction = {
@@ -930,6 +1105,16 @@ private fun SettingsPageContent(
                                 )
                             },
                             onClick = openAssistantSettings,
+                        )
+                        ArrowPreference(
+                            title = stringResource(R.string.assistant_overlay_settings_title),
+                            startAction = {
+                                SettingsIcon(
+                                    icon = Icons.Rounded.ChatBubble,
+                                    tint = SettingsIconColors.Blue,
+                                )
+                            },
+                            onClick = { onNavigate(AppRoute.AssistantOverlaySettings) },
                         )
                         if (prefs != null || hasConnectedFramework) {
                             OverlayDropdownPreference(

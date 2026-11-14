@@ -1,5 +1,7 @@
 package io.github.mangi.eta
 
+import io.github.mangi.eta.agent.notify.AgentNotifications
+import io.github.mangi.eta.agent.notify.ApprovalNotificationBridge
 import io.github.mangi.eta.agent.voice.SpeechOssUpload
 import android.app.Application
 import android.content.ComponentCallbacks2
@@ -9,6 +11,7 @@ import io.github.mangi.eta.agent.skill.SkillRuntime
 import io.github.mangi.eta.agent.browser.BrowserSessionRegistry
 import io.github.mangi.eta.agent.device.RootAccess
 import io.github.mangi.eta.agent.terminal.TerminalRuntime
+import io.github.mangi.eta.agent.usage.AgentUsageRepository
 import io.github.mangi.eta.config.Prefs
 import io.github.mangi.eta.core.AndroidAgentLogger
 import io.github.mangi.eta.core.safeLogType
@@ -50,6 +53,12 @@ class EtaApp : Application(), XposedServiceHelper.OnServiceListener {
         if (!AppProcessPolicy.shouldInitializeFullRuntime(Application.getProcessName(), packageName)) {
             return
         }
+        // 主动沟通 / 待确认通知的 channel 与监听：只在主进程装一次，幂等。
+        AgentNotifications.ensureChannels(this)
+        ApprovalNotificationBridge.install(this)
+        // 后台审批卡：前后台判定 + 悬浮层 / 通知兜底编排，只在主进程装一次，幂等。
+        io.github.mangi.eta.agent.approval.AgentForegroundTracker.install(this)
+        io.github.mangi.eta.agent.approval.ApprovalAttentionPresenter.install(this)
         TerminalRuntime.initialize(this)
         RootAccess.initialize(this)
         applicationScope.launch { TerminalRuntime.backgroundJobs(this@EtaApp).resume() }
@@ -59,6 +68,22 @@ class EtaApp : Application(), XposedServiceHelper.OnServiceListener {
         }
         PredictiveBackController.apply(applicationInfo, predictiveBackEnabled)
         AgentMemoryRepository.init(this)
+        // 记忆自动过期：启动时按开关做一次本地整理（超阈值节移入 # 归档），纯本地、不发模型回合。
+        applicationScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                AgentMemoryRepository.archiveExpiredIfEnabled(
+                    enabled = io.github.mangi.eta.config.Prefs.isEnabled(
+                        io.github.mangi.eta.config.Prefs.Keys.AGENT_MEMORY_AUTO_EXPIRE_ENABLED,
+                    ),
+                )
+            }.onFailure { throwable ->
+                AndroidAgentLogger.warnThrottled("agent_memory_expiry_startup_failed") {
+                    "Memory auto-expire on startup failed: type=${throwable.javaClass.simpleName}"
+                }
+            }
+        }
+        // 用量统计：默认开启、纯本地；埋点异步落盘，初始化失败也不影响主流程。
+        AgentUsageRepository.initialize(this)
         ProviderRepository.init(this)
         McpServerRepository.init(this)
         XposedServiceHelper.registerListener(this)

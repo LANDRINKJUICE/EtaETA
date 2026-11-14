@@ -71,6 +71,21 @@ internal object McpServerRepository {
         }
     }
 
+    /** 刷新工具目录：只写探测相关列，保留用户在网络探测期间改动的 url/name/鉴权等配置。 */
+    suspend fun updateDiscovery(server: McpServerSetting) {
+        val entity = server.toEntity()
+        require(
+            dao().updateDiscovery(
+                id = entity.id,
+                toolsJson = entity.toolsJson,
+                enabledToolNamesJson = entity.enabledToolNamesJson,
+                lastRefreshedAt = entity.lastRefreshedAt,
+                lastProtocolVersion = entity.lastProtocolVersion,
+                toolsExpireAt = entity.toolsExpireAt,
+            ) == 1
+        ) { "MCP 服务器不存在" }
+    }
+
     suspend fun setToolEnabled(serverId: String, toolName: String, enabled: Boolean) {
         val server = requireNotNull(serverById(serverId)) { "MCP 服务器不存在" }
         val names = server.enabledToolNames.toMutableSet()
@@ -122,7 +137,11 @@ internal object McpServerRepository {
 
     private fun dao() = EtaDatabase.get(context()).mcpServerDao()
 
-    private fun secrets() = McpSecretStore(context())
+    // 单例：McpSecretStore 的 @Synchronized 只有在同一实例上才有效，
+    // 每次 new 一个实例会让锁监视器各不相同、起不到互斥作用。
+    private val secretStore: McpSecretStore by lazy { McpSecretStore(context()) }
+
+    private fun secrets(): McpSecretStore = secretStore
 
     private fun context(): Context {
         check(::applicationContext.isInitialized) {

@@ -16,18 +16,32 @@ internal class AssistantSpeechForeground(private val service: Service) {
 
     private fun start(type: Int, title: String) {
         service.getSystemService(NotificationManager::class.java).createNotificationChannel(
-            NotificationChannel(CHANNEL, "助手语音", NotificationManager.IMPORTANCE_LOW),
+            NotificationChannel(
+                CHANNEL,
+                service.getString(R.string.assistant_speech_channel),
+                NotificationManager.IMPORTANCE_LOW,
+            ).apply {
+                description = service.getString(R.string.assistant_speech_channel_description)
+            },
         )
-        val stop = PendingIntent.getService(service, 0,
+        val stop = PendingIntent.getService(
+            service,
+            io.github.mangi.eta.agent.notify.AgentNotifications.RequestCodes.ASSISTANT_SPEECH_STOP,
             Intent(service, EtaAssistantOverlayService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val notification = Notification.Builder(service, CHANNEL)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
-            .setContentText("仅在助手浮窗可见时运行")
+            .setContentText(service.getString(R.string.assistant_speech_running_note))
             .setOngoing(true)
             .setCategory(Notification.CATEGORY_SERVICE)
-            .addAction(Notification.Action.Builder(null, "停止", stop).build())
+            .addAction(
+                Notification.Action.Builder(
+                    null,
+                    service.getString(R.string.speech_read_stop),
+                    stop,
+                ).build(),
+            )
             .build()
         try {
             service.startForeground(NOTIFICATION_ID, notification, type)

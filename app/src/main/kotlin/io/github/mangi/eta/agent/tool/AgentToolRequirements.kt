@@ -6,6 +6,7 @@ import io.github.mangi.eta.agent.model.AgentTerminalToolCatalog
 import io.github.mangi.eta.agent.model.AgentFileToolCatalog
 import io.github.mangi.eta.agent.model.AgentPhoneToolCatalog
 import io.github.mangi.eta.agent.context.PersonalSearchTools
+import io.github.mangi.eta.agent.self.AgentSelfTools
 
 internal enum class RootRequirement { NONE, PARTIAL, REQUIRED }
 internal enum class LsposedRequirement { NONE, OPTIONAL, REQUIRED }
@@ -41,8 +42,13 @@ internal object AgentToolRequirements {
             "search_notification_history", "recent_app_activity", "app_usage_summary",
             "get_current_location", "get_device_environment", "memory_get", "memory_write",
             "character_memory_get", "character_memory_write",
+            "gesture_batch", "macro_list", "macro_save", "macro_run", "macro_delete", "macro_record",
+            "schedule_task",
+            "notify_user",
+            "ask_user",
             "skills_list", "skills_read", "skills_read_resource", "skills_list_curated",
             "skills_inspect_github", "skills_install_from_github",
+            *AgentSelfTools.TOOL_NAMES.toTypedArray(),
         )
         register(
             RootRequirement.PARTIAL,
@@ -73,11 +79,12 @@ internal object AgentToolRequirements {
             "observe_screen", "tap", "tap_area", "tap_element", "long_press",
             "long_press_element", "swipe", "scroll", "scroll_element", "type_text", "input_text",
             "replace_text", "clear_text", "paste_text", "press_key", "open_system_panel",
-            "wait_for_text", "wait_for_package",
+            "wait_for_text", "wait_for_package", "gesture_batch", "macro_run", "macro_record",
         ).forEach { name -> put(name, getValue(name).copy(accessibility = true)) }
         listOf(
             "observe_screen", "launch_app", "present_to_user", "open_uri", "open_system_panel",
             "wait", "wait_for_text", "wait_for_package", "set_clipboard", "get_clipboard",
+            "gesture_batch", "macro_run",
         ).forEach { name -> put(name, getValue(name).copy(gui = true)) }
         listOf(
             "tap", "tap_area", "tap_element", "long_press", "long_press_element", "swipe",

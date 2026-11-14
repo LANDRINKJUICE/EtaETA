@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 後台任務失敗自動喚醒的文案：繁體中文。 -->
+<resources>
+    <string name="settings_job_wakeup">後台任務完成自動喚醒 Agent</string>
+    <string name="settings_job_wakeup_summary">背景命令失敗、逾時或被中斷時，Eta 自動喚醒一輪 Agent 接著把任務做完。關閉後只發結果通知。</string>
+
+    <string name="job_wakeup_title">Eta 正在自動處理失敗的後台任務：%1$s</string>
+    <string name="job_wakeup_title_watch">Eta 正在處理盯梢的後台任務：%1$s</string>
+    <string name="job_wakeup_body_suffix">已自動喚醒 Agent 分析原因並處理，處理完會在這裡回報。</string>
+    <string name="job_wakeup_body_suffix_watch">任務按盯梢設定結束，已自動喚醒 Agent 查看結果。</string>
+    <string name="job_wakeup_chain_title">後台任務持續失敗，已停止自動處理：%1$s</string>
+    <string name="job_wakeup_chain_body">已連續自動處理 %1$d 輪仍未成功，不再自動喚醒；請查看任務日誌後手動處理。</string>
+    <string name="job_wakeup_reason_global_limit">最近 10 分鐘內已自動處理 2 個後台任務，達到上限，這次跳過；請查看任務日誌後手動處理。</string>
+    <string name="job_wakeup_status_exit">退出碼 %1$d</string>
+    <string name="job_wakeup_status_reason">結束原因 %1$s</string>
+    <!-- 終態（與「正在自動處理」同一通知 ID 原地更新） -->
+    <string name="job_wakeup_done_title">後台任務已自動處理：%1$s</string>
+    <string name="job_wakeup_done_body">Agent 已完成這一輪處理，點開會話可以看到它做了什麼。</string>
+    <string name="job_wakeup_failed_title">自動處理失敗：%1$s</string>
+    <string name="job_wakeup_failed_body">這一輪以報錯結束，問題沒有被確認修好。點開會話可以看到它停在哪一步。</string>
+    <string name="job_wakeup_timeout_title">自動處理逾時：%1$s</string>
+    <string name="job_wakeup_timeout_body">這一輪超過時限被中斷，沒有得出結論。請查看任務日誌後手動處理。</string>
+    <string name="job_wakeup_skipped_title">未自動處理：%1$s</string>
+    <string name="job_wakeup_skipped_body">這次沒能啟動自動處理（執行未被允許，或防循環帳本不可用）。請查看任務日誌後手動處理。</string>
+
+    <string name="job_wakeup_subtext">後台任務自動喚醒</string>
+    <string name="schedule_session_subtext">自動任務</string>
+    <string name="schedule_session_archive_user">一項排程任務正在執行；你可以在這裡查看進度或繼續與它對話。</string>
+    <string name="job_wakeup_unknown_subject">後台命令 %1$s</string>
+
+    <string name="job_wakeup_archive_title">自動處理：%1$s</string>
+    <string name="job_wakeup_archive_user">後台命令已結束，Agent 被自動喚醒來處理它。</string>
+
+    <string name="job_wakeup_prompt_header">【後台任務自動喚醒】下面這條後台命令剛剛結束，且沒有成功。你被自動喚醒來接手處理。</string>
+    <string name="job_wakeup_prompt_tail_label">任務輸出末尾：</string>
+    <string name="job_wakeup_prompt_truncated">…（更早輸出已省略）&#10;</string>
+    <string name="job_wakeup_prompt_footer">使用者可能不在線上。本輪是線上會話裡你已被授權任務的延續：請繼續把任務真正做完並產出結果，例如建置失敗就重跑建置、取包、交付 APK，照常執行到完成，不降級成建議、不要求使用者回來再批。安全閘門只硬守系統分區、啟動鏈、安卓側手機資料、大範圍刪除、重新掛載、格式化、裝卸或凍結系統應用、敏感設定等關鍵部位：命中時對所有來源一律照樣彈卡，兩分鐘內沒人點，那一條就不執行、絕不偷偷做或謊報完成——使用者並沒有同意，不要重試或換寫法繞過。把「未確認 / 未執行 / 可能無人值守 / 使用者沒替你做決定」當成事實，自己判斷其餘任務照常做完、別讓這一條把整輪拖住。重要：閘門並不攔截 git push、建置、出包、工作區內的普通檔案改動，這些都屬於本輪要繼續完成的正常任務。盡量別呼叫 ask_user（可能沒人在線上），也盡量別去執行會碰到關鍵部位的操作；不要擅自替使用者做他可能不滿意的決定。確實需要決斷時，詢問卡仍是可用的兜底、同樣兩分鐘逾時。沒執行過的關鍵部位操作不要寫成已完成。無需處理就一兩句話說明。本次執行裡你新起的任務完成時不會再喚醒 Agent。</string>
+    <string name="job_wakeup_prompt_header_watch">[背景工作喚醒] 以下背景指令已依監看設定結束（成功也會喚醒）。你被自動喚醒以核對結果。</string>
+    <string name="job_wakeup_prompt_footer_watch">使用者可能不在線上。請核對結果是否達成目標，並把該做的收尾（寫交接、日誌、取包、交付等）照常執行完。安全閘門只硬守系統分區、啟動鏈、安卓側手機資料、大範圍刪除、重新掛載、格式化、裝卸或凍結系統應用、敏感設定等關鍵部位：命中時對所有來源一律照樣彈卡，兩分鐘內沒人點，那一條就不執行、絕不偷偷做或謊報完成，也不要重試或換寫法繞過——使用者並沒有同意；其餘工作照常完成。重要：閘門並不攔截 git push、建置、出包、工作區普通檔案改動，這些照常可做。盡量別呼叫 ask_user（可能沒人在線上）；真需要問時詢問卡同樣兩分鐘逾時。沒執行過的關鍵部位操作不要寫成已完成。無需處理就一兩句話說明。本次執行新起的工作不會再次喚醒 Agent。</string>
+    <!-- 喚醒 run 執行中的階段文案（通知同 ID 就地變形） -->
+    <string name="job_wakeup_stage_tool">正在呼叫 %1$s</string>
+    <string name="job_wakeup_stage_thinking">正在思考</string>
+    <string name="job_wakeup_stage_answering">正在整理回覆</string>
+    <string name="job_wakeup_stage_subagent">子代理處理中</string>
+    <string name="job_wakeup_stage_round">第 %1$s 輪</string>
+    <string name="job_wakeup_busy_title">暫未接手：%1$s</string>
+    <string name="job_wakeup_busy_body">上一條背景任務還在處理中，本次未啟動、不會自動重試。</string>
+    <string name="job_wakeup_stopped_title">已停止處理：%1$s</string>
+    <string name="job_wakeup_stopped_body">已停止，未自動重試。</string>
+</resources>
