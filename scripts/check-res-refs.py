@@ -22,11 +22,28 @@ RES = os.path.join(APP, "main", "res")
 # 收集所有 res/values* 目录下的 name="..." 定义（含 <string>/<plurals>/<string-array>/<integer>/<color> 等，
 # 统一按 name 汇总；R.string/plurals/array 的引用名都在这个集合里）
 defined = set()
+# 同名资源「同一 values 目录内跨文件重复」检测：Android 资源合并器对同目录多文件同名
+# <string> 会报 `Duplicate resources`（2026-11-14 run 43574310462 踩过：补丁把
+# browser_clear_shared_data 等塞进 values/strings.xml，与 values/browser_sessions.xml 撞名）。
+# 不同语言目录之间同名是合法翻译，不能报；只按「目录」分组检查。
+name_locations = {}
 for f in glob.glob(os.path.join(RES, "values*", "**", "*.xml"), recursive=True):
     try:
-        defined |= set(re.findall(r'\bname="([^"]+)"', open(f, encoding="utf-8").read()))
+        names = set(re.findall(r'\bname="([^"]+)"', open(f, encoding="utf-8").read()))
+        defined |= names
+        res_dir = os.path.relpath(os.path.dirname(f), RES).split(os.sep)[0]
+        for n in names:
+            name_locations.setdefault((res_dir, n), []).append(os.path.relpath(f, ROOT))
     except (OSError, UnicodeDecodeError):
         pass
+
+duplicates = {key: locs for key, locs in name_locations.items() if len(locs) > 1}
+if duplicates:
+    print("=== 资源引用闸：❌ 同一 values 目录内存在跨文件同名资源（Duplicate resources）===", file=sys.stderr)
+    for (res_dir, n), locs in sorted(duplicates.items()):
+        print(f"  - [{res_dir}] {n}: {', '.join(locs)}", file=sys.stderr)
+    print(f"共 {len(duplicates)} 个重复定义。", file=sys.stderr)
+    sys.exit(1)
 
 # 扫描全仓 Kotlin 的 R.string / R.plurals / R.array 引用
 refs = {}

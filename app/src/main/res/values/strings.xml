@@ -1727,9 +1727,6 @@
     <string name="assistant_overlay_settings_note">Independently configure the model and reasoning level for the floating assistant triggered by the power key or system assistant. For quick everyday tasks, choosing a fast lightweight model with lower or disabled reasoning helps reduce latency and token usage.</string>
     <string name="assistant_overlay_settings_reasoning_follow_default">Follow default</string>
     <string name="assistant_overlay_settings_title">Floating assistant</string>
-    <string name="browser_clear_shared_data">清除全部浏览器数据</string>
-    <string name="browser_clear_shared_data_message">将关闭全部页面，清除 Cookie、缓存和网站数据，包括登录状态。</string>
-    <string name="browser_user_action_failed">浏览器操作未完成，请重试。</string>
     <string name="conversation_dock_characters">Characters</string>
     <string name="conversation_empty_hint">Tap the new chat button above to start</string>
     <string name="conversation_model_unconfigured">Not set</string>
