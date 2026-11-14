@@ -196,8 +196,13 @@ internal class SubagentExecutor(
             }
         }
 
+        // 子代理沿用父 run 的身份/约束 system prompt（含身份认知），再叠加角色前缀；
+        // 不要用角色前缀整条覆盖，否则每个分身都丢了身份底色。
+        // filter/join 处理 systemPrompt 或角色前缀为空的边界，避免多出空行。
         val subagentConfig = resolvedConfig.copy(
-            systemPrompt = profile.buildSystemPrompt(),
+            systemPrompt = listOf(resolvedConfig.systemPrompt, profile.buildSystemPrompt())
+                .filter { it.isNotBlank() }
+                .joinToString("\n\n"),
             subagentTools = false,
             supportsSearchSuggestions = false,
         )
