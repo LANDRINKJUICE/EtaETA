@@ -572,6 +572,8 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
                 detailText = (if (result.ok) result.content else result.error.orEmpty()).take(240),
                 finished = result.ok,
                 failed = !result.ok && result.error != "已停止",
+                conversationId = run.conversationId,
+                handoffSource = run.request.handoff?.source,
             )
             val guiState = guiControl.state.value
             if (lastGuiOwnerRunId != run.runId || guiState.userPaused ||

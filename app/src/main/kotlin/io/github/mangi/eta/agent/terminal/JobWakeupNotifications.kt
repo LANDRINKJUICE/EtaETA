@@ -20,14 +20,37 @@ import io.github.mangi.eta.agent.runtime.AgentRuntimeWire
  * - 通知 id 走 [NotificationPolicy.jobWakeupId]（9602..9651），同一任务反复唤醒原地更新；
  * - PendingIntent 的 requestCode 与 data 都按任务派生：固定值 + FLAG_UPDATE_CURRENT 会让
  *   多条通知的会话参数互相覆盖（extras 不参与 PendingIntent 判等）；
- * - channel 复用"后台命令结果"，不新增一条需要用户单独静音的 channel。
+ * - **运行中常驻 + 阶段可见**：showRunning 起一条 setOngoing(true) 的通知，run 期间由
+ *   [updateRunning] 把 AgentEvent 映射成的阶段文案同 ID 就地变形（"正在调用 xx 工具"…），
+ *   用户不点开也能看见这一轮在做什么；终态 [showFinished] 重建为可滑掉的通知收尾。
+ * - channel 复用"后台命令结果"，不新增需要用户单独静音的频道；若该 channel 被用户关掉，
+ *   退到已注册的主动沟通频道兜底，避免"正在自动处理"彻底消失。
  *
  * **收尾纪律**：只要发出过"正在自动处理"，这一轮结束时（成功 / 失败 / 超时 / 未启动）
  * 必须用同 ID 更新成终态并 setAutoCancel(true)——不能留一条永远显示"正在处理"的通知。
  */
 internal object JobWakeupNotifications {
 
-    /** 正在自动处理（终态未到达前一直可点、可滑动取消）。 */
+    /**
+     * App 启动时清掉上一次进程遗留的 9602..9651 常驻通知。
+     *
+     * showRunning 是 setOngoing(true) 的，用户滑不掉；若进程在 run 期间被系统回收，
+     * 没人调 cancel，通知栏会留一条永远"正在自动处理"的僵尸。号段取自
+     * [io.github.mangi.eta.agent.notify.NotificationIdRegistry]（唯一登记表），不硬编码漂移。
+     */
+    fun cancelStale(context: Context) {
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return
+        val segments = io.github.mangi.eta.agent.notify.NotificationIdRegistry.allIdSegments
+            .filter { it.owner == io.github.mangi.eta.agent.notify.NotificationIdRegistry.OWNER_JOB_WAKEUP }
+        for (segment in segments) {
+            for (id in segment.range) {
+                runCatching { manager.cancel(id) }
+            }
+        }
+        lastStageAt.clear()
+    }
+
+    /** 正在自动处理（终态未到达前常驻、随阶段更新）。 */
     fun showRunning(context: Context, task: DetachedTask, watched: Boolean) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         ensureChannel(context, manager)
@@ -37,17 +60,53 @@ internal object JobWakeupNotifications {
         )
         val status = statusText(context, task)
         val body = if (status.isBlank()) bodySuffix else "$status · $bodySuffix"
-        val notification = base(context, task)
+        val notification = base(context, task, resolveChannel(manager))
             .setContentTitle(context.getString(titleId, subjectOf(context, task)))
             .setContentText(body)
             .setStyle(Notification.BigTextStyle().bigText(body))
-            .setAutoCancel(true)
+            // 运行期间常驻、不可被误滑掉；终态 showFinished 会重建为可滑掉的通知。
+            .setOngoing(true)
             .build()
-        if (manager.areNotificationsEnabled()) manager.notify(NotificationPolicy.jobWakeupId(task.id), notification)
+        notifyIfAllowed(manager, task, notification)
     }
 
     /**
-     * 用同一 ID 把"正在自动处理"更新成终态。
+     * 运行期间把「正在自动处理」原地更新成当前阶段（同 ID 变形，不新增通知）。
+     *
+     * 由 BackgroundJobWakeup 把 Runtime 的 AgentEvent 映射成短文案传进来，
+     * 用户不点开也能看见「正在调用 xx 工具 / 正在整理回答 / 第 N 轮」。
+     * ≥1s 节流（每条任务独立计时），避免高频事件把通知行反复重绑、收起 RemoteInput。
+     */
+    fun updateRunning(context: Context, task: DetachedTask, stage: String, watched: Boolean = false) {
+        if (stage.isBlank()) return
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return
+        val now = android.os.SystemClock.elapsedRealtime()
+        val last = lastStageAt[task.id] ?: 0L
+        if (now - last < STAGE_THROTTLE_MILLIS) return
+        lastStageAt[task.id] = now
+        ensureChannel(context, manager)
+        val status = statusText(context, task)
+        val body = buildList {
+            if (status.isNotBlank()) add(status)
+            add(stage)
+        }.joinToString(" · ")
+        val titleId = if (watched) R.string.job_wakeup_title_watch else R.string.job_wakeup_title
+        val title = context.getString(titleId, subjectOf(context, task))
+        val notification = base(context, task, resolveChannel(manager))
+            .setContentTitle(title)
+            .setContentText(body)
+            .setStyle(Notification.BigTextStyle().bigText(body))
+            .setOngoing(true)
+            .build()
+        notifyIfAllowed(manager, task, notification)
+    }
+
+    /** 阶段更新节流：每条任务独立计时。 */
+    private val lastStageAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private const val STAGE_THROTTLE_MILLIS = 1_000L
+
+    /**
+     * 用同一 ID 把"正在自动处理"更新成终态（可滑掉、不再 ongoing）。
      *
      * 终态取值只有一处定义（[JobWakeupPolicy.Finish]）：通知文案与执行侧判定必须对齐，
      * 各自再定义一份枚举只会漂移。
@@ -68,13 +127,32 @@ internal object JobWakeupNotifications {
             JobWakeupPolicy.Finish.NOT_STARTED -> R.string.job_wakeup_skipped_body
         }
         val body = context.getString(bodyId)
-        val notification = base(context, task)
+        val notification = base(context, task, resolveChannel(manager))
             .setContentTitle(context.getString(titleId, subjectOf(context, task)))
             .setContentText(body)
             .setStyle(Notification.BigTextStyle().bigText(body))
             .setAutoCancel(true)
+            // 运行中的同 ID 通知是 onlyAlertOnce，终态显式放开，让「跑完了」有一次可见提醒。
+            .setOnlyAlertOnce(false)
             .build()
-        if (manager.areNotificationsEnabled()) manager.notify(NotificationPolicy.jobWakeupId(task.id), notification)
+        lastStageAt.remove(task.id)
+        notifyIfAllowed(manager, task, notification)
+    }
+
+    /** 上一条无人值守 run 还没结束：只告知"这次没接手"，不伪装成失败/未启动终态。 */
+    fun showBusy(context: Context, task: DetachedTask) {
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return
+        ensureChannel(context, manager)
+        val body = context.getString(R.string.job_wakeup_busy_body)
+        val notification = base(context, task, resolveChannel(manager))
+            .setContentTitle(context.getString(R.string.job_wakeup_busy_title, subjectOf(context, task)))
+            .setContentText(body)
+            .setStyle(Notification.BigTextStyle().bigText(body))
+            .setAutoCancel(true)
+            .setOnlyAlertOnce(false)
+            .build()
+        lastStageAt.remove(task.id)
+        notifyIfAllowed(manager, task, notification)
     }
 
     /** 超过连续唤醒上限 / 全局配额用尽：只告知，不再唤醒。 */
@@ -86,13 +164,15 @@ internal object JobWakeupNotifications {
         } else {
             context.getString(R.string.job_wakeup_chain_body, JobWakeupPolicy.MAX_CHAIN_WAKEUPS)
         }
-        val notification = base(context, task)
+        val notification = base(context, task, resolveChannel(manager))
             .setContentTitle(context.getString(R.string.job_wakeup_chain_title, subjectOf(context, task)))
             .setContentText(body)
             .setStyle(Notification.BigTextStyle().bigText(body))
             .setAutoCancel(true)
+            .setOnlyAlertOnce(false)
             .build()
-        if (manager.areNotificationsEnabled()) manager.notify(NotificationPolicy.jobWakeupId(task.id), notification)
+        lastStageAt.remove(task.id)
+        notifyIfAllowed(manager, task, notification)
     }
 
     /**
@@ -106,9 +186,13 @@ internal object JobWakeupNotifications {
         fallback = context.getString(R.string.job_wakeup_unknown_subject, task.id),
     )
 
-    private fun base(context: Context, task: DetachedTask): Notification.Builder {
+    private fun base(
+        context: Context,
+        task: DetachedTask,
+        channelId: String,
+    ): Notification.Builder {
         val conversationKey = JobWakeupPolicy.conversationKey(task.id)
-        return AgentNotifications.builder(context, BackgroundCommandNotification.CHANNEL)
+        return AgentNotifications.builder(context, channelId)
             .setSubText(context.getString(R.string.job_wakeup_subtext))
             .setVisibility(Notification.VISIBILITY_PRIVATE)
             .setOnlyAlertOnce(true)
@@ -145,6 +229,30 @@ internal object JobWakeupNotifications {
             add(String.format(context.getString(R.string.notify_elapsed_format), seconds))
         }
     }.joinToString(" · ")
+
+    /**
+     * 本 channel 被用户关掉/降级时，退到已注册的主动沟通频道，避免通知彻底消失。
+     * 这是「经常不显示」的常见原因之一：以前只查全局开关，channel 被关就静默无效。
+     */
+    private fun resolveChannel(manager: NotificationManager): String {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O) {
+            return BackgroundCommandNotification.CHANNEL
+        }
+        val channel = runCatching {
+            manager.getNotificationChannel(BackgroundCommandNotification.CHANNEL)
+        }.getOrNull()
+        return if (channel != null && channel.importance == NotificationManager.IMPORTANCE_NONE) {
+            NotificationPolicy.CHANNEL_PROACTIVE
+        } else {
+            BackgroundCommandNotification.CHANNEL
+        }
+    }
+
+    /** 全局开关开才发；channel 降级已由 [resolveChannel] 在 build 前决定。 */
+    private fun notifyIfAllowed(manager: NotificationManager, task: DetachedTask, notification: Notification) {
+        if (!manager.areNotificationsEnabled()) return
+        runCatching { manager.notify(NotificationPolicy.jobWakeupId(task.id), notification) }
+    }
 
     private fun ensureChannel(context: Context, manager: NotificationManager) {
         manager.createNotificationChannel(

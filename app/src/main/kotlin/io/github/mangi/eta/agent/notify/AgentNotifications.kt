@@ -161,6 +161,41 @@ internal object AgentNotifications {
         )
     }
 
+    /**
+     * 通知栏「回复」action（Direct Reply）：可被任意「带会话 id 的通知」复用。
+     * showProactive（notify_user）与执行服务的结果通知都调它，保证同一套
+     * RemoteInput + 令牌 + nonce 链路，不各写一份漂移。
+     */
+    fun replyAction(context: Context, notificationId: Int, conversationId: String): Notification.Action {
+        val remoteInput = RemoteInput.Builder(MainActivity.REPLY_RESULT_KEY)
+            .setLabel(context.getString(R.string.notify_reply_hint))
+            .setAllowFreeFormInput(true)
+            .build()
+        return Notification.Action.Builder(
+            null,
+            context.getString(R.string.notify_reply_action),
+            conversationReplyIntent(context, notificationId, conversationId),
+        ).addRemoteInput(remoteInput).build()
+    }
+
+    /** 按会话 id 打开该会话（点通知主体 / 「查看结果」用），带唯一 data URI 防覆盖。 */
+    fun conversationByIdIntent(
+        context: Context,
+        requestCode: Int,
+        conversationId: String,
+        distinctData: String,
+    ): PendingIntent {
+        val intent = Intent(context, MainActivity::class.java)
+            .setAction(MainActivity.ACTION_OPEN_CONVERSATION_ID)
+            .putExtra(MainActivity.EXTRA_CONVERSATION_ID, conversationId)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            .setData(Uri.parse(distinctData))
+        return PendingIntent.getActivity(
+            context, requestCode, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+    }
+
     fun taskCenterIntent(context: Context, requestCode: Int, tab: String = "APPROVALS"): PendingIntent {
         val intent = Intent(context, MainActivity::class.java)
             .setAction(ACTION_OPEN_TASK_CENTER)
@@ -271,20 +306,9 @@ internal object AgentNotifications {
             .setOnlyAlertOnce(!spec.withSound)
             .setCategory(Notification.CATEGORY_MESSAGE)
             .apply {
-                // 带会话 id：给一个 RemoteInput「回复」action，文字作为一条新消息回到该会话并触发回应。
-                // 与审批卡同一套 Direct Reply 范式：SystemUI 托管键盘，锁屏 / 通知栏可直接打字。
+                // 带会话 id：复用公共「回复」action，文字作为一条新消息回到该会话并触发回应。
                 if (!replyConversationId.isNullOrBlank()) {
-                    val remoteInput = RemoteInput.Builder(MainActivity.REPLY_RESULT_KEY)
-                        .setLabel(context.getString(R.string.notify_reply_hint))
-                        .setAllowFreeFormInput(true)
-                        .build()
-                    addAction(
-                        Notification.Action.Builder(
-                            null,
-                            context.getString(R.string.notify_reply_action),
-                            conversationReplyIntent(context, spec.notificationId, replyConversationId),
-                        ).addRemoteInput(remoteInput).build(),
-                    )
+                    addAction(replyAction(context, spec.notificationId, replyConversationId))
                 }
             }
             // 普通级也给一个"打开对话"的副动作：带上下文的通知点击进对话，按钮给任务中心。

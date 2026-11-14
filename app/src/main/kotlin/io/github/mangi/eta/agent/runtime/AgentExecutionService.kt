@@ -225,6 +225,8 @@ internal class AgentExecutionService : Service() {
             thought: String = "",
             finished: Boolean = false,
             failed: Boolean = false,
+            conversationId: String? = null,
+            handoffSource: String? = null,
         ) {
             mainHandler.post {
                 // 记录/清理本段运行的实际开始时间：用于常驻通知里的实时耗时。
@@ -253,16 +255,31 @@ internal class AgentExecutionService : Service() {
                     instance?.takeIf { it.foregroundActive }?.refreshNotification()
                 }
                 instance?.syncElapsedTicker()
-                if ((finished || failed) && !resultPublished) {
-                    resultPublished = true
-                    showRunResult(context, failed, detailText)
+                if ((finished || failed) && !resultPublished && conversationId != null) {
+                    // 前台 UI 聊天一轮说完（成功或失败）：结果/错误就在屏幕上，不再弹通知刷屏、占通知栏。
+                    val foregroundUiChat = handoffSource == AgentRuntimeWire.AGENT_UI_HANDOFF_SOURCE &&
+                        MainActivity.isInForeground
+                    if (!foregroundUiChat) {
+                        // 后台/无 UI 的 run 用 archive-/run:/assistant- 前缀会话 id：它们不在可回复的
+                        // UI 会话表里，挂回复按钮会「点了必然失败」，所以这类通知不挂回复、查看结果
+                        // 退回任务中心。UI 会话（App 不在前台时跑完）才挂通知栏回复 + 按会话深链。
+                        val uiConversation = AgentConversationIdentity.isUiConversation(conversationId)
+                        resultPublished = true
+                        showRunResult(context, failed, detailText, conversationId, uiConversation)
+                    }
                 }
             }
         }
 
         /** 后台完成时给出可消散的结果卡；成功安静、失败保留，均不替代常驻执行通知。 */
-        private fun showRunResult(context: Context, failed: Boolean, detail: String) {
-            val manager = context.getSystemService(NotificationManager::class.java)
+        private fun showRunResult(
+            context: Context,
+            failed: Boolean,
+            detail: String,
+            conversationId: String,
+            uiConversation: Boolean,
+        ) {
+            val manager = context.getSystemService(NotificationManager::class.java) ?: return
             manager.createNotificationChannel(
                 NotificationChannel(
                     RESULT_CHANNEL,
@@ -270,10 +287,18 @@ internal class AgentExecutionService : Service() {
                     NotificationManager.IMPORTANCE_DEFAULT,
                 ),
             )
-            val open = PendingIntent.getActivity(
-                context, 20, Intent(context, MainActivity::class.java),
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-            )
+            // UI 会话：点主体 /「查看结果」按会话 id 直达；后台归档会话：退回任务中心
+            // （归档会话另有 ACTION_OPEN_ARCHIVED_CONVERSATION 入口，不拿普通会话 id 硬开空白页）。
+            val open = if (uiConversation) {
+                AgentNotifications.conversationByIdIntent(
+                    context,
+                    20,
+                    conversationId,
+                    "eta://eta.runresult/open/$conversationId",
+                )
+            } else {
+                AgentNotifications.taskCenterIntent(context, 20, "RUNNING")
+            }
             val text = detail.ifBlank {
                 context.getString(
                     if (failed) R.string.execution_result_failed_hint else R.string.execution_result_done_hint,
@@ -291,7 +316,13 @@ internal class AgentExecutionService : Service() {
                 .setContentIntent(open)
                 .setAutoCancel(true)
                 .setOnlyAlertOnce(true)
-                // 结果通知带可用动作：查看结果（进会话）+ 打开任务中心，而不是只能点开首页。
+                .setCategory(Notification.CATEGORY_MESSAGE)
+                .apply {
+                    // 仅 UI 会话挂「回复」：后台归档会话挂了会点了必失败、丢用户打的字。
+                    if (uiConversation) {
+                        addAction(AgentNotifications.replyAction(context, RESULT_NOTIFICATION_ID, conversationId))
+                    }
+                }
                 .addAction(
                     Notification.Action.Builder(
                         null,

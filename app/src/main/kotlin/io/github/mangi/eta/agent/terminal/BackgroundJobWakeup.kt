@@ -55,13 +55,20 @@ internal class BackgroundJobWakeup(
     private val notifyFinished: (DetachedTask, JobWakeupPolicy.Finish) -> Unit = { _, _ -> },
     /** 只告知不唤醒：第二个参数为 true 表示"跨任务全局配额用尽"（区别于单链上限）。 */
     private val notifyChainLimit: (DetachedTask, Boolean) -> Unit = { _, _ -> },
+    /** 上一条无人值守 run 还在跑：发一条"这次没接手"的可见通知，不伪装成终态。 */
+    private val notifyBusy: (DetachedTask) -> Unit = {},
+    /** 运行中阶段更新：把这一轮 AgentEvent 映射成的短文案，同 ID 更新「正在自动处理」通知。 */
+    private val notifyStage: (DetachedTask, String, Boolean) -> Unit = { _, _, _ -> },
     private val readOutputTail: (DetachedTask, Int) -> String = { _, _ -> "" },
     /**
      * 跑一轮 agent run 并返回其结果；返回 null 表示客户端没有拿到结果。
      * 由 [TerminalRuntime] 接 [io.github.mangi.eta.agent.runtime.AgentRuntimeClient.run]，
      * 这样"跑完是否成功"能一路透到通知终态。
      */
-    private val runWakeup: (AgentRuntimeWire.RunRequest) -> AgentRuntimeWire.RunResult? = { null },
+    private val runWakeup: (
+        AgentRuntimeWire.RunRequest,
+        (io.github.mangi.eta.agent.runtime.AgentEvent) -> Unit,
+    ) -> AgentRuntimeWire.RunResult? = { _, _ -> null },
     private val clock: () -> Long = System::currentTimeMillis,
     private val executor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "eta-job-wakeup").apply { isDaemon = true }
@@ -87,6 +94,15 @@ internal class BackgroundJobWakeup(
 
     /** 正在跑的那一轮；用户在执行通知里点"停止"时会中断它（客户端随即向 Runtime 发 MSG_CANCEL）。 */
     @Volatile private var activeWorker: java.util.concurrent.Future<*>? = null
+
+    /**
+     * 已收尾的任务 id：超时 / 被停止 / 宿主关闭会先发终态通知再真正结束 run，
+     * 期间 Runtime 仍可能回调几个迟到事件。没有这道护栏，updateRunning 会把终态通知
+     * 复活成一条永不消失的 ongoing「正在调用 xx」僵尸。
+     */
+    private val finishedTasks = java.util.Collections.newSetFromMap(
+        java.util.concurrent.ConcurrentHashMap<String, Boolean>(),
+    )
 
     /**
      * 任务完成的入口；由 [BackgroundTerminalJobs] 在巡检线程调用。
@@ -132,7 +148,12 @@ internal class BackgroundJobWakeup(
         if (closed.get()) return
         if (!running.compareAndSet(false, true)) {
             // 上一条无人值守 run 还没结束：本次不再排队（排队会让"处理"离失败越来越远）。
+            // 但要给一条可见通知，别让用户以为「完全没反应」。
             logger.warn("Background job wakeup skipped: jobId=${task.id} reason=wakeup_already_running")
+            runCatching { notifyBusy(task) }
+                .onFailure { failure ->
+                    logger.warn("wakeup busy notice failed: type=${failure.javaClass.simpleName}")
+                }
             return
         }
         val leaseId = LEASE_PREFIX + task.id
@@ -204,7 +225,7 @@ internal class BackgroundJobWakeup(
                     null
                 }
             if (request == null) return
-            outcome = when (val result = runWithTimeout(task, request)) {
+            outcome = when (val result = runWithTimeout(task, request, signal.watch)) {
                 null -> JobWakeupPolicy.Finish.TIMED_OUT
                 else -> if (result.ok) JobWakeupPolicy.Finish.DONE else JobWakeupPolicy.Finish.FAILED
             }
@@ -233,6 +254,7 @@ internal class BackgroundJobWakeup(
     private fun runWithTimeout(
         task: DetachedTask,
         request: AgentRuntimeWire.RunRequest,
+        watched: Boolean,
     ): AgentRuntimeWire.RunResult? {
         if (closed.get()) {
             logger.info("Background job wakeup not submitted: jobId=${task.id} reason=host_closed")
@@ -242,7 +264,20 @@ internal class BackgroundJobWakeup(
             Thread(runnable, "eta-job-wakeup-run-${task.id.take(6)}").apply { isDaemon = true }
         }
         try {
-            val future = worker.submit<AgentRuntimeWire.RunResult?> { runWakeup(request) }
+            val future = worker.submit<AgentRuntimeWire.RunResult?> {
+                runWakeup(request) { event ->
+                    // 终态已落地后丢弃迟到事件，避免把终态通知复活成 ongoing 僵尸。
+                    if (task.id !in finishedTasks) {
+                        val text = stageOf(event)
+                        if (text != null) {
+                            runCatching { notifyStage(task, text, watched) }
+                                .onFailure { failure ->
+                                    logger.warn("wakeup stage notice failed: type=${failure.javaClass.simpleName}")
+                                }
+                        }
+                    }
+                }
+            }
             activeWorker = future
             if (closed.get()) {
                 logger.warn("Background job wakeup cancelled: jobId=${task.id} reason=host_closed")
@@ -305,6 +340,27 @@ internal class BackgroundJobWakeup(
         )
     }
 
+    /**
+     * 把一个 Runtime 事件映射成「运行中通知」的阶段文案；null 表示该事件不值得更新。
+     * 只挑能告诉用户「在干嘛」的关键节点，避免每个 delta 都重绑通知。
+     * 放在 Android 侧（不进纯逻辑 JobWakeupPolicy），因为要读 R.string 与 AgentEvent。
+     */
+    private fun stageOf(event: io.github.mangi.eta.agent.runtime.AgentEvent): String? = when (event) {
+        is io.github.mangi.eta.agent.runtime.AgentEvent.ToolStarted ->
+            context.getString(R.string.job_wakeup_stage_tool, event.name)
+        is io.github.mangi.eta.agent.runtime.AgentEvent.HostedToolStarted ->
+            context.getString(R.string.job_wakeup_stage_tool, event.name)
+        is io.github.mangi.eta.agent.runtime.AgentEvent.ProviderRequestStarted ->
+            context.getString(R.string.job_wakeup_stage_thinking)
+        is io.github.mangi.eta.agent.runtime.AgentEvent.ProviderResponseStarted ->
+            context.getString(R.string.job_wakeup_stage_answering)
+        is io.github.mangi.eta.agent.runtime.AgentEvent.SubagentProgress ->
+            context.getString(R.string.job_wakeup_stage_subagent)
+        is io.github.mangi.eta.agent.runtime.AgentEvent.RoundStarted ->
+            context.getString(R.string.job_wakeup_stage_round, event.round.toString())
+        else -> null
+    }
+
     /** 唤醒 run 的指令文案：明确"没有人在线"，且不能把"没执行"写成"已完成"。 */
     private fun promptTexts(context: Context): JobWakeupPolicy.Texts = JobWakeupPolicy.Texts(
         header = context.getString(R.string.job_wakeup_prompt_header),
@@ -333,6 +389,8 @@ internal class BackgroundJobWakeup(
     }
 
     private fun notifyFinishedSafely(task: DetachedTask, outcome: JobWakeupPolicy.Finish) {
+        // 先登记再发终态：无论通知成功与否，后续迟到事件都不再更新这条通知。
+        finishedTasks.add(task.id)
         runCatching { notifyFinished(task, outcome) }
             .onFailure { failure ->
                 logger.warn("Background job wakeup finish notice failed: type=${failure.javaClass.simpleName}")

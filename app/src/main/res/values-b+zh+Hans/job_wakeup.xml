@@ -35,4 +35,12 @@
     <string name="job_wakeup_prompt_footer">用户可能不在线。本轮是在线会话里你已被授权任务的延续：请继续把任务真正做完并产出结果，例如构建失败就重跑构建、取包、交付 APK，照常执行到完成，不降级成建议、不要求用户回来再批。安全闸门只硬守系统分区、启动链、安卓侧手机数据、大范围删除、重新挂载、格式化、装卸或冻结系统应用、敏感设置等关键部位：命中时对所有来源一律照样弹卡，两分钟内没人点，那一条就不执行、绝不偷偷做或谎报完成——用户并没有同意，不要重试或换写法绕过。把「未确认 / 未执行 / 可能无人值守 / 用户没替你做决定」当成事实，自己判断其余任务照常做完、别让这一条把整轮拖住。重要：闸门并不拦截 git push、构建、出包、工作区内的普通文件改动，这些都属于本轮要继续完成的正常任务。尽量别调用 ask_user（可能没人在线），也尽量别去执行会碰到关键部位的操作；不要擅自替用户做他可能不满意的决定。确实需要决断时，询问卡仍是可用的兜底、同样两分钟超时。没执行过的关键部位操作不要写成已完成。无需处理就一两句话说明。本次运行里你新起的任务完成时不会再唤醒 Agent。</string>
     <string name="job_wakeup_prompt_header_watch">[后台任务唤醒] 以下后台命令已按盯梢设置结束（成功也会唤醒）。你被自动唤醒来核对结果。</string>
     <string name="job_wakeup_prompt_footer_watch">用户可能不在线。请核对结果是否达成目标，并把该做的收尾（写交接、日志、取包、交付等）照常执行完。安全闸门只硬守系统分区、启动链、安卓侧手机数据、大范围删除、重新挂载、格式化、装卸或冻结系统应用、敏感设置等关键部位：命中时对所有来源一律照样弹卡，两分钟内没人点，那一条就不执行、绝不偷偷做或谎报完成，也不要重试或换写法绕过——用户并没有同意；其余工作照常完成。重要：闸门并不拦截 git push、构建、出包、工作区普通文件改动，这些照常可做。尽量别调用 ask_user（可能没人在线）；真需要问时询问卡同样两分钟超时。没执行过的关键部位操作不要写成已完成。无需处理就一两句话说明。本次运行新起的任务不会再次唤醒 Agent。</string>
+    <!-- 唤醒 run 运行中的阶段文案（通知同 ID 就地变形） -->
+    <string name="job_wakeup_stage_tool">正在调用 %1$s</string>
+    <string name="job_wakeup_stage_thinking">正在思考</string>
+    <string name="job_wakeup_stage_answering">正在整理回答</string>
+    <string name="job_wakeup_stage_subagent">子代理处理中</string>
+    <string name="job_wakeup_stage_round">第 %1$s 轮</string>
+    <string name="job_wakeup_busy_title">暂未接手：%1$s</string>
+    <string name="job_wakeup_busy_body">上一条后台任务还在处理中，本次未启动、不会自动重试。</string>
 </resources>

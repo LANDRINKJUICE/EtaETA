@@ -32,6 +32,9 @@ internal object NotificationIdRegistry {
         val note: String = "",
     )
 
+    /** job_wakeup 通知段的 owner；清扫僵尸通知与登记表共用，避免字面量漂移。 */
+    const val OWNER_JOB_WAKEUP = "job_wakeup"
+
     /** 通知 channel 语义分类表：新增 channel 前先查这里，避免随手复用语义不匹配的通道。 */
     enum class NotificationChannel(
         val id: String,
@@ -43,7 +46,7 @@ internal object NotificationIdRegistry {
         PROACTIVE("eta_proactive", "DEFAULT", "notify_user 普通主动沟通 + 待确认汇总"),
         ATTENTION("eta_attention", "HIGH+sound", "真正紧急 / 审批卡 heads-up 行动通知"),
         SCHEDULED_TASKS("scheduled_tasks", "DEFAULT", "自动任务进行中 / 结果"),
-        BACKGROUND_COMMANDS("eta_background_commands", "DEFAULT", "后台命令结果 / 任务失败自动唤醒"),
+        BACKGROUND_COMMANDS("eta_background_commands", "DEFAULT", "后台命令结果 / 任务失败自动唤醒（含运行中的常驻阶段通知；被关时降级到 eta_proactive）"),
         MACRO_RECORDING("macro_recording", "LOW", "宏录制进行中 / 结果"),
         ASSISTANT_SPEECH("eta_assistant_speech", "LOW", "语音助手聆听 / 朗读浮窗"),
         READ_ALOUD("eta_read_aloud", "LOW", "聊天朗读播放"),
@@ -65,7 +68,7 @@ internal object NotificationIdRegistry {
         IdSegment("approval_pending", 9_400..9_400, "N 个操作待确认汇总单条"),
         IdSegment("reserved_9500", 9_500..9_501, "预留，暂未使用"),
         IdSegment("macro_recording", 9_600..9_601, "9600 录制中 / 9601 录制结果"),
-        IdSegment("job_wakeup", 9_602..9_651, "后台任务失败自动唤醒，按 jobId 散列"),
+        IdSegment(OWNER_JOB_WAKEUP, 9_602..9_651, "后台任务失败自动唤醒，按 jobId 散列"),
         IdSegment("approval_attention", 9_660..9_999, "审批卡行动通知，占用检测分配"),
     )
 

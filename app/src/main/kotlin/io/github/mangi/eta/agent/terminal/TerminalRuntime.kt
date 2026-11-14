@@ -37,13 +37,20 @@ internal object TerminalRuntime {
                 notifyRunning = { task, watched -> JobWakeupNotifications.showRunning(app, task, watched) },
                 notifyFinished = { task, finish -> JobWakeupNotifications.showFinished(app, task, finish) },
                 notifyChainLimit = { task, globalLimit -> JobWakeupNotifications.showChainLimit(app, task, globalLimit) },
+                notifyBusy = { task -> JobWakeupNotifications.showBusy(app, task) },
+                notifyStage = { task, stage, watched ->
+                    JobWakeupNotifications.updateRunning(app, task, stage, watched)
+                },
                 readOutputTail = { task, maxBytes ->
                     // 读出的原始文本由 JobWakeupPolicy 统一剥控制序列并按字符裁剪。
                     BackgroundCommandNotification.logTail(task, maxBytes, JobWakeupPolicy.OUTPUT_TAIL_CHARS)
                 },
                 // 把 Runtime 的真实结果透出来：通知终态要区分"处理完"与"跑挂了"。
-                runWakeup = { request ->
-                    io.github.mangi.eta.agent.runtime.AgentRuntimeClient(app, AndroidAgentLogger).run(request) { }
+                // 第二个参数是 onEvent：唤醒 run 的实时事件不再丢弃，由 BackgroundJobWakeup
+                // 映射成阶段文案、经 JobWakeupNotifications 更新到运行中的那条通知上。
+                runWakeup = { request, onEvent ->
+                    io.github.mangi.eta.agent.runtime.AgentRuntimeClient(app, AndroidAgentLogger)
+                        .run(request, onEvent)
                 },
             )
             BackgroundTerminalJobs(
@@ -71,6 +78,8 @@ internal object TerminalRuntime {
     fun initialize(context: Context) {
         appContext = context.applicationContext
         File(userWorkspacePath).mkdirs()
+        // 进程上次被回收时，运行中的唤醒通知是 ongoing、不会被自动清掉：启动时扫一次号段。
+        JobWakeupNotifications.cancelStale(context.applicationContext)
     }
 
     val rootAvailable: Boolean get() = RootAccess.isGranted

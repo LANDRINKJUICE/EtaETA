@@ -10,10 +10,10 @@
     <string name="execution_chip_running">Working</string>
     <string name="execution_chip_answering">Answering</string>
     <string name="execution_result_channel">Agent results</string>
-    <string name="execution_result_done_title">Eta task finished</string>
-    <string name="execution_result_failed_title">Eta task interrupted</string>
-    <string name="execution_result_done_hint">The task completed. Open the conversation to see the result.</string>
-    <string name="execution_result_failed_hint">The task could not complete. Open the conversation to see why.</string>
+    <string name="execution_result_done_title">Eta replied</string>
+    <string name="execution_result_failed_title">Eta reply interrupted</string>
+    <string name="execution_result_done_hint">Your conversation has a new reply. Open it to continue.</string>
+    <string name="execution_result_failed_hint">The reply was interrupted. Open the conversation to see why.</string>
     <string name="execution_subtext_round">Round %1$d</string>
     <string name="execution_subtext_tasks">%1$d task(s)</string>
 </resources>
