@@ -283,7 +283,7 @@ internal class BackgroundJobWakeup(
         val startedAt = SystemClock.elapsedRealtime()
         val lastProgressAt = AtomicLong(startedAt)
         val activeTools = AtomicInteger(0)
-        try {
+        return try {
             val future = worker.submit<AgentRuntimeWire.RunResult?> {
                 runWakeup(request) { event ->
                     // 每个 AgentEvent 都是「这一轮还活着」的证据；用单调时钟，不受系统对时影响。

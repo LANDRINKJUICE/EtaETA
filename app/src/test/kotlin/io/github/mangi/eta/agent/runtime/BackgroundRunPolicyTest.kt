@@ -11,6 +11,31 @@ import org.junit.Test
  */
 class BackgroundRunPolicyTest {
 
+    /**
+     * 结构护栏（SOP §4.4 机器红灯）：所有无人值守会话前缀必须登记进
+     * [BackgroundRunPolicy.UNATTENDED_PREFIXES] 并被识别，否则 `conversationsToAdopt` 永远不
+     * 认领它 → 又退化成「运行中不进列表、散乱一地」。将来在别处加新前缀却忘了登记到这张表，
+     * 必须同步在这里的「已知前缀」清单里补上（编译/测试会提醒口径漂移）。
+     */
+    @Test
+    fun everyRegisteredBackgroundPrefixIsRecognized() {
+        val knownPrefixes = listOf(
+            BackgroundRunPolicy.JOB_WAKEUP_PREFIX,
+            BackgroundRunPolicy.SCHEDULED_TASK_PREFIX,
+        )
+        knownPrefixes.forEach { prefix ->
+            assertTrue("前缀 $prefix 必须登记进 UNATTENDED_PREFIXES", prefix in BackgroundRunPolicy.UNATTENDED_PREFIXES)
+            assertTrue("前缀 $prefix 必须被 isUnattendedConversation 识别",
+                BackgroundRunPolicy.isUnattendedConversation(prefix + "abc123"))
+        }
+        // UNATTENDED_PREFIXES 本身不能有重复项，也不能漏掉任何已知前缀。
+        assertEquals("UNATTENDED_PREFIXES 不应有重复项",
+            BackgroundRunPolicy.UNATTENDED_PREFIXES.size,
+            BackgroundRunPolicy.UNATTENDED_PREFIXES.toSet().size)
+        assertEquals("UNATTENDED_PREFIXES 必须恰好覆盖所有已知后台前缀",
+            knownPrefixes.toSet(), BackgroundRunPolicy.UNATTENDED_PREFIXES.toSet())
+    }
+
     @Test
     fun unattendedPrefixesAreRecognized() {
         assertTrue(BackgroundRunPolicy.isUnattendedConversation("conv-wakeup-abc"))
