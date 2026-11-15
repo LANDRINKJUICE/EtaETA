@@ -7,8 +7,6 @@ import android.app.PendingIntent
 import android.app.RemoteInput
 import android.content.Context
 import android.content.Intent
-import android.media.AudioAttributes
-import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
 import io.github.mangi.eta.R
@@ -62,42 +60,7 @@ internal object AgentNotifications {
     const val ACTION_OPEN_TASK_CENTER = TaskCenterDeepLink.ACTION_OPEN_TASK_CENTER
     const val EXTRA_TASK_CENTER_TAB = TaskCenterDeepLink.EXTRA_TASK_CENTER_TAB
     /** 注册本次新增的两条 channel；重复调用是幂等的。 */
-    fun ensureChannels(context: Context) {
-        val manager = context.getSystemService(NotificationManager::class.java) ?: return
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-        runCatching {
-            manager.createNotificationChannel(
-                NotificationChannel(
-                    NotificationPolicy.CHANNEL_PROACTIVE,
-                    context.getString(R.string.notify_channel_proactive),
-                    NotificationManager.IMPORTANCE_DEFAULT,
-                ).apply {
-                    description = context.getString(R.string.notify_channel_proactive_desc)
-                    setShowBadge(true)
-                    enableVibration(false)
-                    setSound(null, null)
-                },
-            )
-            manager.createNotificationChannel(
-                NotificationChannel(
-                    NotificationPolicy.CHANNEL_ATTENTION,
-                    context.getString(R.string.notify_channel_attention),
-                    NotificationManager.IMPORTANCE_HIGH,
-                ).apply {
-                    description = context.getString(R.string.notify_channel_attention_desc)
-                    setShowBadge(true)
-                    enableVibration(true)
-                    setSound(
-                        RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION),
-                        AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_NOTIFICATION)
-                            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                            .build(),
-                    )
-                },
-            )
-        }
-    }
+    fun ensureChannels(context: Context) = AttentionPublisher.ensureAllChannels(context)
 
     /** 仅打开 App（不注入草稿）。 */
     fun appIntent(context: Context, requestCode: Int): PendingIntent =
@@ -287,8 +250,6 @@ internal object AgentNotifications {
      * 发布一条 notify_user 主动沟通通知。[spec] 的语义全部由 [NotificationPolicy.proactive] 决定。
      */
     fun showProactive(context: Context, spec: NotificationPolicy.Proactive) {
-        val manager = context.getSystemService(NotificationManager::class.java) ?: return
-        ensureChannels(context)
         val replyConversationId = spec.conversationId
         // 点通知主体保持既有行为（草稿注入 / 任务中心 / 仅打开 App）；「回复」按钮才用会话 id 精确路由，
         // 不改动 notify_user 原有的点击语义，避免破坏已在正常使用的草稿功能。
@@ -326,7 +287,19 @@ internal object AgentNotifications {
                 ).build(),
             )
             .build()
-        runCatching { manager.notify(spec.notificationId, notification) }
+        AttentionPublisher.publish(context,
+            AttentionIntent(
+                notificationId = spec.notificationId,
+                // 与实际投递的 spec.channelId 同源：important 走 ATTENTION、其余 PROACTIVE。
+                // 否则用户关掉 eta_attention 时 Director 仍按 eta_proactive 放行、系统静默丢弃。
+                channel = if (spec.priority == NotificationPolicy.Priority.IMPORTANT)
+                    NotificationIdRegistry.NotificationChannel.ATTENTION
+                else NotificationIdRegistry.NotificationChannel.PROACTIVE,
+                objectKey = spec.notificationId.toString(),
+                title = spec.title, body = spec.body,
+                urgency = if (spec.priority == NotificationPolicy.Priority.IMPORTANT)
+                    AttentionIntent.Urgency.IMPORTANT else AttentionIntent.Urgency.NORMAL,
+            ), notification)
     }
 
     /**
@@ -364,7 +337,12 @@ internal object AgentNotifications {
                 ).build(),
             )
             .build()
-        runCatching { manager.notify(NotificationPolicy.APPROVAL_PENDING_ID, notification) }
+        AttentionPublisher.publish(context,
+            AttentionIntent(
+                notificationId = NotificationIdRegistry.idOf("approval_pending"),
+                channel = NotificationIdRegistry.channelOf("approval_pending"),
+                objectKey = "approval_pending", title = "", body = "",
+            ), notification)
     }
 
     fun cancelApprovalPending(context: Context) {
@@ -394,8 +372,6 @@ internal object AgentNotifications {
         request: io.github.mangi.eta.agent.approval.AgentApprovalRequest,
         notificationId: Int,
     ) {
-        val manager = context.getSystemService(NotificationManager::class.java) ?: return
-        ensureChannels(context)
         val policy = io.github.mangi.eta.agent.approval.AgentApprovalAttentionPolicy
         val actions = policy.notificationActions(request)
         val danger = request.kind == io.github.mangi.eta.agent.approval.AgentApprovalKind.ToolRisk
@@ -529,7 +505,14 @@ internal object AgentNotifications {
                 }
             }
             .build()
-        runCatching { manager.notify(notificationId, notification) }
+        AttentionPublisher.publish(context,
+            AttentionIntent(
+                notificationId = notificationId,
+                channel = NotificationIdRegistry.channelOf("approval_attention"),
+                objectKey = request.id, title = "", body = "",
+                urgency = AttentionIntent.Urgency.IMPORTANT,
+                autoCancel = false,
+            ), notification)
     }
 
     /**

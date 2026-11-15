@@ -1,7 +1,6 @@
 package io.github.mangi.eta.agent.runtime
 
 import android.app.Notification
-import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
@@ -19,11 +18,14 @@ import io.github.mangi.eta.agent.overlay.AgentOverlayStatus
 import io.github.mangi.eta.agent.overlay.localizedText
 import io.github.mangi.eta.agent.overlay.toolDisplayName
 import io.github.mangi.eta.agent.notify.AgentNotifications
+import io.github.mangi.eta.agent.notify.AttentionPublisher
 import io.github.mangi.eta.agent.notify.NotificationPolicy
 import io.github.mangi.eta.core.AndroidAgentLogger
 import io.github.mangi.eta.core.safeLogType
 import io.github.mangi.eta.ui.MainActivity
 import java.util.concurrent.atomic.AtomicLong
+import io.github.mangi.eta.agent.notify.AttentionIntent
+import io.github.mangi.eta.agent.notify.NotificationIdRegistry
 
 /** 只在用户任务存活期间持有前台执行生命周期；进程被系统停止后不重放任务。 */
 internal class AgentExecutionService : Service() {
@@ -51,9 +53,7 @@ internal class AgentExecutionService : Service() {
             // key 用 5s 粒度：同一窗口内不重复 notify，跨窗口才刷新（配合 5s 心跳省电）。
             val bucket = seconds / (NotificationPolicy.SLOW_REFRESH_INTERVAL_MILLIS / 1_000L)
             if (elapsedThrottle.shouldEmit("$runStatus|$runRound|$bucket", now)) {
-                runCatching {
-                    getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification())
-                }
+                AttentionPublisher.publish(this@AgentExecutionService, executionIntent(), notification())
             }
             elapsedHandler.postDelayed(this, NotificationPolicy.SLOW_REFRESH_INTERVAL_MILLIS)
         }
@@ -63,10 +63,7 @@ internal class AgentExecutionService : Service() {
         super.onCreate()
         instance = this
         leases.attachOwner(owner)
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(
-            NotificationChannel(CHANNEL, getString(R.string.execution_channel), NotificationManager.IMPORTANCE_LOW),
-        )
+        AttentionPublisher.ensureAllChannels(this)
         approvalListener = AgentApprovalCoordinator.shared.addPendingListener {
             mainHandler.post { if (instance === this && foregroundActive) refreshNotification() }
         }
@@ -88,9 +85,9 @@ internal class AgentExecutionService : Service() {
         leases.attachOwner(owner)
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                startForeground(NOTIFICATION_ID, notification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+                startForeground(NotificationIdRegistry.idOf("execution_service"), notification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
             } else {
-                startForeground(NOTIFICATION_ID, notification())
+                startForeground(NotificationIdRegistry.idOf("execution_service"), notification())
             }
             foregroundActive = true
             syncElapsedTicker()
@@ -136,9 +133,18 @@ internal class AgentExecutionService : Service() {
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         } else {
-            getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification())
+            AttentionPublisher.publish(this@AgentExecutionService, executionIntent(), notification())
         }
     }
+
+    /** 1107 执行态常驻通知的统一意图（FGS 载体）：号段 / channel 全从唯一源取。 */
+    private fun executionIntent(): AttentionIntent = AttentionIntent(
+        notificationId = NotificationIdRegistry.idOf("execution_service"),
+        channel = NotificationIdRegistry.channelOf("execution_service"),
+        objectKey = "execution",
+        title = "", body = "",
+        ongoing = true, autoCancel = false, isForegroundService = true,
+    )
 
     private fun notification(): Notification {
         val status = runStatus
@@ -261,9 +267,21 @@ internal class AgentExecutionService : Service() {
                     // 但无人值守后台 run（唤醒轮 / 自动任务）虽用 AGENT_UI handoff，却没有用户在线
                     // 盯着这个会话——必须照发结果通知（可回复 + 按会话深链），否则前台跑完会完全静默。
                     val unattended = BackgroundRunPolicy.isUnattendedConversation(conversationId.orEmpty())
-                    val foregroundUiChat = handoffSource == AgentRuntimeWire.AGENT_UI_HANDOFF_SOURCE &&
-                        MainActivity.isInForeground && !unattended
-                    if (!foregroundUiChat) {
+                    // 统一打扰裁决：前台真相取 AppForeground 单一源，前台抑制判定收敛到
+                    // AttentionDirector（不再是散落的第 6 处各判各的）。无人值守会话即便
+                    // App 在前台也照发；前台「用户正盯着的有值守 UI 聊天」才抑制结果通知。
+                    val disturb = io.github.mangi.eta.agent.notify.AttentionDirector.shouldDisturb(
+                        io.github.mangi.eta.agent.notify.DisturbContext(
+                            notificationsEnabled = true,
+                            channelEnabled = true,
+                            foreground = io.github.mangi.eta.agent.notify.AppForeground.isForeground(),
+                            foregroundUiChat = handoffSource == AgentRuntimeWire.AGENT_UI_HANDOFF_SOURCE,
+                            unattended = unattended,
+                            rateLimitAllows = true,
+                            budgetAllows = true,
+                        ),
+                    )
+                    if (disturb) {
                         // 后台/无 UI 的 run 用 archive-/run:/assistant- 前缀会话 id：它们不在可回复的
                         // UI 会话表里，挂回复按钮会「点了必然失败」，所以这类通知不挂回复、查看结果
                         // 退回任务中心。UI 会话（App 不在前台时跑完）才挂通知栏回复 + 按会话深链。
@@ -285,18 +303,41 @@ internal class AgentExecutionService : Service() {
             archiveSource: String?,
             archiveKey: String?,
         ) {
-            val manager = context.getSystemService(NotificationManager::class.java) ?: return
-            // 按会话散列：不同会话的结果各占一条，不再被固定 1108 互相覆盖。
-            val notificationId = NotificationPolicy.runResultId(conversationId)
-            manager.createNotificationChannel(
-                NotificationChannel(
-                    RESULT_CHANNEL,
-                    context.getString(R.string.execution_result_channel),
-                    NotificationManager.IMPORTANCE_DEFAULT,
-                ),
+            // 唤醒轮（conv-wakeup-）终态唯一由 JobWakeupNotifications.showFinished 用 9602 发布
+            // （本轮从根统一：一条 run 一个终态发布者）。这里跳过，避免与 9602 双发。
+            // 自动任务 conv-schedule- 与普通 UI 会话的结果仍由本 run_result 段承担。
+            if (io.github.mangi.eta.agent.notify.AttentionDirector.isWakeupConversation(conversationId)) return
+            val notificationId = NotificationIdRegistry.idOf("run_result", conversationId)
+            val notification = buildRunResultNotification(
+                context, failed, detail, conversationId, uiConversation,
+                archiveSource, archiveKey, notificationId,
             )
-            // UI 会话：点主体 /「查看结果」按会话 id 直达；后台归档会话：退回任务中心
-            // （归档会话另有 ACTION_OPEN_ARCHIVED_CONVERSATION 入口，不拿普通会话 id 硬开空白页）。
+            // tag=conversationId：即使两会话 hash 撞同一 id，也因 tag 不同而各占一条。
+            AttentionPublisher.publish(context,
+                AttentionIntent(
+                    notificationId = notificationId,
+                    channel = NotificationIdRegistry.channelOf("run_result"),
+                    objectKey = conversationId, tag = conversationId,
+                    title = "", body = "", unattended = true,
+                ), notification)
+        }
+
+        /**
+         * run_result 通知的**唯一 builder**：正常终态（showRunResult）与准备阶段失败
+         * （failBeforeExecution -> publishTerminal）共用，避免两条链路各建一份漂移。
+         * 内容（模型结果 / 失败原因）、深链、回复 / 查看 / 任务中心三个 action 全在这里。
+         */
+        internal fun buildRunResultNotification(
+            context: Context,
+            failed: Boolean,
+            detail: String,
+            conversationId: String,
+            uiConversation: Boolean,
+            archiveSource: String?,
+            archiveKey: String?,
+            notificationId: Int,
+        ): Notification {
+            // UI 会话：点主体 /「查看结果」按会话 id 直达；后台归档会话：退回任务中心。
             val open = if (uiConversation) {
                 AgentNotifications.conversationByIdIntent(
                     context,
@@ -305,7 +346,6 @@ internal class AgentExecutionService : Service() {
                     "eta://eta.runresult/open/$conversationId",
                 )
             } else if (archiveSource != null && !archiveKey.isNullOrBlank()) {
-                // 后台归档会话：直达那一轮的归档会话，能看到 Agent 到底做了什么。
                 AgentNotifications.archivedConversationIntent(
                     context, 20, archiveSource, archiveKey,
                     "eta://eta.runresult/archive/$archiveKey",
@@ -318,7 +358,7 @@ internal class AgentExecutionService : Service() {
                     if (failed) R.string.execution_result_failed_hint else R.string.execution_result_done_hint,
                 )
             }
-            val notification = Notification.Builder(context, RESULT_CHANNEL)
+            return Notification.Builder(context, RESULT_CHANNEL)
                 .setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle(
                     context.getString(
@@ -355,10 +395,6 @@ internal class AgentExecutionService : Service() {
                     ).build(),
                 )
                 .build()
-            // tag=conversationId：即使两会话 hash 撞同一 id，也因 tag 不同而各占一条，彻底不互相覆盖。
-            if (manager.areNotificationsEnabled()) {
-                manager.notify(conversationId, notificationId, notification)
-            }
         }
 
         private fun ongoingSubText(context: Context, taskCount: Int): String? {

@@ -11,6 +11,9 @@ import io.github.mangi.eta.R
 import io.github.mangi.eta.core.AndroidAgentLogger
 import io.github.mangi.eta.core.safeLogType
 import io.github.mangi.eta.ui.MainActivity
+import io.github.mangi.eta.agent.notify.AttentionIntent
+import io.github.mangi.eta.agent.notify.AttentionPublisher
+import io.github.mangi.eta.agent.notify.NotificationIdRegistry
 
 /**
  * 录制中的常驻通知：这是用户唯一随时可见的"正在录制"状态，也是停止入口。
@@ -27,25 +30,9 @@ internal object MacroRecordingNotifications {
     const val NOTIFICATION_ID = 9_600
     private const val STOPPED_NOTIFICATION_ID = 9_601
 
-    fun ensureChannel(context: Context) {
-        val manager = context.getSystemService(NotificationManager::class.java) ?: return
-        runCatching {
-            manager.createNotificationChannel(
-                NotificationChannel(
-                    CHANNEL_ID,
-                    context.getString(R.string.macro_recording_channel),
-                    NotificationManager.IMPORTANCE_LOW,
-                ).apply {
-                    description = context.getString(R.string.macro_recording_channel_description)
-                    setShowBadge(false)
-                },
-            )
-        }
-    }
+    fun ensureChannel(context: Context) = AttentionPublisher.ensureAllChannels(context)
 
     fun showRecording(context: Context, suggestedName: String, steps: Int, elapsedMillis: Long = 0L) {
-        val manager = context.getSystemService(NotificationManager::class.java) ?: return
-        ensureChannel(context)
         val stopIntent = PendingIntent.getBroadcast(
             context,
             NOTIFICATION_ID,
@@ -88,18 +75,22 @@ internal object MacroRecordingNotifications {
                 ).build(),
             )
             .build()
-        runCatching { manager.notify(NOTIFICATION_ID, notification) }
+        AttentionPublisher.publish(context,
+            AttentionIntent(
+                notificationId = NotificationIdRegistry.fixedIdOf("macro_recording", "recording"),
+                channel = NotificationIdRegistry.channelOf("macro_recording"),
+                objectKey = "recording",
+                title = "", body = "", ongoing = true, autoCancel = false,
+            ), notification)
     }
 
     fun cancel(context: Context) {
-        val manager = context.getSystemService(NotificationManager::class.java) ?: return
-        runCatching { manager.cancel(NOTIFICATION_ID) }
+        AttentionPublisher.cancel(context,
+            NotificationIdRegistry.fixedIdOf("macro_recording", "recording"))
     }
 
     /** 停止录制后的结果提示（非阻塞，允许用户稍后在宏列表里看到）。 */
     fun showStopped(context: Context, summary: String) {
-        val manager = context.getSystemService(NotificationManager::class.java) ?: return
-        ensureChannel(context)
         val builder = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
             Notification.Builder(context, CHANNEL_ID)
         } else {
@@ -130,7 +121,13 @@ internal object MacroRecordingNotifications {
                 ).build(),
             )
             .build()
-        runCatching { manager.notify(STOPPED_NOTIFICATION_ID, notification) }
+        AttentionPublisher.publish(context,
+            AttentionIntent(
+                notificationId = NotificationIdRegistry.fixedIdOf("macro_recording", "stopped"),
+                channel = NotificationIdRegistry.channelOf("macro_recording"),
+                objectKey = "stopped",
+                title = "", body = summary,
+            ), notification)
     }
 }
 

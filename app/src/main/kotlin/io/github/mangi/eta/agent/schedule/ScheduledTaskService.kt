@@ -15,6 +15,7 @@ import io.github.mangi.eta.agent.notify.NotificationPolicy
 import io.github.mangi.eta.core.safeLogType
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
+import io.github.mangi.eta.agent.notify.NotificationIdRegistry
 
 /**
  * 自动任务执行期间的前台服务。
@@ -81,12 +82,12 @@ internal class ScheduledTaskService : Service() {
             val notification = ScheduledTaskNotifications.running(this, title, conversationId)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 startForeground(
-                    ScheduledTaskNotifications.runningId(),
+                    NotificationIdRegistry.idOf("scheduled_task_running"),
                     notification,
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
                 )
             } else {
-                startForeground(ScheduledTaskNotifications.runningId(), notification)
+                startForeground(NotificationIdRegistry.idOf("scheduled_task_running"), notification)
             }
             true
         }.getOrElse { throwable ->

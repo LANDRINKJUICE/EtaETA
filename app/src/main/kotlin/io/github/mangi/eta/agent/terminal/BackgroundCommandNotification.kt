@@ -1,14 +1,15 @@
 package io.github.mangi.eta.agent.terminal
 
 import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import io.github.mangi.eta.R
 import io.github.mangi.eta.agent.notify.AgentNotifications
 import io.github.mangi.eta.ui.MainActivity
+import io.github.mangi.eta.agent.notify.AttentionIntent
+import io.github.mangi.eta.agent.notify.AttentionPublisher
+import io.github.mangi.eta.agent.notify.NotificationIdRegistry
 
 /**
  * 后台命令/守护任务的结果通知。
@@ -27,16 +28,6 @@ internal object BackgroundCommandNotification {
     private const val NOTIFICATION_ID = 1124
 
     fun show(context: Context, task: DetachedTask) {
-        val manager = context.getSystemService(NotificationManager::class.java) ?: return
-        manager.createNotificationChannel(
-            NotificationChannel(
-                CHANNEL,
-                context.getString(R.string.background_command_channel),
-                NotificationManager.IMPORTANCE_DEFAULT,
-            ).apply {
-                description = context.getString(R.string.background_command_channel_description)
-            },
-        )
         val open = PendingIntent.getActivity(
             context,
             AgentNotifications.RequestCodes.BACKGROUND_COMMAND_CONTENT,
@@ -81,7 +72,13 @@ internal object BackgroundCommandNotification {
                 ).build(),
             )
             .build()
-        if (manager.areNotificationsEnabled()) manager.notify(task.id, NOTIFICATION_ID, notification)
+        AttentionPublisher.publish(context,
+            AttentionIntent(
+                notificationId = NotificationIdRegistry.idOf("background_command"),
+                channel = NotificationIdRegistry.channelOf("background_command"),
+                objectKey = task.id, tag = task.id,
+                title = "", body = "",
+            ), notification)
     }
 
     /** 与 DetachedTaskSupervisor 相同的 wire 路径映射，避免 App 进程读到不存在的容器路径。 */

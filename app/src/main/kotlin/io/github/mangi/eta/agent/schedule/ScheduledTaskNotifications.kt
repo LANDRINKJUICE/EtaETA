@@ -1,7 +1,6 @@
 package io.github.mangi.eta.agent.schedule
 
 import android.app.Notification
-import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
@@ -9,6 +8,9 @@ import android.content.Intent
 import io.github.mangi.eta.R
 import io.github.mangi.eta.agent.notify.AgentNotifications
 import io.github.mangi.eta.agent.notify.NotificationPolicy
+import io.github.mangi.eta.agent.notify.AttentionIntent
+import io.github.mangi.eta.agent.notify.AttentionPublisher
+import io.github.mangi.eta.agent.notify.NotificationIdRegistry
 
 /**
  * 自动任务的通知：执行中（同时是前台服务通知）与执行结果各一条。
@@ -31,24 +33,8 @@ internal object ScheduledTaskNotifications {
      * - 本次新增的主动沟通用 9300..9349、待确认 9400（见 NotificationPolicy）。
      */
     private const val RUNNING_NOTIFICATION_ID = 9_000
-    private const val RESULT_BASE_ID = 9_001
-    private const val RESULT_ID_RANGE = 290
 
-    fun ensureChannel(context: Context) {
-        val manager = context.getSystemService(NotificationManager::class.java) ?: return
-        runCatching {
-            manager.createNotificationChannel(
-                NotificationChannel(
-                    CHANNEL_ID,
-                    context.getString(R.string.schedule_notification_channel),
-                    NotificationManager.IMPORTANCE_DEFAULT,
-                ).apply {
-                    description = context.getString(R.string.schedule_notification_channel_description)
-                    setShowBadge(true)
-                },
-            )
-        }
-    }
+    fun ensureChannel(context: Context) = AttentionPublisher.ensureAllChannels(context)
 
     /**
      * "执行中"通知的初始版本：带上阶段与耗时基线。
@@ -96,11 +82,14 @@ internal object ScheduledTaskNotifications {
         stage: String,
         elapsedMillis: Long,
     ) {
-        val manager = context.getSystemService(NotificationManager::class.java) ?: return
-        ensureChannel(context)
-        runCatching {
-            manager.notify(RUNNING_NOTIFICATION_ID, running(context, title, conversationId, stage, elapsedMillis))
-        }
+        AttentionPublisher.publish(context,
+            AttentionIntent(
+                notificationId = NotificationIdRegistry.idOf("scheduled_task_running"),
+                channel = NotificationIdRegistry.channelOf("scheduled_task_running"),
+                objectKey = conversationId, title = "", body = "",
+                ongoing = true, autoCancel = false, unattended = true,
+                isForegroundService = true,
+            ), running(context, title, conversationId, stage, elapsedMillis))
     }
 
     fun runningId(): Int = RUNNING_NOTIFICATION_ID
@@ -111,8 +100,6 @@ internal object ScheduledTaskNotifications {
         succeeded: Boolean,
         summary: String,
     ) {
-        val manager = context.getSystemService(NotificationManager::class.java) ?: return
-        ensureChannel(context)
         val titleRes = if (succeeded) {
             R.string.schedule_notification_done
         } else {
@@ -135,12 +122,16 @@ internal object ScheduledTaskNotifications {
                 ).build(),
             )
             .build()
-        runCatching { manager.notify(resultId, notification) }
+        AttentionPublisher.publish(context,
+            AttentionIntent(
+                notificationId = resultNotificationId(task.id),
+                channel = NotificationIdRegistry.channelOf("scheduled_task_result"),
+                objectKey = task.id, title = "", body = "", unattended = true,
+            ), notification)
     }
 
     fun cancel(context: Context, taskId: String) {
-        val manager = context.getSystemService(NotificationManager::class.java) ?: return
-        runCatching { manager.cancel(resultNotificationId(taskId)) }
+        AttentionPublisher.cancel(context, resultNotificationId(taskId))
     }
 
     /** 执行中通知的正文：阶段 · 已用时；阶段为空时只显示已用时，避免出现" · 12s"这种残句。 */
@@ -157,6 +148,7 @@ internal object ScheduledTaskNotifications {
                 AgentNotifications.taskCenterIntent(context, AgentNotifications.RequestCodes.SCHEDULED_CONTENT, "SCHEDULED"),
             )
 
+    // 与 showResult 发布、cancel 撤销共用同一派生源，杜绝「两套散列撤错号」。
     private fun resultNotificationId(taskId: String): Int =
-        RESULT_BASE_ID + (ScheduledTaskScheduler.requestCodeFor(taskId) % RESULT_ID_RANGE)
+        NotificationIdRegistry.idOf("scheduled_task_result", taskId)
 }

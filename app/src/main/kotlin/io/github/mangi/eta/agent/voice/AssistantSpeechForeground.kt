@@ -1,8 +1,6 @@
 package io.github.mangi.eta.agent.voice
 
 import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
@@ -15,15 +13,7 @@ internal class AssistantSpeechForeground(private val service: Service) {
     fun playback() = start(ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK, "Eta 正在朗读")
 
     private fun start(type: Int, title: String) {
-        service.getSystemService(NotificationManager::class.java).createNotificationChannel(
-            NotificationChannel(
-                CHANNEL,
-                service.getString(R.string.assistant_speech_channel),
-                NotificationManager.IMPORTANCE_LOW,
-            ).apply {
-                description = service.getString(R.string.assistant_speech_channel_description)
-            },
-        )
+        io.github.mangi.eta.agent.notify.AttentionPublisher.ensureAllChannels(service)
         val stop = PendingIntent.getService(
             service,
             io.github.mangi.eta.agent.notify.AgentNotifications.RequestCodes.ASSISTANT_SPEECH_STOP,
@@ -44,7 +34,7 @@ internal class AssistantSpeechForeground(private val service: Service) {
             )
             .build()
         try {
-            service.startForeground(NOTIFICATION_ID, notification, type)
+            service.startForeground(io.github.mangi.eta.agent.notify.NotificationIdRegistry.fixedIdOf("voice", "assistant"), notification, type)
         } catch (_: RuntimeException) {
             throw SpeechFailure(SpeechErrorCode.PERMISSION, "系统不允许当前浮窗使用音频，请检查麦克风权限和默认数字助理设置")
         }

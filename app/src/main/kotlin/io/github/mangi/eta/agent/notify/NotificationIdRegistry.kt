@@ -132,6 +132,51 @@ internal object NotificationIdRegistry {
     fun ownerOfNotificationId(id: Int): String? =
         allIdSegments.firstOrNull { id in it.range }?.owner
 
+    /**
+     * 号段**唯一派生源**：按 owner 取该段的稳定 ID。
+     *  - 单值段（如 execution_service=1107、approval_pending=9400）：返回段首；
+     *  - 区间段：按 [key] 稳定散列到段内（不同对象互不覆盖，与 NotificationPolicy 既有散列一致）。
+     * 所有发起点一律用这里取 ID，别再各自写 `9_600` / `1_124` 这类字面量——号段改一处即可。
+     */
+    fun idOf(owner: String, key: String = owner): Int {
+        val seg = allIdSegments.firstOrNull { it.owner == owner }
+            ?: error("未登记的通知 owner：$owner（先在 allIdSegments 登记）")
+        return if (seg.range.first == seg.range.last) {
+            seg.range.first
+        } else {
+            val hash = key.fold(0) { acc, ch -> acc * 31 + ch.code }
+            val nonNegative = kotlin.math.abs(hash.toLong())
+            seg.range.first + (nonNegative % seg.range.count()).toInt()
+        }
+    }
+
+    /** 段内按用途固定指定的单值（用于 voice：段 4203..4204 恰好两个 service，不能散列撞车）。 */
+    fun fixedIdOf(owner: String, key: String): Int {
+        val seg = allIdSegments.firstOrNull { it.owner == owner }
+            ?: error("未登记的通知 owner：$owner")
+        val offset = when (owner to key) {
+            "voice" to "assistant" -> 0      // 4203 语音助手浮窗
+            "voice" to "read_aloud" -> 1     // 4204 朗读播放
+            "macro_recording" to "recording" -> 0  // 9600 录制中
+            "macro_recording" to "stopped" -> 1    // 9601 录制结果
+            else -> 0
+        }
+        return (seg.range.first + offset).coerceIn(seg.range)
+    }
+
+    /** owner 对应的 channel（发起点不再硬编码 channel 字符串）。 */
+    fun channelOf(owner: String): NotificationChannel = when (owner) {
+        "execution_service" -> NotificationChannel.EXECUTION
+        "run_result" -> NotificationChannel.RUN_RESULTS
+        "notify_user_proactive", "approval_pending" -> NotificationChannel.PROACTIVE
+        "approval_attention" -> NotificationChannel.ATTENTION
+        "scheduled_task_running", "scheduled_task_result" -> NotificationChannel.SCHEDULED_TASKS
+        "background_command", OWNER_JOB_WAKEUP -> NotificationChannel.BACKGROUND_COMMANDS
+        "macro_recording" -> NotificationChannel.MACRO_RECORDING
+        "voice" -> NotificationChannel.ASSISTANT_SPEECH
+        else -> error("未登记的通知 owner 的 channel 映射：$owner（先在 channelOf 补上）")
+    }
+
     /** 新功能加段前自查：这段是否完全空闲（不与任何已登记段相交）。 */
     fun isNotificationIdRangeFree(range: IntRange): Boolean =
         allIdSegments.none { range.first <= it.range.last && it.range.first <= range.last }

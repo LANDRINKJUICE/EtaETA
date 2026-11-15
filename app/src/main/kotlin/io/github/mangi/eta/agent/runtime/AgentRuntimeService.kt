@@ -462,6 +462,31 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
             run.runId, false, "", message,
             operation = run.request.operation, rewriteTargetMessageId = run.request.rewriteTargetMessageId,
         )
+        // 准备阶段失败（acquire 失败 / 图片准备失败 / 无可用的模型）历史上完全静默：
+        // 只 complete session 不发任何结果通知，前台服务一停用户什么也看不到。
+        // 从根修：经唯一出口 AttentionPublisher.publishFailureResult 发 run_result，复用
+        // buildRunResultNotification（与正常失败同一 builder、同 ID、同 tag），不碰
+        // updateRunStatus 的全局 resultPublished 状态机（避免一条 run 残留抑制下一条）。
+        // 它是「准备失败」这一互斥终态来源的唯一发布者，不会与 showRunResult 双发。
+        val conversationId = run.conversationId
+        io.github.mangi.eta.agent.notify.AttentionPublisher.publishFailureResult(
+            context = this,
+            conversationId = conversationId,
+            build = { id ->
+                AgentExecutionService.buildRunResultNotification(
+                    this, failed = true, detail = message.take(240),
+                    conversationId = conversationId,
+                    // 准备阶段失败常发生在 sendUnattendedRunStarted 之前（acquire 失败），会话
+                    // 还没被 UI 认领进聊天列表：此时挂「回复」按钮 / 按会话深链会点到空白页。
+                    // 故这条失败通知一律不挂回复、主体进任务中心（archive 也置空），
+                    // 但仍是真实可见的结果通知，不静默。
+                    uiConversation = false,
+                    archiveSource = null,
+                    archiveKey = null,
+                    notificationId = id,
+                )
+            },
+        )
         dispatchResultIo {
             run.session.complete(result) {
                 runCatching { persistRunArtifacts(run.snapshotRequest(), result, emptyList()) }

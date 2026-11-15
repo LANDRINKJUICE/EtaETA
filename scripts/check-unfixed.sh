@@ -24,6 +24,21 @@ if [ -n "$NEW" ]; then
 fi
 echo "未修项闸：✅ 本次改动无新增待修标记"
 
+# 通知架构统一护栏（2026-11-15 一次统一）：物理出口只能有一个。
+# 全仓 manager.notify( / createNotificationChannel( 只允许出现在 AttentionPublisher.kt，
+# 新增发起点若绕过唯一编排器直接发通知 -> 这里直接红灯，不靠文档提醒、不靠自觉。
+# 不依赖 rg（CI/本地都确定有 grep -r），避免工具缺失时 fail-open 误报"通过"。
+NOTIFY_STRUCT=$(grep -rnE '\.notify\(|createNotificationChannel\(' app/src/main/kotlin --include='*.kt' \
+  | grep -vE '^\S+:[0-9]+:[[:space:]]*(\*|//)' \
+  | grep -v 'agent/notify/AttentionPublisher.kt' || true)
+if [ -n "$NOTIFY_STRUCT" ]; then
+  echo "=== 通知架构护栏：❌ 存在绕过唯一出口 AttentionPublisher 的 notify/channel 调用 ===" >&2
+  printf '%s\n' "$NOTIFY_STRUCT" >&2
+  echo "处置：所有通知必须构造 AttentionIntent 交 AttentionPublisher 发布。" >&2
+  exit 1
+fi
+echo "通知架构护栏：✅ notify/channel 调用全部收敛到 AttentionPublisher（唯一出口）"
+
 # 资源引用完整性闸：三方合并 / 改 strings.xml 后，R.string.xxx 必须仍有定义。
 # 本机 aapt2 只验 XML 合法性、纯 JVM 不编译 Android res，丢了字符串只有云端 Kotlin 编译才报；
 # 这道纯文本闸把这类回归挡在推送前（2026-11-14 上游合并踩过 Unresolved reference）。

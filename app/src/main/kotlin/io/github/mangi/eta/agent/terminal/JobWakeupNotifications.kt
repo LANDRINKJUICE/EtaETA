@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.content.Context
 import io.github.mangi.eta.R
 import io.github.mangi.eta.agent.notify.AgentNotifications
+import io.github.mangi.eta.agent.notify.AttentionPublisher
 import io.github.mangi.eta.agent.notify.NotificationPolicy
 
 /**
@@ -67,7 +68,7 @@ internal object JobWakeupNotifications {
             // 运行期间常驻、不可被误滑掉；终态 showFinished 会重建为可滑掉的通知。
             .setOngoing(true)
             .build()
-        notifyIfAllowed(manager, task, notification)
+        notifyIfAllowed(context, manager, task, notification)
     }
 
     /**
@@ -98,7 +99,7 @@ internal object JobWakeupNotifications {
             .setStyle(Notification.BigTextStyle().bigText(body))
             .setOngoing(true)
             .build()
-        notifyIfAllowed(manager, task, notification)
+        notifyIfAllowed(context, manager, task, notification)
     }
 
     /** 阶段更新节流：每条任务独立计时。 */
@@ -106,12 +107,27 @@ internal object JobWakeupNotifications {
     private const val STAGE_THROTTLE_MILLIS = 1_000L
 
     /**
-     * 用同一 ID 把"正在自动处理"更新成终态（可滑掉、不再 ongoing）。
+     * 唤醒轮终态 —— 本函数是该轮**唯一**的终态通知发布者（2026-11-15 从根统一）。
      *
-     * 终态取值只有一处定义（[JobWakeupPolicy.Finish]）：通知文案与执行侧判定必须对齐，
-     * 各自再定义一份枚举只会漂移。
+     * ## 双发的根与根治
+     * 改造前：本函数把 9602 更新成终态，而同一条唤醒 run 的 Runtime
+     * `postTerminalOverlay -> showRunResult` 又为同一个会话发 9502 结果通知 -> 一次唤醒两条终态。
+     * 根因是「一条 run 两条各自发布的终态链路」。
+     *
+     * ## 静态分工（不靠线程时序、不靠账本抢占、不假设对方一定发）
+     *  - 唤醒轮（本函数）：**所有** Finish（DONE/FAILED/TIMED_OUT/STOPPED/NOT_STARTED）都把
+     *    9602 进行中通知**就地变形**为可滑掉终态。它是唤醒轮终态唯一发布者，finally 必达，
+     *    覆盖所有失败路径（含 admission 拒绝、请求构建失败、ExecutionException、超时），不会静默。
+     *  - Runtime 的 showRunResult：对 `conv-wakeup-` 会话**跳过**结果通知（避免双发），
+     *    其余会话（普通 UI / conv-schedule- 自动任务）照发可回复 run_result。
+     *
+     * 9602 深链本就指向该唤醒轮的可回复会话，用户点进去即见过程与结果、可继续对话，
+     * 体验不降级。文案 / 深链 / action 全部沿用 [base]，仅改发布通道与收尾纪律。
+     * 终态取值仍只有 [JobWakeupPolicy.Finish] 一处。
      */
     fun showFinished(context: Context, task: DetachedTask, finish: JobWakeupPolicy.Finish) {
+        lastStageAt.remove(task.id)
+        val ongoingId = NotificationPolicy.jobWakeupId(task.id)
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         ensureChannel(context, manager)
         val titleId = when (finish) {
@@ -120,6 +136,7 @@ internal object JobWakeupNotifications {
             JobWakeupPolicy.Finish.TIMED_OUT -> R.string.job_wakeup_timeout_title
             JobWakeupPolicy.Finish.NOT_STARTED -> R.string.job_wakeup_skipped_title
             JobWakeupPolicy.Finish.STOPPED -> R.string.job_wakeup_stopped_title
+            else -> R.string.job_wakeup_skipped_title
         }
         val bodyId = when (finish) {
             JobWakeupPolicy.Finish.DONE -> R.string.job_wakeup_done_body
@@ -127,18 +144,36 @@ internal object JobWakeupNotifications {
             JobWakeupPolicy.Finish.TIMED_OUT -> R.string.job_wakeup_timeout_body
             JobWakeupPolicy.Finish.NOT_STARTED -> R.string.job_wakeup_skipped_body
             JobWakeupPolicy.Finish.STOPPED -> R.string.job_wakeup_stopped_body
+            else -> R.string.job_wakeup_skipped_body
         }
         val body = context.getString(bodyId)
-        val notification = base(context, task, resolveChannel(manager))
-            .setContentTitle(context.getString(titleId, subjectOf(context, task)))
-            .setContentText(body)
-            .setStyle(Notification.BigTextStyle().bigText(body))
-            .setAutoCancel(true)
-            // 运行中的同 ID 通知是 onlyAlertOnce，终态显式放开，让「跑完了」有一次可见提醒。
-            .setOnlyAlertOnce(false)
-            .build()
-        lastStageAt.remove(task.id)
-        notifyIfAllowed(manager, task, notification)
+        val transform: (Int) -> Notification = { _ ->
+            base(context, task, resolveChannel(manager))
+                .setContentTitle(context.getString(titleId, subjectOf(context, task)))
+                .setContentText(body)
+                .setStyle(Notification.BigTextStyle().bigText(body))
+                .setAutoCancel(true)
+                .setOnlyAlertOnce(false)
+                .build()
+        }
+        // 唤醒轮终态 = 把 9602 进行中通知就地变形为可滑掉终态：提交统一意图，
+        // 由唯一编排器裁决「号段合法性 / 打扰 / 收尾」、唯一出口 publish 落地；
+        // 号段从 NotificationIdRegistry 唯一派生，不再各自硬编码。
+        // 它是唤醒轮终态唯一发布者（finally 必达），覆盖所有 Finish，不静默、不留僵尸。
+        val intent = io.github.mangi.eta.agent.notify.AttentionIntent(
+            notificationId = ongoingId,
+            channel = channelFor(manager),
+            objectKey = task.id,
+            title = context.getString(titleId, subjectOf(context, task)),
+            body = body,
+            unattended = true,
+            autoCancel = true,
+            onlyAlertOnce = false,
+            // 终态收尾：无论裁决是否放行（含通知被系统禁用），都撤掉进行中的 9602，
+            // 绝不留下「正在自动处理」的 setOngoing(true) 僵尸。
+            replaceOngoingIds = listOf(ongoingId),
+        )
+        AttentionPublisher.publish(context, intent, transform(ongoingId))
     }
 
     /** 上一条无人值守 run 还没结束：只告知"这次没接手"，不伪装成失败/未启动终态。 */
@@ -154,7 +189,7 @@ internal object JobWakeupNotifications {
             .setOnlyAlertOnce(false)
             .build()
         lastStageAt.remove(task.id)
-        notifyIfAllowed(manager, task, notification)
+        notifyIfAllowed(context, manager, task, notification)
     }
 
     /** 超过连续唤醒上限 / 全局配额用尽：只告知，不再唤醒。 */
@@ -174,7 +209,7 @@ internal object JobWakeupNotifications {
             .setOnlyAlertOnce(false)
             .build()
         lastStageAt.remove(task.id)
-        notifyIfAllowed(manager, task, notification)
+        notifyIfAllowed(context, manager, task, notification)
     }
 
     /**
@@ -252,23 +287,32 @@ internal object JobWakeupNotifications {
         }
     }
 
-    /** 全局开关开才发；channel 降级已由 [resolveChannel] 在 build 前决定。 */
-    private fun notifyIfAllowed(manager: NotificationManager, task: DetachedTask, notification: Notification) {
-        if (!manager.areNotificationsEnabled()) return
-        runCatching { manager.notify(NotificationPolicy.jobWakeupId(task.id), notification) }
+    /** channel 唯一判定：后台命令 channel 被关时降级到主动沟通（进行中与终态共用）。 */
+    private fun channelFor(manager: NotificationManager): io.github.mangi.eta.agent.notify.NotificationIdRegistry.NotificationChannel {
+        val channelId = resolveChannel(manager)
+        return if (channelId == NotificationPolicy.CHANNEL_PROACTIVE) {
+            io.github.mangi.eta.agent.notify.NotificationIdRegistry.NotificationChannel.PROACTIVE
+        } else {
+            io.github.mangi.eta.agent.notify.NotificationIdRegistry.NotificationChannel.BACKGROUND_COMMANDS
+        }
     }
 
-    private fun ensureChannel(context: Context, manager: NotificationManager) {
-        manager.createNotificationChannel(
-            NotificationChannel(
-                BackgroundCommandNotification.CHANNEL,
-                context.getString(R.string.background_command_channel),
-                NotificationManager.IMPORTANCE_DEFAULT,
-            ).apply {
-                description = context.getString(R.string.background_command_channel_description)
-            },
+    /** 统一出口：所有唤醒轮进行中/告知类通知都提交编排器裁决、由 AttentionPublisher 落地。 */
+    private fun notifyIfAllowed(context: Context, manager: NotificationManager, task: DetachedTask, notification: Notification) {
+        val channel = channelFor(manager)
+        val intent = io.github.mangi.eta.agent.notify.AttentionIntent(
+            notificationId = io.github.mangi.eta.agent.notify.NotificationIdRegistry
+                .idOf(io.github.mangi.eta.agent.notify.NotificationIdRegistry.OWNER_JOB_WAKEUP, task.id),
+            channel = channel,
+            objectKey = task.id,
+            title = "", body = "",
+            unattended = true,
+            ongoing = true, autoCancel = false,
         )
+        AttentionPublisher.publish(context, intent, notification)
     }
+
+    private fun ensureChannel(context: Context, manager: NotificationManager) = AttentionPublisher.ensureAllChannels(context)
 
     private const val JOB_WAKEUP_DATA_PREFIX = "eta://job-wakeup/"
 }
