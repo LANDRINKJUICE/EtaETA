@@ -51,6 +51,8 @@ internal object Prefs {
         const val AGENT_AUTO_COMPACTION_ENABLED = "agent_auto_compaction_enabled"
         const val AGENT_SUBAGENT_ENABLED = "agent_subagent_enabled"
         const val AGENT_VIRTUAL_DISPLAY_ENABLED = "agent_virtual_display_enabled"
+        /** 询问卡：允许 Agent 拿不准意图时在聊天流里插入一张询问卡等用户点选。 */
+        const val AGENT_ASK_USER_ENABLED = "agent_ask_user_enabled"
         /** 危险操作拦截：命中系统分区/启动链等规则时先在聊天流里确认再执行。 */
         const val AGENT_DANGER_TOOL_GUARD = "agent_danger_tool_guard"
         const val AGENT_RUNTIME_CONFIG_JSON = "agent_runtime_config_json"
@@ -105,6 +107,7 @@ internal object Prefs {
             AGENT_AUTO_COMPACTION_ENABLED to true,
             AGENT_SUBAGENT_ENABLED to true,
             AGENT_VIRTUAL_DISPLAY_ENABLED to true,
+            AGENT_ASK_USER_ENABLED to true,
             AGENT_DANGER_TOOL_GUARD to true,
             AGENT_MEMORY_RELEVANCE_ENABLED to true,
             AGENT_MEMORY_DISTILL_ENABLED to false,
@@ -125,6 +128,7 @@ internal object Prefs {
             AGENT_AUTO_COMPACTION_ENABLED,
             AGENT_SUBAGENT_ENABLED,
             AGENT_VIRTUAL_DISPLAY_ENABLED,
+            AGENT_ASK_USER_ENABLED,
             AGENT_DANGER_TOOL_GUARD,
             AGENT_MEMORY_RELEVANCE_ENABLED,
             AGENT_MEMORY_DISTILL_ENABLED,

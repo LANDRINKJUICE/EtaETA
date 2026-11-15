@@ -1530,6 +1530,8 @@
     <!-- 危险操作拦截卡与 Agent 询问卡 -->
     <string name="tool_ask_user">Ask the user</string>
     <string name="tool_ask_user_description">Ask a question in the chat and wait for the user to pick an option before continuing.</string>
+    <string name="settings_ask_user_title">Ask-user card</string>
+    <string name="settings_ask_user_summary">Let the Agent insert an ask-user card in the chat to wait for your choice when your intent is unclear.</string>
     <string name="settings_danger_tool_guard_title">Confirm risky operations</string>
     <string name="settings_danger_tool_guard_summary">Read-only or copy-only access to system partitions and the boot chain, plus other destructive commands, needs your confirmation in the chat before it runs.</string>
     <string name="approval_danger_title">Confirm risky operation</string>

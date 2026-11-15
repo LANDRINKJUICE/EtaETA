@@ -1511,6 +1511,8 @@
     <!-- 危险操作拦截卡与 Agent 询问卡 -->
     <string name="tool_ask_user">询问用户</string>
     <string name="tool_ask_user_description">在聊天流里提问并等待用户点选，再继续执行。</string>
+    <string name="settings_ask_user_title">询问卡</string>
+    <string name="settings_ask_user_summary">Agent 拿不准你的意图时，可在聊天流里插入一张询问卡等你点选；关闭后不再弹出。</string>
     <string name="settings_danger_tool_guard_title">危险操作确认</string>
     <string name="settings_danger_tool_guard_summary">系统分区与启动链只可读、只可复制；写入以及其他不可逆的危险命令，执行前需要你在聊天流里确认。</string>
     <string name="approval_danger_title">确认危险操作</string>

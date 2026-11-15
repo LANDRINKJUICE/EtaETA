@@ -122,6 +122,7 @@ internal object AgentModelClient {
         // 自动唤醒开关参与系统提示与 terminal_job 的 schema，两者都是请求前缀：
         // 读一次作为本轮的基准值，只有它真的翻转时才整体重建（见 toolsForRound）。
         var promptJobWakeup = Prefs.isJobWakeupEnabled()
+        var promptAskUser = Prefs.isEnabled(Prefs.Keys.AGENT_ASK_USER_ENABLED)
         val messages = AgentPromptBuilder.buildInitialMessages(
             config,
             prompt,
@@ -133,6 +134,7 @@ internal object AgentModelClient {
             roleplayContext = roleplayContext,
             executionContext = executionContext,
             jobWakeupEnabled = promptJobWakeup,
+            askUserEnabled = promptAskUser,
         )
         if (rewriteReply) {
             messages.put(messages.length() - 1, AgentConversationCodec.userTextMessage(
@@ -153,8 +155,9 @@ internal object AgentModelClient {
         val systemCount = AgentPromptBuilder.buildSystemMessages(
             config, skillContext, memoryContext, initialCapabilities.rootAvailable, roleplayContext, executionContext,
             jobWakeupEnabled = promptJobWakeup,
+            askUserEnabled = promptAskUser,
         ).length()
-        fun toolsFor(capabilities: AgentToolCapabilities): JSONArray {
+        fun toolsFor(capabilities: AgentToolCapabilities, askUser: Boolean): JSONArray {
             if (rewriteReply) return JSONArray()
             val tools = AgentToolCatalog.build(
                 terminalTools = config.terminalTools,
@@ -171,6 +174,7 @@ internal object AgentModelClient {
                 // 开关关掉时连 schema 都不注入，模型不会去尝试一个必然被拒绝的工具。
                 proactiveNotify = Prefs.isProactiveNotifyEnabled(),
                 jobWakeup = promptJobWakeup,
+                askUser = askUser,
                 capabilities = capabilities,
                 localWebSearch = !config.usesHostedWebSearch,
                 disabledTools = Prefs.disabledTools(),
@@ -180,7 +184,7 @@ internal object AgentModelClient {
             }
             return toolFilter?.invoke(tools) ?: tools
         }
-        val tools = toolsFor(initialCapabilities)
+        val tools = toolsFor(initialCapabilities, promptAskUser)
         onEvent(
             AgentEvent.RunStarted(
                 initialImages = images.size,
@@ -197,21 +201,25 @@ internal object AgentModelClient {
         fun toolsForRound(): JSONArray {
             val capabilities = capabilitiesProvider()
             val jobWakeupEnabled = Prefs.isJobWakeupEnabled()
-            if (capabilities.rootAvailable != promptRootAvailable || jobWakeupEnabled != promptJobWakeup) {
+            val askUserEnabled = Prefs.isEnabled(Prefs.Keys.AGENT_ASK_USER_ENABLED)
+            if (capabilities.rootAvailable != promptRootAvailable || jobWakeupEnabled != promptJobWakeup ||
+                askUserEnabled != promptAskUser) {
+                promptAskUser = askUserEnabled
                 val systemMessages = AgentPromptBuilder.buildSystemMessages(
                     config, skillContext, memoryContext, capabilities.rootAvailable, roleplayContext, executionContext,
                     jobWakeupEnabled = jobWakeupEnabled,
+                    askUserEnabled = askUserEnabled,
                 )
                 for (index in 0 until systemMessages.length()) {
                     messages.put(index, systemMessages.getJSONObject(index))
                 }
                 promptRootAvailable = capabilities.rootAvailable
                 promptJobWakeup = jobWakeupEnabled
-                publishedTools = toolsFor(capabilities)
+                publishedTools = toolsFor(capabilities, promptAskUser)
                 return publishedTools
             }
             val published = toolNames(publishedTools)
-            val added = toolsFor(capabilities).let { fresh ->
+            val added = toolsFor(capabilities, promptAskUser).let { fresh ->
                 (0 until fresh.length()).map(fresh::getJSONObject).filter { toolName(it) !in published }
             }
             if (added.isNotEmpty()) {

@@ -10,8 +10,11 @@ import org.json.JSONArray
  * （审查 M4）。执行侧在 AgentLocalTools 里有一道同样的拦截：目录不可见 + 执行拒绝，双保险。
  */
 internal object ToolCatalogVisibility {
+    /** 询问卡工具名：设置页「询问卡」开关关闭时按它摘掉 schema，与执行侧同名常量对齐。 */
+    const val ASK_USER_TOOL_NAME = "ask_user"
+
     /** 只在普通会话里公开的工具名。 */
-    val CONVERSATION_ONLY_TOOL_NAMES = setOf("ask_user", "schedule_task", "macro_record")
+    val CONVERSATION_ONLY_TOOL_NAMES = setOf(ASK_USER_TOOL_NAME, "schedule_task", "macro_record")
 
     /**
      * 主动沟通类工具：角色会话同样不可见。
@@ -40,7 +43,7 @@ internal object ToolCatalogVisibility {
      * 按需过滤掉指定工具。
      *
      * @param hidden 需要隐藏的工具名；为空时原样返回（避免无意义的复制）。
- * 读不出 `function.name` 的畸形条目会被丢弃，而不是原样保留。
+     * 读不出 `function.name` 的畸形条目会被丢弃，而不是原样保留。
      */
     fun filter(tools: JSONArray, hidden: Set<String>): JSONArray {
         if (hidden.isEmpty()) return tools

@@ -545,6 +545,16 @@ private fun SettingsPageContent(
                     SwitchPref(
                         context = context,
                         prefs = agentPrefs,
+                        title = stringResource(R.string.settings_ask_user_title),
+                        summary = stringResource(R.string.settings_ask_user_summary),
+                        key = Prefs.Keys.AGENT_ASK_USER_ENABLED,
+                        icon = Icons.Rounded.ChatBubble,
+                        iconTint = SettingsIconColors.Blue,
+                    )
+                    CouiIconDivider()
+                    SwitchPref(
+                        context = context,
+                        prefs = agentPrefs,
                         title = stringResource(R.string.settings_danger_tool_guard_title),
                         summary = stringResource(R.string.settings_danger_tool_guard_summary),
                         key = Prefs.Keys.AGENT_DANGER_TOOL_GUARD,
@@ -1059,6 +1069,15 @@ private fun SettingsPageContent(
                             title = stringResource(R.string.settings_virtual_display_title),
                             key = Prefs.Keys.AGENT_VIRTUAL_DISPLAY_ENABLED,
                             icon = Icons.Rounded.Layers,
+                            iconTint = SettingsIconColors.Blue,
+                        )
+                        SwitchPref(
+                            context = context,
+                            prefs = agentPrefs,
+                            title = stringResource(R.string.settings_ask_user_title),
+                            summary = stringResource(R.string.settings_ask_user_summary),
+                            key = Prefs.Keys.AGENT_ASK_USER_ENABLED,
+                            icon = Icons.Rounded.ChatBubble,
                             iconTint = SettingsIconColors.Blue,
                         )
                         SwitchPref(

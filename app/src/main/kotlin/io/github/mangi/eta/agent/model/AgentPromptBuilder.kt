@@ -22,9 +22,12 @@ internal object AgentPromptBuilder {
         executionContext: TerminalExecutionContext? = null,
         /** 后台任务失败自动唤醒开关：关掉时系统提示里不得再宣称"失败会被接手"（审查 m7）。 */
         jobWakeupEnabled: Boolean = true,
+        /** 询问卡开关：关掉时系统提示不得再教模型调用 ask_user（与目录不下发 schema 配套）。 */
+        askUserEnabled: Boolean = true,
     ): JSONArray {
         val messages = buildSystemMessages(
             config, skillContext, memoryContext, rootAvailable, roleplayContext, executionContext, jobWakeupEnabled,
+            askUserEnabled,
         )
         history.forEach { item ->
             runCatching { AgentConversationCodec.toJsonObject(item) }.getOrNull()?.let(messages::put)
@@ -47,6 +50,8 @@ internal object AgentPromptBuilder {
         executionContext: TerminalExecutionContext? = null,
         /** 后台任务失败自动唤醒开关；与工具 schema 的宣告必须同步（审查 m7）。 */
         jobWakeupEnabled: Boolean = true,
+        /** 询问卡开关；与 ask_user schema 是否下发必须同步。 */
+        askUserEnabled: Boolean = true,
     ): JSONArray {
         val messages = JSONArray()
         if (roleplayContext == null && config.systemPrompt.isNotBlank()) {
@@ -194,10 +199,15 @@ internal object AgentPromptBuilder {
                         "用户未确认时返回 USER_NOT_CONFIRMED，表示操作没有执行。不要因为被拦下就换一种写法绕过同一个操作，也不要假设它已经执行。" +
                         "调用可能触发确认卡的工具时，可选带一个 intent 参数，用一句简短中文说明你为什么想做这个操作（目的，不是命令本身）；" +
                         "它会显示在确认卡上，帮用户理解你的意图。忘了填也没关系，确认卡会退回只显示命令与风险理由。" +
-                        "拿不准用户意图、需要在多个方案之间取舍、或缺少只有用户才知道的信息时，调用 ask_user 在聊天流里提问：" +
-                        "question 用一句话说明要决定什么，options 给 2 到 4 个具体选项（label 简短明确，description 说明该选项的后果），" +
-                        "需要用户自由描述时设 allow_free_text=true。返回 ok=false 且 code=USER_NO_ANSWER 表示用户没有回答，此时不要臆测用户的选择。" +
-                        "简单的事实查询、只读操作和已经明确的指令不需要提问，也不要用提问代替回答。",
+                        (if (askUserEnabled) {
+                            "拿不准用户意图、需要在多个方案之间取舍、或缺少只有用户才知道的信息时，调用 ask_user 在聊天流里提问：" +
+                                "question 用一句话说明要决定什么，options 给 2 到 4 个具体选项（label 简短明确，description 说明该选项的后果），" +
+                                "需要用户自由描述时设 allow_free_text=true。返回 ok=false 且 code=USER_NO_ANSWER 表示用户没有回答，此时不要臆测用户的选择。" +
+                                "简单的事实查询、只读操作和已经明确的指令不需要提问，也不要用提问代替回答。"
+                        } else {
+                            "用户已关闭询问卡：拿不准用户意图时不要提问、也不要改用其它方式反问，" +
+                                "请基于现有信息直接推进，或用普通文字说明你需要用户补充的决定。"
+                        }),
                 ),
             )
         }
@@ -209,8 +219,13 @@ internal object AgentPromptBuilder {
                         "自动任务到点后无人值守地执行 prompt：它是用户已授权任务的延续，要照常把任务做完并产出结果，" +
                         "不降级成建议、不要求用户回来再批。安全闸门只硬守系统分区/启动链/安卓侧手机数据等关键部位，" +
                         "且对所有来源一律照样弹卡：两分钟没人点则那一条不执行、绝不谎报完成、用户并没有同意，也不要重试或换写法绕过；" +
-                        "模型把「未确认/未执行/可能无人值守」当事实自行判断其余任务照常做完。尽量别调用 ask_user（可能没人在线）、" +
-                        "别擅自替用户做可能不满意的决定；确实要问时询问卡同样两分钟超时兜底。" +
+                        "模型把「未确认/未执行/可能无人值守」当事实自行判断其余任务照常做完。" +
+                        "别擅自替用户做可能不满意的决定；" +
+                        (if (askUserEnabled) {
+                            "尽量别调用 ask_user（可能没人在线）、确实要问时询问卡同样两分钟超时兜底。"
+                        } else {
+                            "用户已关闭询问卡，不要提问、也不要用任何方式把用户拉回现实交互，直接推进或文字说明。"
+                        }) +
                         "创建任务时把指令写清目标、时间口径与验收标准，并避免依赖当时的屏幕现状。" +
                         "主动沟通（notify_user）：当自动任务、长后台任务有了值得用户关注的结果，盯梢类请求出现明确变化，" +
                         "或确实需要用户在短时间内回来处理时，可以主动发一条系统通知，而不必等用户下次唤醒你。使用纪律必须克制：" +

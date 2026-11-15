@@ -4,7 +4,17 @@
 > 由 `scripts/check-docs-consistency.sh`（挂进 `check-unfixed.sh`，本地 run.sh + CI 两处共用）强制触发；
 > SOP 在仓库外，CI 对该组诚实跳过、仅本地校验三副本 cmp，本文件是给人 / 给下一轮看的事实记录。
 
-## 本轮（2026-11-14，b8f2391 后台任务全统一）
+## 本轮（2026-11-15，询问卡开关 + 废弃两次身份改动后推送构建）
+
+- **背景**：用户废弃前两次会话的身份认知改动（`b91d9e8` 并入 DEFAULT_SYSTEM_PROMPT + 子代理继承、以及随后 6 文件 provider 兜底补丁）并整体回滚；本地回到 `0f24dff`（文档闸，正当 commit，保留）。本轮在 `0f24dff` 之上提交「询问卡」设置开关，推送构建交付；远端 `feature`/`pull/2` 原停在 `b91d9e8`，本次为 force-with-lease 非快进推送，抹掉已废弃的身份 commit。
+- **SOP（唯一事实源，三副本 cmp 一致）**：`通知与状态层架构SOP.md` 口径本就正确（§3.2/§5 区分「后台 run 已统一」与「`AttentionDirector`/状态真相源/二选一仲裁仍规划中」），未改正文；`工具与功能登记约定SOP.md` 未改。主 + mounts + sdcard 三副本 cmp 一致。
+- **Skill（薄路由，仅指针不复制正文）**：`eta-attention`「不变纪律」第 1 条订正——原把「一份快照 + 一个编排器 / 所有通知收口统一编排器」写成既有事实（误导），改为区分「§3.1 后台 run 统一 + `NotificationIdRegistry` 号段登记已落地」与「`AttentionDirector` 等仍规划中、别当现成 API 接」，指向 SOP §3.2/§5。其余 3 条纪律与 frontmatter 未动。
+- **记忆指针节**：`## 通知 / 状态层架构 SOP` 原文已写明「`AttentionDirector` 仍是规划项、别写成已实现」，与 SOP 一致，无需订正；本轮未改记忆。
+- **源码改动**：新增「询问卡」开关 `AGENT_ASK_USER_ENABLED`（设置页 COUI/MIUIX 两处 + 三语文案 + Prefs 三处登记 + `PrefsDefaultsTest` 快照 + 两条新单测），模型目录/系统提示/执行侧三处按同一开关联动（照 `notify_user` 双保险范式）；命中 `agent/runtime/AgentRuntimeRunExecutor.kt` 敏感路径，故本 commit 带 `[docs-synced]`。
+- **交接文档**：`文档-Docs/交接/2026-11-15-推送构建-询问卡开关.md`（主 + 副本一致）。
+- **验证**：纯 JVM 快闸 `OK (650 tests)`、三道闸全绿、三语 XML 无重复键且 `aapt2 compile` 全过、`git diff --check` 干净、SOP 三副本 cmp 一致、独立 code-reviewer 两轮审查闭环。
+
+## 上轮（2026-11-14，b8f2391 后台任务全统一）
 
 - **SOP（唯一事实源，三副本 cmp 一致）**：
   - `通知与状态层架构SOP.md`：新增 §3.1 后台 run 统一机制（已落地三中心）、§3.2 目标架构现状口径、§4.2 新后台入口硬约束、§4.3 号段纪律、§4.4 护栏/收尾 grep 自检；§1 加「改造前诊断」提示；§5 标后台 run 大类已收敛。主 + mounts + sdcard 三副本 cmp 一致。

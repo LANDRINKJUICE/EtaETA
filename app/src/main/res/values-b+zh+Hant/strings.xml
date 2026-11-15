@@ -1597,6 +1597,8 @@
     <string name="speech_recognition_enabled">啟用語音識別</string>
     <string name="speech_recognition_disabled">已關閉</string>
     <string name="speech_recognition_disabled_note">儲存後隱藏聊天和助手浮窗中的麥克風入口。全域性喚醒會在入場動畫結束後開啟文字輸入和鍵盤，可使用輸入法自帶的語音輸入。原服務配置會保留。</string>
+    <string name="settings_ask_user_title">詢問卡</string>
+    <string name="settings_ask_user_summary">Agent 拿不準你的意圖時，可在聊天流裡插入一張詢問卡等你點選；關閉後不再彈出。</string>
     <string name="settings_danger_tool_guard_title">危險操作確認</string>
     <string name="settings_danger_tool_guard_summary">系統分割槽與啟動鏈只可讀、只可複製；寫入以及其他不可逆的危險命令，執行前需要你在聊天流裡確認。</string>
     <string name="approval_danger_title">確認危險操作</string>

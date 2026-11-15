@@ -301,12 +301,25 @@ internal class AgentRuntimeRunExecutor(
                 },
                 // ask_user 与危险卡同一条路径：不按来源特判、不短路。"别发询问卡"是话术层
                 // 的引导（用户可能不在线），不是机制；真发了也走统一 2 分钟超时 + 无人可答兜底。
+                // 设置页「询问卡」开关关闭时，不插卡、不挂起，直接把「用户关闭了询问卡」作为
+                // 工具结果返回，让模型改用文字说明或直接推进，而不是被一张无人可答的卡卡住。
                 askUserBridge = { arguments ->
-                    AgentAskUserTool.execute(
-                        args = arguments,
-                        runId = request.runId,
-                        conversationId = conversationId,
-                    ) { !runController.isCancelled }
+                    if (!Prefs.isEnabled(Prefs.Keys.AGENT_ASK_USER_ENABLED)) {
+                        org.json.JSONObject()
+                            .put("ok", false)
+                            .put("tool", AgentAskUserTool.NAME)
+                            .put("code", "ASK_USER_DISABLED")
+                            .put("message", "用户已关闭询问卡，ask_user 工具已不再提供，重复调用只会返回同一错误。" +
+                                "不要改用其它方式反问、也不要重试，请基于现有信息直接推进，" +
+                                "或用普通文字说明你需要用户补充的决定。")
+                            .toString()
+                    } else {
+                        AgentAskUserTool.execute(
+                            args = arguments,
+                            runId = request.runId,
+                            conversationId = conversationId,
+                        ) { !runController.isCancelled }
+                    }
                 },
                 skillIndexService = skillIndexService,
                 skillLoader = skillLoader,

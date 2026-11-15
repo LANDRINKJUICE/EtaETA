@@ -30,6 +30,11 @@ internal object AgentToolCatalog {
         proactiveNotify: Boolean = true,
         /** 后台任务失败自动唤醒开关：关掉时 terminal_job 不再宣称"失败会被接手"（审查 m7）。 */
         jobWakeup: Boolean = true,
+        /**
+         * 询问卡开关：用户在设置页关掉时为 false，模型目录不再下发 ask_user schema（模型不会尝试调用），
+         * 执行侧 askUserBridge 也仍会独立校验，形成双保险（同 proactiveNotify 范式）。
+         */
+        askUser: Boolean = true,
         capabilities: AgentToolCapabilities = AgentToolCapabilities(rootAvailable = true),
         localWebSearch: Boolean = true,
         disabledTools: Set<String> = emptySet(),
@@ -64,10 +69,16 @@ internal object AgentToolCatalog {
                 AgentFileToolCatalog.appendTo(tools)
             }
         }).let { projected ->
-            val visible = if (conversationTools) {
+            val roleplayFiltered = if (conversationTools) {
                 projected
             } else {
                 ToolCatalogVisibility.filter(projected, ToolCatalogVisibility.ROLEPLAY_HIDDEN_TOOL_NAMES)
+            }
+            // 询问卡关闭时按 name 移除 ask_user，与 conversationTools 同一层过滤，顺序不变。
+            val visible = if (askUser) {
+                roleplayFiltered
+            } else {
+                ToolCatalogVisibility.filter(roleplayFiltered, setOf(ToolCatalogVisibility.ASK_USER_TOOL_NAME))
             }
             if (disabledTools.isEmpty()) {
                 visible

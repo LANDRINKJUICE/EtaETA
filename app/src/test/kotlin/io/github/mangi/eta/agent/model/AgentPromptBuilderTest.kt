@@ -66,6 +66,27 @@ class AgentPromptBuilderTest {
     }
 
     @Test
+    fun askUserGuidanceFollowsTheAskUserSwitch() {
+        fun guidance(enabled: Boolean) = AgentPromptBuilder.buildSystemMessages(
+            config = modelConfig("", terminalTools = false, browserTools = false),
+            skillContext = SkillContext.EMPTY, memoryContext = AgentMemoryContext.DISABLED,
+            rootAvailable = false, askUserEnabled = enabled,
+        ).toString()
+
+        val on = guidance(true)
+        assertTrue(on.contains("调用 ask_user 在聊天流里提问"))
+        assertFalse(on.contains("用户已关闭询问卡"))
+
+        val off = guidance(false)
+        assertFalse(off.contains("调用 ask_user 在聊天流里提问"))
+        assertTrue(off.contains("用户已关闭询问卡"))
+        assertTrue(off.contains("不要提问"))
+        // 关掉后整份 system 提示里不得再出现 ask_user 工具名（含「自动任务与宏」块），
+        // 否则模型仍以为工具可用，与「已关闭」自相矛盾。
+        assertFalse(off.contains("ask_user"))
+    }
+
+    @Test
     fun currentModelIdentityFollowsConfigWithCustomOrEmptyProviderPrompt() {
         for (providerPrompt in listOf("你是小满", "")) {
             val config = modelConfig(providerPrompt, terminalTools = false, browserTools = false)
