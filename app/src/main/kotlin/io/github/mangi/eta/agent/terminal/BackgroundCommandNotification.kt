@@ -77,7 +77,6 @@ internal object BackgroundCommandNotification {
                 notificationId = NotificationIdRegistry.idOf("background_command"),
                 channel = NotificationIdRegistry.channelOf("background_command"),
                 objectKey = task.id, tag = task.id,
-                title = "", body = "",
             ), notification)
     }
 

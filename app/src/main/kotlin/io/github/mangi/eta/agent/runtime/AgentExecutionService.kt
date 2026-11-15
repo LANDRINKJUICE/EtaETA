@@ -142,8 +142,6 @@ internal class AgentExecutionService : Service() {
         notificationId = NotificationIdRegistry.idOf("execution_service"),
         channel = NotificationIdRegistry.channelOf("execution_service"),
         objectKey = "execution",
-        title = "", body = "",
-        ongoing = true, autoCancel = false, isForegroundService = true,
     )
 
     private fun notification(): Notification {
@@ -266,29 +264,20 @@ internal class AgentExecutionService : Service() {
                     // 前台「用户正在看着的 UI 聊天」一轮说完：结果/错误就在屏幕上，不弹通知刷屏。
                     // 但无人值守后台 run（唤醒轮 / 自动任务）虽用 AGENT_UI handoff，却没有用户在线
                     // 盯着这个会话——必须照发结果通知（可回复 + 按会话深链），否则前台跑完会完全静默。
+                    // 打扰/前台抑制判定唯一收敛到 AttentionPublisher→AttentionDirector 一处裁决，
+                    // 这里不再提前短路（避免两处 DisturbContext 口径漂移）。仅把事实传下去。
                     val unattended = BackgroundRunPolicy.isUnattendedConversation(conversationId.orEmpty())
-                    // 统一打扰裁决：前台真相取 AppForeground 单一源，前台抑制判定收敛到
-                    // AttentionDirector（不再是散落的第 6 处各判各的）。无人值守会话即便
-                    // App 在前台也照发；前台「用户正盯着的有值守 UI 聊天」才抑制结果通知。
-                    val disturb = io.github.mangi.eta.agent.notify.AttentionDirector.shouldDisturb(
-                        io.github.mangi.eta.agent.notify.DisturbContext(
-                            notificationsEnabled = true,
-                            channelEnabled = true,
-                            foreground = io.github.mangi.eta.agent.notify.AppForeground.isForeground(),
-                            foregroundUiChat = handoffSource == AgentRuntimeWire.AGENT_UI_HANDOFF_SOURCE,
-                            unattended = unattended,
-                            rateLimitAllows = true,
-                            budgetAllows = true,
-                        ),
+                    val foregroundUiChat = handoffSource == AgentRuntimeWire.AGENT_UI_HANDOFF_SOURCE
+                    // 后台/无 UI 的 run 用 archive-/run:/assistant- 前缀会话 id：它们不在可回复的
+                    // UI 会话表里，挂回复按钮会「点了必然失败」，所以这类通知不挂回复、查看结果
+                    // 退回任务中心。UI 会话（App 不在前台时跑完）才挂通知栏回复 + 按会话深链。
+                    val uiConversation = AgentConversationIdentity.isUiConversation(conversationId)
+                    val decision = showRunResult(
+                        context, failed, detailText, conversationId, uiConversation,
+                        archiveSource, archiveKey, unattended, foregroundUiChat,
                     )
-                    if (disturb) {
-                        // 后台/无 UI 的 run 用 archive-/run:/assistant- 前缀会话 id：它们不在可回复的
-                        // UI 会话表里，挂回复按钮会「点了必然失败」，所以这类通知不挂回复、查看结果
-                        // 退回任务中心。UI 会话（App 不在前台时跑完）才挂通知栏回复 + 按会话深链。
-                        val uiConversation = AgentConversationIdentity.isUiConversation(conversationId)
-                        resultPublished = true
-                        showRunResult(context, failed, detailText, conversationId, uiConversation, archiveSource, archiveKey)
-                    }
+                    // 只有真正发布了结果通知才置位（被前台抑制/号段拒绝时不置，下轮仍可发）。
+                    if (decision.publish) resultPublished = true
                 }
             }
         }
@@ -302,23 +291,29 @@ internal class AgentExecutionService : Service() {
             uiConversation: Boolean,
             archiveSource: String?,
             archiveKey: String?,
-        ) {
+            unattended: Boolean,
+            foregroundUiChat: Boolean,
+        ): io.github.mangi.eta.agent.notify.AttentionDirector.AttentionDecision {
             // 唤醒轮（conv-wakeup-）终态唯一由 JobWakeupNotifications.showFinished 用 9602 发布
             // （本轮从根统一：一条 run 一个终态发布者）。这里跳过，避免与 9602 双发。
             // 自动任务 conv-schedule- 与普通 UI 会话的结果仍由本 run_result 段承担。
-            if (io.github.mangi.eta.agent.notify.AttentionDirector.isWakeupConversation(conversationId)) return
+            if (io.github.mangi.eta.agent.notify.AttentionDirector.isWakeupConversation(conversationId)) {
+                return io.github.mangi.eta.agent.notify.AttentionDirector.AttentionDecision(
+                    publish = false, cancelOngoingIds = emptyList())
+            }
             val notificationId = NotificationIdRegistry.idOf("run_result", conversationId)
             val notification = buildRunResultNotification(
                 context, failed, detail, conversationId, uiConversation,
                 archiveSource, archiveKey, notificationId,
             )
             // tag=conversationId：即使两会话 hash 撞同一 id，也因 tag 不同而各占一条。
-            AttentionPublisher.publish(context,
+            return AttentionPublisher.publish(context,
                 AttentionIntent(
                     notificationId = notificationId,
                     channel = NotificationIdRegistry.channelOf("run_result"),
                     objectKey = conversationId, tag = conversationId,
-                    title = "", body = "", unattended = true,
+                    unattended = unattended,
+                    suppressIfForegroundChat = foregroundUiChat && !unattended,
                 ), notification)
         }
 

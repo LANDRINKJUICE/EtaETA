@@ -4,6 +4,8 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import android.media.AudioAttributes
+import android.media.RingtoneManager
 import android.os.Build
 import io.github.mangi.eta.R
 
@@ -26,11 +28,12 @@ internal object AttentionPublisher {
     /** channel 表进程内只注册一次；系统本身幂等，这里省掉每次 publish 的 9 次 binder。 */
     @Volatile private var channelsEnsured = false
 
-    /** 所有 channel 的唯一注册入口（幂等）。 */
+    /** 所有 channel 的唯一注册入口（幂等）。完整保留改造前各 channel 的 sound/vibration/badge 语义。 */
     fun ensureAllChannels(context: Context) {
         if (channelsEnsured) return
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        var allOk = true
         NotificationIdRegistry.NotificationChannel.entries.forEach { ch ->
             val importance = when (ch.id) {
                 NotificationIdRegistry.NotificationChannel.ATTENTION.id -> NotificationManager.IMPORTANCE_HIGH
@@ -41,17 +44,39 @@ internal object AttentionPublisher {
                 else -> NotificationManager.IMPORTANCE_DEFAULT
             }
             val label = channelLabel(context, ch)
-            runCatching {
+            val ok = runCatching {
                 manager.createNotificationChannel(NotificationChannel(ch.id, label, importance).apply {
-                    if (ch == NotificationIdRegistry.NotificationChannel.ATTENTION) {
-                        setShowBadge(true); enableVibration(true)
-                    } else if (ch == NotificationIdRegistry.NotificationChannel.MACRO_RECORDING) {
-                        setShowBadge(false)
+                    when (ch) {
+                        // 改造前 AgentNotifications.ensureChannels 的 PROACTIVE：普通主动沟通明确静音、不振、有角标。
+                        NotificationIdRegistry.NotificationChannel.PROACTIVE -> {
+                            description = context.getString(R.string.notify_channel_proactive_desc)
+                            setShowBadge(true)
+                            enableVibration(false)
+                            setSound(null, null)
+                        }
+                        // ATTENTION：真正紧急，heads-up + 提示音 + 振动 + 角标。丢了 setSound 会让新装用户 important 通知不响。
+                        NotificationIdRegistry.NotificationChannel.ATTENTION -> {
+                            description = context.getString(R.string.notify_channel_attention_desc)
+                            setShowBadge(true)
+                            enableVibration(true)
+                            setSound(
+                                RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION),
+                                AudioAttributes.Builder()
+                                    .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                                    .build(),
+                            )
+                        }
+                        NotificationIdRegistry.NotificationChannel.MACRO_RECORDING -> setShowBadge(false)
+                        NotificationIdRegistry.NotificationChannel.SCHEDULED_TASKS -> setShowBadge(true)
+                        else -> Unit
                     }
                 })
-            }
+            }.isSuccess
+            if (!ok) allOk = false
         }
-        channelsEnsured = true
+        // 全部成功才置位；某次 channel 创建失败时下次 publish 会重试，不留半注册状态。
+        if (allOk) channelsEnsured = true
     }
 
     private fun channelLabel(context: Context, ch: NotificationIdRegistry.NotificationChannel): String =
@@ -87,67 +112,13 @@ internal object AttentionPublisher {
             notificationsEnabled = manager?.areNotificationsEnabled() ?: false,
             channelEnabled = channelEnabled(context, intent.channel),
             foreground = AppForeground.isForeground(),
-            foregroundUiChat = false,
+            // 从意图读「是否用户正盯着的有值守 UI 聊天」，供 AttentionDirector 一处裁决前台抑制；
+            // 不再恒 false（恒 false 会让 showRunResult 的前台静默语义失效）。
+            foregroundUiChat = intent.suppressIfForegroundChat,
             unattended = intent.unattended,
             rateLimitAllows = rateLimitAllows,
             budgetAllows = budgetAllows,
         )
-    }
-
-    /**
-     * 唯一发布入口：裁决 → 撤 ongoing → 构造 → notify。
-     *
-     * @param render 由各发起点提供其渲染细节（contentIntent / actions / RemoteInput / 大图等），
-     *               但 Builder 的公共部分（图标、channel、ongoing、autoCancel、category 等）
-     *               由 [build] 统一施加——这就是「逻辑收敛、代码不硬并」。
-     */
-    fun publish(
-        context: Context,
-        intent: AttentionIntent,
-        render: (Notification.Builder) -> Unit,
-        ctx: DisturbContext = defaultContext(context, intent),
-    ): AttentionDirector.AttentionDecision {
-        val decision = AttentionDirector.decide(intent, ctx)
-        decision.cancelOngoingIds.forEach { cancel(context, it) }
-        if (!decision.publish) return decision
-        val manager = context.getSystemService(NotificationManager::class.java) ?: return decision
-        ensureAllChannels(context)
-        val notification = build(context, intent, render)
-        runCatching {
-            if (intent.tag == null) manager.notify(intent.notificationId, notification)
-            else manager.notify(intent.tag, intent.notificationId, notification)
-        }
-        return decision
-    }
-
-    /** 前台服务载体用：只构造、不 notify（由 service.startForeground 使用），同样统一施加公共部分。 */
-    fun build(
-        context: Context,
-        intent: AttentionIntent,
-        render: (Notification.Builder) -> Unit,
-    ): Notification {
-        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            Notification.Builder(context, intent.channel.id)
-        } else {
-            @Suppress("DEPRECATION") Notification.Builder(context)
-        }.setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle(intent.title)
-            .setContentText(intent.body)
-            .setOngoing(intent.ongoing)
-            .setAutoCancel(intent.autoCancel)
-            .setOnlyAlertOnce(intent.onlyAlertOnce)
-        val r = intent.render
-        if (r.bigText) builder.setStyle(Notification.BigTextStyle().bigText(intent.body))
-        if (r.category.isNotBlank()) builder.setCategory(r.category)
-        if (r.subText.isNotBlank()) builder.setSubText(r.subText)
-        if (r.visibilityPrivate) builder.setVisibility(Notification.VISIBILITY_PRIVATE)
-        if (r.progressIndeterminate && Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
-            builder.setStyle(Notification.ProgressStyle().setProgressIndeterminate(true))
-            if (r.shortCriticalText.isNotBlank()) builder.setShortCriticalText(r.shortCriticalText)
-            if (r.requestedPromotedOngoing) builder.extras.putBoolean("android.requestPromotedOngoing", true)
-        }
-        render(builder)
-        return builder.build()
     }
 
     /**

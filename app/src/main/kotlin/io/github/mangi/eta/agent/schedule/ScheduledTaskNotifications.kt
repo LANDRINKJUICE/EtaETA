@@ -86,10 +86,7 @@ internal object ScheduledTaskNotifications {
             AttentionIntent(
                 notificationId = NotificationIdRegistry.idOf("scheduled_task_running"),
                 channel = NotificationIdRegistry.channelOf("scheduled_task_running"),
-                objectKey = conversationId, title = "", body = "",
-                ongoing = true, autoCancel = false, unattended = true,
-                isForegroundService = true,
-            ), running(context, title, conversationId, stage, elapsedMillis))
+                objectKey = conversationId, ), running(context, title, conversationId, stage, elapsedMillis))
     }
 
     fun runningId(): Int = RUNNING_NOTIFICATION_ID
@@ -126,7 +123,7 @@ internal object ScheduledTaskNotifications {
             AttentionIntent(
                 notificationId = resultNotificationId(task.id),
                 channel = NotificationIdRegistry.channelOf("scheduled_task_result"),
-                objectKey = task.id, title = "", body = "", unattended = true,
+                objectKey = task.id, unattended = true,
             ), notification)
     }
 

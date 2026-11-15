@@ -296,9 +296,6 @@ internal object AgentNotifications {
                     NotificationIdRegistry.NotificationChannel.ATTENTION
                 else NotificationIdRegistry.NotificationChannel.PROACTIVE,
                 objectKey = spec.notificationId.toString(),
-                title = spec.title, body = spec.body,
-                urgency = if (spec.priority == NotificationPolicy.Priority.IMPORTANT)
-                    AttentionIntent.Urgency.IMPORTANT else AttentionIntent.Urgency.NORMAL,
             ), notification)
     }
 
@@ -341,8 +338,7 @@ internal object AgentNotifications {
             AttentionIntent(
                 notificationId = NotificationIdRegistry.idOf("approval_pending"),
                 channel = NotificationIdRegistry.channelOf("approval_pending"),
-                objectKey = "approval_pending", title = "", body = "",
-            ), notification)
+                objectKey = "approval_pending", ), notification)
     }
 
     fun cancelApprovalPending(context: Context) {
@@ -509,10 +505,7 @@ internal object AgentNotifications {
             AttentionIntent(
                 notificationId = notificationId,
                 channel = NotificationIdRegistry.channelOf("approval_attention"),
-                objectKey = request.id, title = "", body = "",
-                urgency = AttentionIntent.Urgency.IMPORTANT,
-                autoCancel = false,
-            ), notification)
+                objectKey = request.id, ), notification)
     }
 
     /**

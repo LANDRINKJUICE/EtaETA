@@ -18,7 +18,7 @@ import io.github.mangi.eta.agent.notify.NotificationPolicy
  * - 点击通知按会话 id 直达那一轮处理的真实会话（[AgentNotifications.conversationByIdIntent]），
  *   处理中看得到实时过程、结束后可在原会话继续发消息/追问，不再进只读归档、不弹新空会话；
  * - 另给一个"打开任务中心"按钮看全部后台任务；
- * - 通知 id 走 [NotificationPolicy.jobWakeupId]（9602..9651），同一任务反复唤醒原地更新；
+ * - 通知 id 走 NotificationIdRegistry.idOf(OWNER_JOB_WAKEUP, task.id)（9602..9651），与进行中通知、终态变形同源（同 ID 就地变形，不新建）；
  * - PendingIntent 的 requestCode 与 data 都按任务派生：固定值 + FLAG_UPDATE_CURRENT 会让
  *   多条通知的会话参数互相覆盖（extras 不参与 PendingIntent 判等）；
  * - **运行中常驻 + 阶段可见**：showRunning 起一条 setOngoing(true) 的通知，run 期间由
@@ -127,7 +127,9 @@ internal object JobWakeupNotifications {
      */
     fun showFinished(context: Context, task: DetachedTask, finish: JobWakeupPolicy.Finish) {
         lastStageAt.remove(task.id)
-        val ongoingId = NotificationPolicy.jobWakeupId(task.id)
+        // 与 notifyIfAllowed（进行中）/cancelStale（清扫）同源：同 ID 就地变形，杜绝两套派生源分叉。
+        val ongoingId = io.github.mangi.eta.agent.notify.NotificationIdRegistry
+            .idOf(io.github.mangi.eta.agent.notify.NotificationIdRegistry.OWNER_JOB_WAKEUP, task.id)
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         ensureChannel(context, manager)
         val titleId = when (finish) {
@@ -164,11 +166,7 @@ internal object JobWakeupNotifications {
             notificationId = ongoingId,
             channel = channelFor(manager),
             objectKey = task.id,
-            title = context.getString(titleId, subjectOf(context, task)),
-            body = body,
             unattended = true,
-            autoCancel = true,
-            onlyAlertOnce = false,
             // 终态收尾：无论裁决是否放行（含通知被系统禁用），都撤掉进行中的 9602，
             // 绝不留下「正在自动处理」的 setOngoing(true) 僵尸。
             replaceOngoingIds = listOf(ongoingId),
@@ -305,9 +303,7 @@ internal object JobWakeupNotifications {
                 .idOf(io.github.mangi.eta.agent.notify.NotificationIdRegistry.OWNER_JOB_WAKEUP, task.id),
             channel = channel,
             objectKey = task.id,
-            title = "", body = "",
             unattended = true,
-            ongoing = true, autoCancel = false,
         )
         AttentionPublisher.publish(context, intent, notification)
     }

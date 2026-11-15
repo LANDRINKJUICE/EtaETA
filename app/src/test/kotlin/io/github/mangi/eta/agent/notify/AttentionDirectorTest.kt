@@ -29,8 +29,6 @@ class AttentionDirectorTest {
         notificationId = id,
         channel = NotificationIdRegistry.channelOf("run_result"),
         objectKey = "conv-a",
-        title = "结果",
-        body = "完成",
         unattended = unattended,
         suppressIfForegroundChat = suppressForegroundChat,
         replaceOngoingIds = replaceOngoingIds,

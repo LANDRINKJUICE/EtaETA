@@ -80,7 +80,6 @@ internal object MacroRecordingNotifications {
                 notificationId = NotificationIdRegistry.fixedIdOf("macro_recording", "recording"),
                 channel = NotificationIdRegistry.channelOf("macro_recording"),
                 objectKey = "recording",
-                title = "", body = "", ongoing = true, autoCancel = false,
             ), notification)
     }
 
@@ -126,7 +125,6 @@ internal object MacroRecordingNotifications {
                 notificationId = NotificationIdRegistry.fixedIdOf("macro_recording", "stopped"),
                 channel = NotificationIdRegistry.channelOf("macro_recording"),
                 objectKey = "stopped",
-                title = "", body = summary,
             ), notification)
     }
 }
