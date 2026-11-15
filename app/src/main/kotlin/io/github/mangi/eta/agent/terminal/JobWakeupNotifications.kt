@@ -40,12 +40,14 @@ internal object JobWakeupNotifications {
      * [io.github.mangi.eta.agent.notify.NotificationIdRegistry]（唯一登记表），不硬编码漂移。
      */
     fun cancelStale(context: Context) {
-        val manager = context.getSystemService(NotificationManager::class.java) ?: return
         val segments = io.github.mangi.eta.agent.notify.NotificationIdRegistry.allIdSegments
             .filter { it.owner == io.github.mangi.eta.agent.notify.NotificationIdRegistry.OWNER_JOB_WAKEUP }
         for (segment in segments) {
             for (id in segment.range) {
-                runCatching { manager.cancel(id) }
+                // 撤号也走唯一出口（带 tag 句柄），不绕过 AttentionPublisher。
+                io.github.mangi.eta.agent.notify.AttentionPublisher.cancel(
+                    context, io.github.mangi.eta.agent.notify.NotificationKey(id),
+                )
             }
         }
         lastStageAt.clear()
@@ -138,7 +140,6 @@ internal object JobWakeupNotifications {
             JobWakeupPolicy.Finish.TIMED_OUT -> R.string.job_wakeup_timeout_title
             JobWakeupPolicy.Finish.NOT_STARTED -> R.string.job_wakeup_skipped_title
             JobWakeupPolicy.Finish.STOPPED -> R.string.job_wakeup_stopped_title
-            else -> R.string.job_wakeup_skipped_title
         }
         val bodyId = when (finish) {
             JobWakeupPolicy.Finish.DONE -> R.string.job_wakeup_done_body
@@ -146,7 +147,6 @@ internal object JobWakeupNotifications {
             JobWakeupPolicy.Finish.TIMED_OUT -> R.string.job_wakeup_timeout_body
             JobWakeupPolicy.Finish.NOT_STARTED -> R.string.job_wakeup_skipped_body
             JobWakeupPolicy.Finish.STOPPED -> R.string.job_wakeup_stopped_body
-            else -> R.string.job_wakeup_skipped_body
         }
         val body = context.getString(bodyId)
         val transform: (Int) -> Notification = { _ ->
@@ -163,13 +163,12 @@ internal object JobWakeupNotifications {
         // 号段从 NotificationIdRegistry 唯一派生，不再各自硬编码。
         // 它是唤醒轮终态唯一发布者（finally 必达），覆盖所有 Finish，不静默、不留僵尸。
         val intent = io.github.mangi.eta.agent.notify.AttentionIntent(
-            notificationId = ongoingId,
+            key = io.github.mangi.eta.agent.notify.NotificationKey(ongoingId),
             channel = channelFor(manager),
-            objectKey = task.id,
-            unattended = true,
+            subject = task.id,
             // 终态收尾：无论裁决是否放行（含通知被系统禁用），都撤掉进行中的 9602，
-            // 绝不留下「正在自动处理」的 setOngoing(true) 僵尸。
-            replaceOngoingIds = listOf(ongoingId),
+            // 绝不留下「正在自动处理」的 setOngoing(true) 僵尸。用唯一句柄带 tag 撤，不漂移。
+            replaceOngoing = listOf(io.github.mangi.eta.agent.notify.NotificationKey(ongoingId)),
         )
         AttentionPublisher.publish(context, intent, transform(ongoingId))
     }
@@ -299,11 +298,12 @@ internal object JobWakeupNotifications {
     private fun notifyIfAllowed(context: Context, manager: NotificationManager, task: DetachedTask, notification: Notification) {
         val channel = channelFor(manager)
         val intent = io.github.mangi.eta.agent.notify.AttentionIntent(
-            notificationId = io.github.mangi.eta.agent.notify.NotificationIdRegistry
-                .idOf(io.github.mangi.eta.agent.notify.NotificationIdRegistry.OWNER_JOB_WAKEUP, task.id),
+            key = io.github.mangi.eta.agent.notify.NotificationKey(
+                io.github.mangi.eta.agent.notify.NotificationIdRegistry
+                    .idOf(io.github.mangi.eta.agent.notify.NotificationIdRegistry.OWNER_JOB_WAKEUP, task.id),
+            ),
             channel = channel,
-            objectKey = task.id,
-            unattended = true,
+            subject = task.id,
         )
         AttentionPublisher.publish(context, intent, notification)
     }

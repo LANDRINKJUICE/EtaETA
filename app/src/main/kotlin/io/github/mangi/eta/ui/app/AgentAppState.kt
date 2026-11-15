@@ -1445,10 +1445,11 @@ internal class AgentAppState(
             }
             if (ok) {
                 if (notificationId > 0) {
-                    runCatching {
-                        appContext.getSystemService(android.app.NotificationManager::class.java)
-                            ?.cancel(notificationId)
-                    }
+                    // 撤通知走唯一出口（带 tag 句柄），不绕过 AttentionPublisher。
+                    io.github.mangi.eta.agent.notify.AttentionPublisher.cancel(
+                        appContext,
+                        io.github.mangi.eta.agent.notify.NotificationKey(notificationId),
+                    )
                 }
             } else {
                 notifyReplyFailure()

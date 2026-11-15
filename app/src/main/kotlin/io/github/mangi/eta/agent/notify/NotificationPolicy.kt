@@ -14,34 +14,32 @@ package io.github.mangi.eta.agent.notify
 internal object NotificationPolicy {
 
     // ---- 新增 channel：按"是否需要立刻关注"分级 ----
-    /** 普通主动沟通 / 危险操作待确认：默认重要性、有角标、不响铃。 */
-    const val CHANNEL_PROACTIVE = "eta_proactive"
-    /** 真正紧急的主动沟通：高重要性 + 提示音 + heads-up，仅 important 级使用。 */
-    const val CHANNEL_ATTENTION = "eta_attention"
+    /** 普通主动沟通 / 危险操作待确认：channel id 唯一取自 Registry（不再另写字面量）。 */
+    val CHANNEL_PROACTIVE: String get() = NotificationIdRegistry.NotificationChannel.PROACTIVE.id
+    /** 真正紧急的主动沟通：channel id 唯一取自 Registry。 */
+    val CHANNEL_ATTENTION: String get() = NotificationIdRegistry.NotificationChannel.ATTENTION.id
 
     // ---- 通知 ID 分段 ----
     // 已占用：9000 自动任务前台、9001..9290 自动任务结果、9300..9349 主动沟通、9400 待确认、
     // 9500-9501 预留、9502..9560 run 结果(按会话散列)、9600/9601 宏录制、9602..9651 后台唤醒、
     // 9660..9999 审批卡；另有 1107/1108 执行服务、1124 后台命令、4203/4204 语音。
     /** 主动沟通 notify_user：9300..9349，按 key 散列，互不覆盖、也不与既有段相交。 */
-    private const val PROACTIVE_BASE = 9_300
-    private const val PROACTIVE_RANGE = 50
-    /** 危险操作等待确认：常驻单条，数量变化时原地更新。 */
-    const val APPROVAL_PENDING_ID = 9_400
+    private fun proactiveSegment(): NotificationIdRegistry.IdSegment =
+        NotificationIdRegistry.allIdSegments.first { it.owner == "notify_user_proactive" }
+    /** 危险操作等待确认：常驻单条，数量变化时原地更新（段值由 Registry 唯一派生）。 */
+    val APPROVAL_PENDING_ID: Int get() = NotificationIdRegistry.idOf("approval_pending")
     /**
      * 后台任务失败自动唤醒：9602..9651，按任务 id 散列。
      *
      * 紧跟既有 9600/9601（宏录制）之后取 50 个空位，避让 9000-9299、9300-9349、9400、
      * 9500-9501、9600-9601 全部已占用区间；见 [reservedSegments]。
      */
-    private const val JOB_WAKEUP_BASE = 9_602
-    private const val JOB_WAKEUP_RANGE = 50
+    private fun jobWakeupSegment(): NotificationIdRegistry.IdSegment =
+        NotificationIdRegistry.allIdSegments.first { it.owner == NotificationIdRegistry.OWNER_JOB_WAKEUP }
 
-    /** run 结果通知：9502..9560，按 conversationId 散列，避免多条会话结果互相覆盖。 */
-    private const val RUN_RESULT_BASE = 9_502
-    private const val RUN_RESULT_RANGE = 59
+    /** run 结果通知：按 conversationId 散列（唯一源 Registry），避免多条会话结果互相覆盖。 */
     fun runResultId(conversationId: String): Int =
-        RUN_RESULT_BASE + (stableHash(conversationId) % RUN_RESULT_RANGE)
+        NotificationIdRegistry.idOf("run_result", conversationId)
 
 
     /**
@@ -52,33 +50,10 @@ internal object NotificationPolicy {
      * 混用会让汇总通知被单张卡覆盖掉。段位紧跟 9602..9651 之后取 340 个空位，
      * 避让已占用的全部区间（见 [reservedSegments]）。
      */
-    private const val APPROVAL_ATTENTION_BASE = 9_660
-    /** 放宽到 340 槽：同时待确认的卡通常个位数，hash 撞 ID 概率已极低；Presenter 仍做占用检测兜底。 */
-    private const val APPROVAL_ATTENTION_RANGE = 340
+    private fun approvalAttentionSegment(): NotificationIdRegistry.IdSegment =
+        NotificationIdRegistry.allIdSegments.first { it.owner == "approval_attention" }
 
-    /**
-     * 审批通知按钮的 PendingIntent requestCode：6400..6699，按 (审批 id, 选项 id) 派生。
-     *
-     * 必须按选项分散：PendingIntent 只按 (requestCode, filterEquals) 区分，extras 不参与比较；
-     * 同一条通知里的按钮若共用一个 requestCode + FLAG_UPDATE_CURRENT，后建的那个会把前面的参数
-     * 覆盖掉——三个按钮就都会变成“拒绝”（或都变成允许）。段位避开 6001、6002、6010、6020、6030、
-     * 自动唤醒的 6200..6299 与执行服务的 20。
-     */
-    private const val APPROVAL_ACTION_REQUEST_BASE = 6_400
-    private const val APPROVAL_ACTION_REQUEST_RANGE = 300
 
-    /**
-     * 自动唤醒通知的 PendingIntent requestCode 段：6200..6249（点通知进会话）、
-     * 6250..6299（点按钮进任务中心）。
-     *
-     * **必须按任务分散**：PendingIntent 以 (requestCode, filterEquals(data/action/type/class/category))
-     * 区分，extras 不参与比较；同一个 requestCode + FLAG_UPDATE_CURRENT 会让后一条通知把前面
-     * 所有通知的会话参数覆盖成同一条——即多个任务的通知全部指向最后一个任务的会话。
-     * 段位避开既有 6001/6002/6010/6020/6030 与执行服务的 20。
-     */
-    private const val JOB_WAKEUP_REQUEST_BASE = 6_200
-    private const val JOB_WAKEUP_ACTION_REQUEST_BASE = 6_250
-    private const val JOB_WAKEUP_REQUEST_RANGE = 50
 
     /** 更新节流：常驻通知的"实时"状态不得比 1 秒更频繁，避免系统限流。 */
     const val MIN_REFRESH_INTERVAL_MILLIS = 1_000L
@@ -100,9 +75,6 @@ internal object NotificationPolicy {
     const val MAX_NOTIFY_PER_RUN = 2
     /** 同一次 run 内最多发几条重要级。 */
     const val MAX_IMPORTANT_NOTIFY_PER_RUN = 1
-    /** 超限统一错误码：调用方据此如实告知模型，不发通知也不假装成功。 */
-    const val CODE_RATE_LIMITED = "NOTIFY_RATE_LIMITED"
-
     /** 展示长度上限：过长会把通知撑爆、也可能被系统截断成无意义片段。 */
     const val TITLE_MAX_CHARS = 60
     const val BODY_MAX_CHARS = 240
@@ -190,28 +162,25 @@ internal object NotificationPolicy {
         )
     }
 
-    /** 按 key 稳定散列到 9300..9349；同一主题反复通知复用同一 ID（更新而非堆叠）。 */
-    fun proactiveId(key: String): Int {
-        val hash = key.fold(0) { acc, ch -> acc * 31 + ch.code }
-        // Int.MIN_VALUE 取 abs 仍为负，先折叠到 Long 再取模。
-        val nonNegative = kotlin.math.abs(hash.toLong())
-        return PROACTIVE_BASE + (nonNegative % PROACTIVE_RANGE).toInt()
-    }
+    /** 按 key 稳定散列到主动沟通段；同一主题反复通知复用同一 ID（唯一源 Registry）。 */
+    fun proactiveId(key: String): Int =
+        NotificationIdRegistry.idOf("notify_user_proactive", key)
 
-    /** 后台任务自动唤醒通知：9602..9651，同一任务反复唤醒复用同一 ID。 */
-    fun jobWakeupId(jobId: String): Int = JOB_WAKEUP_BASE + (stableHash(jobId) % JOB_WAKEUP_RANGE)
+    /** 后台任务自动唤醒通知：同一任务反复唤醒复用同一 ID（唯一源 Registry）。 */
+    fun jobWakeupId(jobId: String): Int =
+        NotificationIdRegistry.idOf(NotificationIdRegistry.OWNER_JOB_WAKEUP, jobId)
 
     /** 自动唤醒通知"点主体进会话"的 requestCode：6200..6249，按任务分散。 */
     fun jobWakeupRequestCode(jobId: String): Int =
-        JOB_WAKEUP_REQUEST_BASE + (stableHash(jobId) % JOB_WAKEUP_REQUEST_RANGE)
+        NotificationIdRegistry.hashedIn("job_wakeup_content", jobId)
 
-    /** 自动唤醒通知"打开任务中心"按钮的 requestCode：6250..6299，按任务分散。 */
+    /** 自动唤醒通知"打开任务中心"按钮的 requestCode：按任务分散（唯一源 Registry 段）。 */
     fun jobWakeupActionRequestCode(jobId: String): Int =
-        JOB_WAKEUP_ACTION_REQUEST_BASE + (stableHash(jobId) % JOB_WAKEUP_REQUEST_RANGE)
+        NotificationIdRegistry.hashedIn("job_wakeup_action", jobId)
 
     /** 单卡场景的兼容 hash（Presenter 多卡时用 [allocateApprovalNotificationId] 占用检测分配）。 */
     fun approvalAttentionId(requestId: String): Int =
-        APPROVAL_ATTENTION_BASE + (stableHash(requestId) % APPROVAL_ATTENTION_RANGE)
+        NotificationIdRegistry.idOf("approval_attention", requestId)
 
     /**
      * notify_user 通知栏「回复」action 的 PendingIntent requestCode 段：6700..6749。
@@ -219,14 +188,12 @@ internal object NotificationPolicy {
      * 与既有 6001/6002/6010/6020/6030、6200..6299（唤醒）、6400..6699（审批按钮）全部不相交。
      * 段值同步登记在 NotificationIdRegistry.allRequestCodeSegments（见 notify_user_reply）。
      */
-    private const val NOTIFY_REPLY_REQUEST_BASE = 6_700
-    private const val NOTIFY_REPLY_REQUEST_RANGE = 50
     fun notifyReplyRequestCode(notificationId: Int): Int =
-        NOTIFY_REPLY_REQUEST_BASE + kotlin.math.abs(notificationId % NOTIFY_REPLY_REQUEST_RANGE)
+        NotificationIdRegistry.mapIntoSegment("notify_user_reply", notificationId)
 
     /** 行动通知 ID 段起点与宽度：Presenter 做碰撞占用检测时按此分配，避免两张卡 hash 到同一 ID。 */
-    fun approvalAttentionBase(): Int = APPROVAL_ATTENTION_BASE
-    fun approvalAttentionRange(): Int = APPROVAL_ATTENTION_RANGE
+    fun approvalAttentionBase(): Int = approvalAttentionSegment().range.first
+    fun approvalAttentionRange(): Int = approvalAttentionSegment().range.count()
 
     /**
      * 在 [approvalAttentionBase]..base+range 段内分配一个未被 [used] 占用的 ID（纯函数，可单测）。
@@ -235,22 +202,17 @@ internal object NotificationPolicy {
      * 后一条 notify 覆盖前一条。段满时回退到 base（宁可覆盖也不越界）。
      */
     fun allocateApprovalNotificationId(used: Collection<Int>): Int {
-        for (offset in 0 until APPROVAL_ATTENTION_RANGE) {
-            val id = APPROVAL_ATTENTION_BASE + offset
+        val seg = approvalAttentionSegment()
+        for (offset in 0 until seg.range.count()) {
+            val id = seg.range.first + offset
             if (id !in used) return id
         }
-        return APPROVAL_ATTENTION_BASE
+        return seg.range.first
     }
 
     /** 审批通知按钮的 requestCode：6400..6699，按 (审批 id, 选项 id) 分散，互不覆盖。 */
     fun approvalActionRequestCode(requestId: String, optionId: String): Int =
-        APPROVAL_ACTION_REQUEST_BASE + (stableHash("$requestId|$optionId") % APPROVAL_ACTION_REQUEST_RANGE)
-
-    /** 稳定散列到非负整数；Int.MIN_VALUE 取 abs 仍为负，先折叠到 Long 再取模。 */
-    private fun stableHash(key: String): Int {
-        val hash = key.fold(0) { acc, ch -> acc * 31 + ch.code }
-        return (kotlin.math.abs(hash.toLong()) % Int.MAX_VALUE).toInt()
-    }
+        NotificationIdRegistry.hashedIn("approval_decision", "$requestId|$optionId")
 
     /** 参数校验：标题必填（模型必须给一个能读懂的标题）。返回错误码或 null。 */
     fun validate(rawTitle: String): String? =
@@ -260,20 +222,6 @@ internal object NotificationPolicy {
     fun approvalPending(count: Int, titleFmt: String, bodyFmt: String): Pair<String, String> {
         val safe = count.coerceAtLeast(0)
         return String.format(titleFmt, safe) to String.format(bodyFmt, safe)
-    }
-
-    /** 主动沟通准入：每 run 配额 → 进程级限流；null 表示放行。 */
-    fun admission(
-        priority: Priority,
-        runId: String,
-        nowMillis: Long,
-        rateLimit: RateLimit,
-        budget: RunBudget,
-    ): String? {
-        if (!budget.wouldAllow(runId, priority == Priority.IMPORTANT)) return CODE_RATE_LIMITED
-        if (!rateLimit.tryAcquire(priority, nowMillis)) return CODE_RATE_LIMITED
-        budget.commit(runId, priority == Priority.IMPORTANT)
-        return null
     }
 
     /**
@@ -304,15 +252,36 @@ internal object NotificationPolicy {
         private var lastNormalMillis: Long = NEVER
         private var lastImportantMillis: Long = NEVER
 
-        /** true 表示放行并占用本次额度；false 表示仍在冷却期。 */
-        fun tryAcquire(priority: Priority, nowMillis: Long): Boolean = synchronized(lock) {
+        /**
+         * 原子「判断+占额」（gate 与 commit 同一把锁，杜绝并发超发）：
+         * true = 已占用本次额度，调用方在落地失败时必须 [rollback]。
+         */
+        fun reserve(priority: Priority, nowMillis: Long): Boolean = synchronized(lock) {
+            if (!wouldAllowUnlocked(priority, nowMillis)) return false
+            if (priority == Priority.IMPORTANT) lastImportantMillis = nowMillis else lastNormalMillis = nowMillis
+            true
+        }
+
+        /** 回退一次 [reserve] 的占用（落地失败时调用，保证「落地成功才记账」）。 */
+        fun rollback(priority: Priority) = synchronized(lock) {
+            if (priority == Priority.IMPORTANT) lastImportantMillis = NEVER else lastNormalMillis = NEVER
+        }
+
+        /** 只判断不占额（诊断/单测用）；生产准入一律走 [reserve]。 */
+        fun wouldAllow(priority: Priority, nowMillis: Long): Boolean = synchronized(lock) {
+            wouldAllowUnlocked(priority, nowMillis)
+        }
+
+        /** true 表示放行并占用本次额度；false 表示仍在冷却期（单测用，等价于 [reserve]）。 */
+        fun tryAcquire(priority: Priority, nowMillis: Long): Boolean = reserve(priority, nowMillis)
+
+        /** 锁内判据（调用方已持有 [lock]）。 */
+        private fun wouldAllowUnlocked(priority: Priority, nowMillis: Long): Boolean {
             val important = priority == Priority.IMPORTANT
             val last = if (important) lastImportantMillis else lastNormalMillis
             val interval = if (important) importantIntervalMillis else normalIntervalMillis
             val elapsed = if (last == NEVER) Long.MAX_VALUE else nowMillis - last
-            if (elapsed < interval) return false
-            if (important) lastImportantMillis = nowMillis else lastNormalMillis = nowMillis
-            true
+            return elapsed >= interval
         }
 
         /** 距该优先级上次放行的时间；从未放过返回 null（诊断/测试用）。 */
@@ -361,10 +330,20 @@ internal object NotificationPolicy {
         }
 
         /** 判断+占用的便捷组合（单测与简单调用方使用）。 */
-        fun tryAcquire(runId: String, important: Boolean): Boolean = synchronized(lock) {
+        fun tryAcquire(runId: String, important: Boolean): Boolean = reserve(runId, important)
+
+        /** 原子「判断+占额」（gate 与 commit 同一把锁），落地失败时由 [decrement] 回退。 */
+        fun reserve(runId: String, important: Boolean): Boolean = synchronized(lock) {
             if (!wouldAllow(runId, important)) return false
             commit(runId, important)
             true
+        }
+
+        /** 回退一次 [reserve]/[commit] 的占用（落地失败时调用）。 */
+        fun decrement(runId: String, important: Boolean) = synchronized(lock) {
+            val entry = used[runId.orSharedBucket()] ?: return
+            entry.total = (entry.total - 1).coerceAtLeast(0)
+            if (important) entry.important = (entry.important - 1).coerceAtLeast(0)
         }
 
         /** run 结束清表；重复调用幂等。 */
@@ -410,12 +389,12 @@ internal object NotificationPolicy {
 
     private fun clamp(value: String, max: Int): String = value.trim().let { if (it.length > max) it.take(max) else it }
 
-    /** 本文件管理的 ID 段，供自检单测与文档核对，确认不与既有段相交。 */
+    /** 本文件涉及的 ID 段（唯一源 Registry），供单测/文档核对，确认不与既有段相交。 */
     fun reservedSegments(): List<IntRange> = listOf(
-        PROACTIVE_BASE until PROACTIVE_BASE + PROACTIVE_RANGE,
+        proactiveSegment().range,
         APPROVAL_PENDING_ID..APPROVAL_PENDING_ID,
-        JOB_WAKEUP_BASE until JOB_WAKEUP_BASE + JOB_WAKEUP_RANGE,
-        RUN_RESULT_BASE until RUN_RESULT_BASE + RUN_RESULT_RANGE,
-        APPROVAL_ATTENTION_BASE until APPROVAL_ATTENTION_BASE + APPROVAL_ATTENTION_RANGE,
+        jobWakeupSegment().range,
+        NotificationIdRegistry.allIdSegments.first { it.owner == "run_result" }.range,
+        approvalAttentionSegment().range,
     )
 }

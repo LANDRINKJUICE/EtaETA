@@ -35,6 +35,42 @@ internal object NotificationIdRegistry {
     /** job_wakeup 通知段的 owner；清扫僵尸通知与登记表共用，避免字面量漂移。 */
     const val OWNER_JOB_WAKEUP = "job_wakeup"
 
+    /**
+     * owner → 允许的 channel 集（裁决层校验 [AttentionDirector.RejectReason.CHANNEL_MISMATCH] 用）。
+     * 绝大多数 owner 只有一个合法 channel；job_wakeup 因「后台命令 channel 被关时降级主动沟通」
+     * 允许两个（与其 channelFor 双分支一一对应）。新增 owner 必须在这里登记，漏了会被
+     * [channelOf] 的 else/error 与 [everyOwnerHasAllowedChannels] 单测一起挡住。
+     */
+    private val allowedChannels: Map<String, Set<NotificationChannel>> = mapOf(
+        "execution_service" to setOf(NotificationChannel.EXECUTION),
+        "run_result" to setOf(NotificationChannel.RUN_RESULTS),
+        "notify_user_proactive" to setOf(NotificationChannel.PROACTIVE, NotificationChannel.ATTENTION),
+        "approval_pending" to setOf(NotificationChannel.PROACTIVE),
+        "approval_attention" to setOf(NotificationChannel.ATTENTION),
+        "scheduled_task_running" to setOf(NotificationChannel.SCHEDULED_TASKS),
+        "scheduled_task_result" to setOf(NotificationChannel.SCHEDULED_TASKS),
+        "background_command" to setOf(NotificationChannel.BACKGROUND_COMMANDS),
+        OWNER_JOB_WAKEUP to setOf(NotificationChannel.BACKGROUND_COMMANDS, NotificationChannel.PROACTIVE),
+        "macro_recording" to setOf(NotificationChannel.MACRO_RECORDING),
+        "voice" to setOf(NotificationChannel.ASSISTANT_SPEECH, NotificationChannel.READ_ALOUD),
+        // 纯占位、从未发布的预留段：显式登记为空集，语义=「不可发布」，避免护栏靠特例放行。
+        "reserved_9500" to emptySet(),
+    )
+
+    /** 该 owner 允许的 channel 集合（供唯一裁决中枢做 ID↔channel 匹配校验）。 */
+    fun allowedChannelsFor(owner: String): Set<NotificationChannel> =
+        allowedChannels[owner] ?: emptySet()
+
+    /**
+     * 单测护栏：
+     *  - 每个已登记 owner 都必须在 [allowedChannels] 显式登记（占位段登记空集，语义=不可发布）；
+     *  - 每个 channel 枚举值至少被一个可发布 owner 覆盖（保证 channelOf 能表达全部 channel，
+     *    不让 FGS 退回硬编码字面量）。
+     */
+    fun everyOwnerHasAllowedChannels(): Boolean =
+        allIdSegments.all { it.owner in allowedChannels } &&
+            NotificationChannel.entries.all { ch -> allowedChannels.values.any { ch in it } }
+
     /** 通知 channel 语义分类表：新增 channel 前先查这里，避免随手复用语义不匹配的通道。 */
     enum class NotificationChannel(
         val id: String,
@@ -79,6 +115,7 @@ internal object NotificationIdRegistry {
         IdSegment("approval_action", 6_002..6_002, "审批通知去确认"),
         IdSegment("scheduled_content", 6_010..6_010, "自动任务通知主体"),
         IdSegment("background_command_content", 6_020..6_020, "后台命令通知主体"),
+        IdSegment("background_command_task_center", 1_125..1_125, "后台命令通知「打开任务中心」按钮，= notificationId+1"),
         IdSegment("assistant_speech_stop", 6_030..6_030, "语音停止 action"),
         IdSegment("job_wakeup_content", 6_200..6_249, "自动唤醒进会话，按任务分散"),
         IdSegment("job_wakeup_action", 6_250..6_299, "自动唤醒进任务中心，按任务分散"),
@@ -154,30 +191,68 @@ internal object NotificationIdRegistry {
     fun fixedIdOf(owner: String, key: String): Int {
         val seg = allIdSegments.firstOrNull { it.owner == owner }
             ?: error("未登记的通知 owner：$owner")
+        // fail-closed：与 idOf / channelOf 的错误哲学一致。旧实现 else->0 会让拼错 key 静默
+        // 得到段首（例如 "read_aoud" 顶掉 4203 语音助手通知），属确定性缺陷，从根删掉兜底。
         val offset = when (owner to key) {
             "voice" to "assistant" -> 0      // 4203 语音助手浮窗
             "voice" to "read_aloud" -> 1     // 4204 朗读播放
             "macro_recording" to "recording" -> 0  // 9600 录制中
             "macro_recording" to "stopped" -> 1    // 9601 录制结果
-            else -> 0
+            else -> error("未登记的固定槽位：$owner.$key（先在 fixedIdOf 补上）")
         }
         return (seg.range.first + offset).coerceIn(seg.range)
     }
 
-    /** owner 对应的 channel（发起点不再硬编码 channel 字符串）。 */
-    fun channelOf(owner: String): NotificationChannel = when (owner) {
-        "execution_service" -> NotificationChannel.EXECUTION
-        "run_result" -> NotificationChannel.RUN_RESULTS
-        "notify_user_proactive", "approval_pending" -> NotificationChannel.PROACTIVE
-        "approval_attention" -> NotificationChannel.ATTENTION
-        "scheduled_task_running", "scheduled_task_result" -> NotificationChannel.SCHEDULED_TASKS
-        "background_command", OWNER_JOB_WAKEUP -> NotificationChannel.BACKGROUND_COMMANDS
-        "macro_recording" -> NotificationChannel.MACRO_RECORDING
-        "voice" -> NotificationChannel.ASSISTANT_SPEECH
-        else -> error("未登记的通知 owner 的 channel 映射：$owner（先在 channelOf 补上）")
+    /** owner → 默认 channel（FGS / 发起点统一从这里取，不再各自硬编码 channel 字符串）。 */
+    fun channelOf(owner: String): NotificationChannel = channelSetFor(owner).first()
+
+    private fun channelSetFor(owner: String): Set<NotificationChannel> =
+        allowedChannelsFor(owner).ifEmpty {
+            error("未登记的通知 owner 的 channel 映射：$owner（先在 allowedChannels 补上）")
+        }
+
+    /**
+     * voice 段按用途取 channel：语音助手走 ASSISTANT_SPEECH、朗读走 READ_ALOUD。
+     * 过去 channelOf("voice") 只能给出 ASSISTANT_SPEECH，READ_ALOUD 在架构上不可表达，
+     * 逼得 4 个 FGS 各自写死字面量——现在从号段唯一源统一派生。
+     */
+    fun channelOf(owner: String, key: String): NotificationChannel = when (owner to key) {
+        "voice" to "read_aloud" -> NotificationChannel.READ_ALOUD
+        "voice" to "assistant" -> NotificationChannel.ASSISTANT_SPEECH
+        else -> channelOf(owner)
     }
 
     /** 新功能加段前自查：这段是否完全空闲（不与任何已登记段相交）。 */
     fun isNotificationIdRangeFree(range: IntRange): Boolean =
         allIdSegments.none { range.first <= it.range.last && it.range.first <= range.last }
+
+    /**
+     * 在**任意已登记段**（通知 ID 或 requestCode）内按 key 稳定散列的唯一实现。
+     * [NotificationPolicy] 的所有 requestCode 派生一律委托这里，杜绝同段两套散列数学。
+     */
+    fun hashedIn(segmentOwner: String, key: String): Int {
+        val seg = (allIdSegments + allRequestCodeSegments).firstOrNull { it.owner == segmentOwner }
+            ?: error("未登记的段 owner：$segmentOwner")
+        val hash = key.fold(0) { acc, ch -> acc * 31 + ch.code }
+        val nonNegative = kotlin.math.abs(hash.toLong())
+        return seg.range.first + (nonNegative % seg.range.count()).toInt()
+    }
+
+    /** 单值 requestCode 段的唯一取值入口（AgentNotifications.RequestCodes 转发引用，不再写字面量）。 */
+    fun requestCodeOf(segmentOwner: String): Int {
+        val seg = allRequestCodeSegments.firstOrNull { it.owner == segmentOwner }
+            ?: error("未登记的 requestCode 段 owner：$segmentOwner")
+        return seg.range.first
+    }
+
+    /**
+     * 把一个整数值**线性映射**进已登记段（保持相邻输入相邻输出、且不碰撞，只要输入跨度 ≤ 段宽）。
+     * 用于「通知 ID → requestCode」这类需要保持一一对应、不能用字符串散列的派生（notify_reply）。
+     */
+    fun mapIntoSegment(segmentOwner: String, value: Int): Int {
+        val seg = (allIdSegments + allRequestCodeSegments).firstOrNull { it.owner == segmentOwner }
+            ?: error("未登记的段 owner：$segmentOwner")
+        val offset = kotlin.math.abs(value.toLong() % seg.range.count()).toInt()
+        return seg.range.first + offset
+    }
 }

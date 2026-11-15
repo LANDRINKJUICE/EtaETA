@@ -8,6 +8,7 @@ import io.github.mangi.eta.R
 import io.github.mangi.eta.agent.notify.AgentNotifications
 import io.github.mangi.eta.ui.MainActivity
 import io.github.mangi.eta.agent.notify.AttentionIntent
+import io.github.mangi.eta.agent.notify.NotificationKey
 import io.github.mangi.eta.agent.notify.AttentionPublisher
 import io.github.mangi.eta.agent.notify.NotificationIdRegistry
 
@@ -24,8 +25,7 @@ import io.github.mangi.eta.agent.notify.NotificationIdRegistry
  */
 internal object BackgroundCommandNotification {
     /** 与自动唤醒通知共用同一条 channel：语义同属"后台命令结果"，避免多出一条用户要单独静音的 channel。 */
-    internal const val CHANNEL = "eta_background_commands"
-    private const val NOTIFICATION_ID = 1124
+    val CHANNEL: String get() = NotificationIdRegistry.channelOf("background_command").id
 
     fun show(context: Context, task: DetachedTask) {
         val open = PendingIntent.getActivity(
@@ -68,15 +68,15 @@ internal object BackgroundCommandNotification {
                 Notification.Action.Builder(
                     null,
                     context.getString(R.string.notify_action_open_task_center),
-                    AgentNotifications.taskCenterIntent(context, NOTIFICATION_ID + 1, "RUNNING"),
+                    AgentNotifications.taskCenterIntent(context, NotificationIdRegistry.idOf("background_command") + 1, "RUNNING"),
                 ).build(),
             )
             .build()
         AttentionPublisher.publish(context,
             AttentionIntent(
-                notificationId = NotificationIdRegistry.idOf("background_command"),
+                key = NotificationKey(NotificationIdRegistry.idOf("background_command"), task.id),
                 channel = NotificationIdRegistry.channelOf("background_command"),
-                objectKey = task.id, tag = task.id,
+                subject = task.id,
             ), notification)
     }
 

@@ -11,7 +11,9 @@ import io.github.mangi.eta.R
 import io.github.mangi.eta.core.AndroidAgentLogger
 import io.github.mangi.eta.core.safeLogType
 import io.github.mangi.eta.ui.MainActivity
+import io.github.mangi.eta.agent.notify.AgentNotifications
 import io.github.mangi.eta.agent.notify.AttentionIntent
+import io.github.mangi.eta.agent.notify.NotificationKey
 import io.github.mangi.eta.agent.notify.AttentionPublisher
 import io.github.mangi.eta.agent.notify.NotificationIdRegistry
 
@@ -21,7 +23,6 @@ import io.github.mangi.eta.agent.notify.NotificationIdRegistry
  * 选通知而不是悬浮窗：成本最低、不引入额外悬浮权限、也不遮挡用户正在操作的目标应用。
  */
 internal object MacroRecordingNotifications {
-    const val CHANNEL_ID = "macro_recording"
 
     /**
      * 通知 id 分段（审查 m4）：自动任务占用 9000..9290，宏录制固定用 9600（录制中）与
@@ -42,7 +43,7 @@ internal object MacroRecordingNotifications {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val builder = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            Notification.Builder(context, CHANNEL_ID)
+            AgentNotifications.builder(context, NotificationIdRegistry.channelOf("macro_recording"))
         } else {
             @Suppress("DEPRECATION")
             Notification.Builder(context)
@@ -77,9 +78,9 @@ internal object MacroRecordingNotifications {
             .build()
         AttentionPublisher.publish(context,
             AttentionIntent(
-                notificationId = NotificationIdRegistry.fixedIdOf("macro_recording", "recording"),
+                key = NotificationKey(NotificationIdRegistry.fixedIdOf("macro_recording", "recording")),
                 channel = NotificationIdRegistry.channelOf("macro_recording"),
-                objectKey = "recording",
+                subject = "recording",
             ), notification)
     }
 
@@ -91,7 +92,7 @@ internal object MacroRecordingNotifications {
     /** 停止录制后的结果提示（非阻塞，允许用户稍后在宏列表里看到）。 */
     fun showStopped(context: Context, summary: String) {
         val builder = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            Notification.Builder(context, CHANNEL_ID)
+            AgentNotifications.builder(context, NotificationIdRegistry.channelOf("macro_recording"))
         } else {
             @Suppress("DEPRECATION")
             Notification.Builder(context)
@@ -122,9 +123,9 @@ internal object MacroRecordingNotifications {
             .build()
         AttentionPublisher.publish(context,
             AttentionIntent(
-                notificationId = NotificationIdRegistry.fixedIdOf("macro_recording", "stopped"),
+                key = NotificationKey(NotificationIdRegistry.fixedIdOf("macro_recording", "stopped")),
                 channel = NotificationIdRegistry.channelOf("macro_recording"),
-                objectKey = "stopped",
+                subject = "stopped",
             ), notification)
     }
 }

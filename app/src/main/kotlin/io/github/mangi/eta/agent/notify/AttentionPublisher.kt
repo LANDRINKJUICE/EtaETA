@@ -8,25 +8,51 @@ import android.media.AudioAttributes
 import android.media.RingtoneManager
 import android.os.Build
 import io.github.mangi.eta.R
+import java.util.concurrent.ConcurrentHashMap
 
 /**
- * 通知的**唯一物理出口**（2026-11-15 一次统一）。
+ * 通知的**唯一物理出口**（2026-11-15 从根重构 + 独立二审闭环）。
  *
- * 全仓 `manager.notify(` 只此一处；channel 注册也只此一处（[ensureAllChannels] 按
- * [NotificationIdRegistry.NotificationChannel] 表一次性建全）。所有发起点构造
- * [AttentionIntent] 交给 [AttentionDirector.decide] 裁决，再由这里落地：
- *  - 普通通知：[publish] 裁决 + 构造 + notify；
- *  - 前台服务载体：[build] 返回构造好的 Notification 供 service.startForeground 用——
- *    FGS type / 停止按钮 / 流体云 ProgressStyle 等系统语义由调用方声明进 render，
- *    但 ID / channel / 内容 / 号段全部来自统一意图，不再各自硬编码。
+ * 全仓 `manager.notify(` / `createNotificationChannel(` / `manager.cancel(` 只此一处
+ * （`scripts/check-unfixed.sh` 机器强制）。所有发起点构造 [AttentionIntent] 交
+ * [AttentionDirector.decide] 裁决、把已构造好的 Notification 传进 [publish]，由这里统一落地
+ * notify 与终态收尾（撤 ongoing）。
  *
- * 结构护栏（[ATTENTION_PUBLISHER 唯一性]）：`scripts/check-unfixed.sh` 会断言全仓
- * `.notify(` 调用只出现在本文件，新增发起点若绕过这里直接 notify → 闸红。
+ * 从根解决的确定性缺陷：
+ *  - **限流不谎报 / 不白烧 / 不超发**：仅 `notify_user` 带 [AttentionIntent.AdmissionClaim]；
+ *    出口用原子的 [NotificationPolicy.RateLimit.reserve] + [NotificationPolicy.RunBudget.reserve]
+ *    先占额，notify 落地失败则 rollback（回退额度）。gate 与 commit 同一把锁，杜绝并发超发与
+ *    「吞掉 tryAcquire 返回值」。
+ *  - **落地结果如实回流**：`manager == null` / notify 抛异常返回 `PUBLISH_FAILED`。
+ *  - **撤号不漂移**：notify / cancel / replaceOngoing 全用 [NotificationKey]（id + tag）。
+ *  - **终态单一工厂**：[publishTerminal] 按 **runId** 幂等（不是 conversationId——避免同会话
+ *    跨轮 / 唤醒会话追问互相吞），终态归属由调用方传 `wakeupRound`（本次 run 是否唤醒轮），
+ *    不按会话前缀永久绑定（唤醒会话里用户追问应正常拿 run_result）。
+ *
+ * 前台服务 `startForeground` 载体是系统强制可见的白名单豁免：不经 decide/publish，但 ID 与
+ * channel 一律取 [NotificationIdRegistry]；[foregroundOwners] 由 `check-unfixed.sh` 强制接线。
  */
 internal object AttentionPublisher {
 
-    /** channel 表进程内只注册一次；系统本身幂等，这里省掉每次 publish 的 9 次 binder。 */
     @Volatile private var channelsEnsured = false
+
+    /** 主动沟通（notify_user）的进程级限流与每-run 配额；唯一持有者=唯一出口。 */
+    private val rateLimit = NotificationPolicy.RateLimit()
+    private val runBudget = NotificationPolicy.RunBudget()
+
+    /** 终态幂等账本：按 **runId** 记「本轮终态已处理」，跨轮/跨会话不互相吞。 */
+    private val publishedTerminals = ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * FGS 前台服务载体白名单：owner → 该 Service 构造通知用的 channel。
+     * `check-unfixed.sh` 据此断言「startForeground 只允许出现在这些 owner 对应的文件、且 channel 取自 Registry」。
+     */
+    val foregroundOwners: Map<String, NotificationIdRegistry.NotificationChannel> = mapOf(
+        "execution_service" to NotificationIdRegistry.NotificationChannel.EXECUTION,
+        "scheduled_task_running" to NotificationIdRegistry.NotificationChannel.SCHEDULED_TASKS,
+        "voice" to NotificationIdRegistry.NotificationChannel.ASSISTANT_SPEECH,
+        "voice_read_aloud" to NotificationIdRegistry.NotificationChannel.READ_ALOUD,
+    )
 
     /** 所有 channel 的唯一注册入口（幂等）。完整保留改造前各 channel 的 sound/vibration/badge 语义。 */
     fun ensureAllChannels(context: Context) {
@@ -35,36 +61,30 @@ internal object AttentionPublisher {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         var allOk = true
         NotificationIdRegistry.NotificationChannel.entries.forEach { ch ->
-            val importance = when (ch.id) {
-                NotificationIdRegistry.NotificationChannel.ATTENTION.id -> NotificationManager.IMPORTANCE_HIGH
-                NotificationIdRegistry.NotificationChannel.EXECUTION.id,
-                NotificationIdRegistry.NotificationChannel.MACRO_RECORDING.id,
-                NotificationIdRegistry.NotificationChannel.ASSISTANT_SPEECH.id,
-                NotificationIdRegistry.NotificationChannel.READ_ALOUD.id -> NotificationManager.IMPORTANCE_LOW
+            val importance = when (ch) {
+                NotificationIdRegistry.NotificationChannel.ATTENTION -> NotificationManager.IMPORTANCE_HIGH
+                NotificationIdRegistry.NotificationChannel.EXECUTION,
+                NotificationIdRegistry.NotificationChannel.MACRO_RECORDING,
+                NotificationIdRegistry.NotificationChannel.ASSISTANT_SPEECH,
+                NotificationIdRegistry.NotificationChannel.READ_ALOUD -> NotificationManager.IMPORTANCE_LOW
                 else -> NotificationManager.IMPORTANCE_DEFAULT
             }
             val label = channelLabel(context, ch)
             val ok = runCatching {
                 manager.createNotificationChannel(NotificationChannel(ch.id, label, importance).apply {
                     when (ch) {
-                        // 改造前 AgentNotifications.ensureChannels 的 PROACTIVE：普通主动沟通明确静音、不振、有角标。
                         NotificationIdRegistry.NotificationChannel.PROACTIVE -> {
                             description = context.getString(R.string.notify_channel_proactive_desc)
-                            setShowBadge(true)
-                            enableVibration(false)
-                            setSound(null, null)
+                            setShowBadge(true); enableVibration(false); setSound(null, null)
                         }
-                        // ATTENTION：真正紧急，heads-up + 提示音 + 振动 + 角标。丢了 setSound 会让新装用户 important 通知不响。
                         NotificationIdRegistry.NotificationChannel.ATTENTION -> {
                             description = context.getString(R.string.notify_channel_attention_desc)
-                            setShowBadge(true)
-                            enableVibration(true)
+                            setShowBadge(true); enableVibration(true)
                             setSound(
                                 RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION),
                                 AudioAttributes.Builder()
                                     .setUsage(AudioAttributes.USAGE_NOTIFICATION)
-                                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                                    .build(),
+                                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build(),
                             )
                         }
                         NotificationIdRegistry.NotificationChannel.MACRO_RECORDING -> setShowBadge(false)
@@ -75,7 +95,6 @@ internal object AttentionPublisher {
             }.isSuccess
             if (!ok) allOk = false
         }
-        // 全部成功才置位；某次 channel 创建失败时下次 publish 会重试，不留半注册状态。
         if (allOk) channelsEnsured = true
     }
 
@@ -92,7 +111,6 @@ internal object AttentionPublisher {
             NotificationIdRegistry.NotificationChannel.READ_ALOUD -> context.getString(R.string.read_aloud_channel)
         }
 
-    /** 唯一 channel 开关查询（供 DisturbContext.channelEnabled）。 */
     fun channelEnabled(context: Context, ch: NotificationIdRegistry.NotificationChannel): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return true
         val manager = context.getSystemService(NotificationManager::class.java) ?: return false
@@ -100,32 +118,20 @@ internal object AttentionPublisher {
         return channel.importance != NotificationManager.IMPORTANCE_NONE
     }
 
-    /** 组装 DisturbContext 的唯一入口：通知开关 / channel / 前台真相全部从统一源取。 */
-    fun defaultContext(
-        context: Context,
-        intent: AttentionIntent,
-        rateLimitAllows: Boolean = true,
-        budgetAllows: Boolean = true,
-    ): DisturbContext {
+    /** 只放**客观事实**，全部从统一源取；不回填意图开关、不放恒真假闸门。 */
+    fun defaultContext(context: Context, intent: AttentionIntent): DisturbContext {
         val manager = context.getSystemService(NotificationManager::class.java)
         return DisturbContext(
             notificationsEnabled = manager?.areNotificationsEnabled() ?: false,
             channelEnabled = channelEnabled(context, intent.channel),
-            foreground = AppForeground.isForeground(),
-            // 从意图读「是否用户正盯着的有值守 UI 聊天」，供 AttentionDirector 一处裁决前台抑制；
-            // 不再恒 false（恒 false 会让 showRunResult 的前台静默语义失效）。
-            foregroundUiChat = intent.suppressIfForegroundChat,
-            unattended = intent.unattended,
-            rateLimitAllows = rateLimitAllows,
-            budgetAllows = budgetAllows,
+            appForeground = AppForeground.isForeground(),
         )
     }
 
     /**
-     * 唯一发布入口（**兼容重载**：发起点已用各自 Builder 构造好 Notification 时用这个）。
-     * 12 个既有发起点收编就是一行替换：`manager.notify(id, n)` → 本方法。
-     * 公共裁决（号段合法性 / 打扰 / 前台抑制 / 撤 ongoing）与新出口完全一致，
-     * Builder 细节（深链、RemoteInput、决策按钮）留在各模块，零重构风险——逻辑收敛、代码不硬并。
+     * 唯一发布入口。顺序即契约：
+     * 撤 ongoing（无条件，先于一切）→ 准入占额（原子 reserve）→ 裁决 → 建 channel → notify
+     * → 落地失败 rollback。任何一步不放行都不留僵尸、不占额、不谎报。
      */
     fun publish(
         context: Context,
@@ -133,49 +139,105 @@ internal object AttentionPublisher {
         notification: Notification,
         ctx: DisturbContext = defaultContext(context, intent),
     ): AttentionDirector.AttentionDecision {
-        val decision = AttentionDirector.decide(intent, ctx)
-        decision.cancelOngoingIds.forEach { cancel(context, it) }
-        if (!decision.publish) return decision
-        val manager = context.getSystemService(NotificationManager::class.java) ?: return decision
-        ensureAllChannels(context)
-        runCatching {
-            if (intent.tag == null) manager.notify(intent.notificationId, notification)
-            else manager.notify(intent.tag, intent.notificationId, notification)
+        val cancelOngoing = intent.replaceOngoing
+        // (0) 收尾先行：无论最终发不发，进行中通知都要撤（带 tag 句柄），绝不残留 setOngoing 僵尸。
+        cancelOngoing.forEach { cancel(context, it) }
+
+        // (1) 主动沟通准入：原子占额（reserve = 判断+占用同一把锁），被拒绝时零副作用。
+        val claim = intent.admission
+        if (claim != null) {
+            val priority = if (claim.important) NotificationPolicy.Priority.IMPORTANT else NotificationPolicy.Priority.NORMAL
+            if (!runBudget.reserve(claim.runId, claim.important) ||
+                !rateLimit.reserve(priority, android.os.SystemClock.elapsedRealtime())
+            ) {
+                // 只可能有一个 reserve 成功、另一个失败：把已占的那个回退，保持原子。
+                runBudget.decrement(claim.runId, claim.important)
+                rateLimit.rollback(priority)
+                return AttentionDirector.AttentionDecision(
+                    false, cancelOngoing, AttentionDirector.RejectReason.RATE_LIMITED,
+                )
+            }
         }
+
+        // (2) 唯一裁决。
+        val decision = AttentionDirector.decide(intent, ctx)
+
+        // (3) 落地；失败或拒绝一律回退已占额度（落地成功才真正记账）。
+        fun rollbackAdmission() {
+            if (claim != null) {
+                val priority = if (claim.important) NotificationPolicy.Priority.IMPORTANT else NotificationPolicy.Priority.NORMAL
+                rateLimit.rollback(priority)
+                runBudget.decrement(claim.runId, claim.important)
+            }
+        }
+        if (!decision.publish) {
+            rollbackAdmission()
+            return decision
+        }
+        val manager = context.getSystemService(NotificationManager::class.java)
+        if (manager == null) {
+            rollbackAdmission()
+            return AttentionDirector.AttentionDecision(false, cancelOngoing, AttentionDirector.RejectReason.PUBLISH_FAILED)
+        }
+        ensureAllChannels(context)
+        val posted = runCatching {
+            if (intent.key.tag == null) manager.notify(intent.key.id, notification)
+            else manager.notify(intent.key.tag, intent.key.id, notification)
+        }.isSuccess
+        if (!posted) {
+            rollbackAdmission()
+            return AttentionDirector.AttentionDecision(false, cancelOngoing, AttentionDirector.RejectReason.PUBLISH_FAILED)
+        }
+        return AttentionDirector.AttentionDecision(true, cancelOngoing)
+    }
+
+    /**
+     * 终态**单一工厂**：所有「一轮 run 结束」的结果通知都走这里。
+     *  - 按 [runId] 幂等（跨轮不互相吞）；失败/被抑制时移除标记允许重试。
+     *  - [wakeupRound] 由调用方按「本次 run 是不是后台唤醒轮」传入，不按会话前缀永久绑定：
+     *    唤醒轮会话里用户后续追问是普通 run，应正常拿 run_result 通知。
+     *  - [build] 只在真正要落地时调用，避免被抑制时白构造 Notification。
+     */
+    fun publishTerminal(
+        context: Context,
+        runId: String,
+        subject: String,
+        wakeupRound: Boolean = false,
+        suppressWhenForeground: Boolean = true,
+        build: (key: NotificationKey) -> Notification,
+    ): AttentionDirector.AttentionDecision {
+        if (wakeupRound) {
+            // 唤醒轮终态唯一由 JobWakeupNotifications.showFinished 用 9602 就地变形承担（finally 必达）。
+            return AttentionDirector.AttentionDecision(publish = false, cancelOngoing = emptyList())
+        }
+        if (runId.isBlank() || !publishedTerminals.add(runId)) {
+            return AttentionDirector.AttentionDecision(publish = false, cancelOngoing = emptyList())
+        }
+        val key = NotificationKey(NotificationIdRegistry.idOf("run_result", subject), subject)
+        val intent = AttentionIntent(
+            key = key,
+            channel = NotificationIdRegistry.channelOf("run_result"),
+            suppressWhenForeground = suppressWhenForeground,
+        )
+        val decision = publish(context, intent, build(key))
+        if (!decision.publish) publishedTerminals.remove(runId) // 被抑制/失败：允许重试
         return decision
     }
 
-    /** 准备阶段失败（没进 Runtime）结果通知：与正常失败共用 run_result 段、同 ID 变形、不双发。 */
-    fun publishFailureResult(
-        context: Context,
-        conversationId: String,
-        build: (notificationId: Int) -> Notification,
-    ): AttentionDirector.AttentionDecision {
-        // 唤醒轮会话的终态唯一由 9602（showFinished）承担；这里早退，避免 9502 + 9602 双发。
-        // 判定收归 AttentionDirector 一处，别在两处各写前缀比较。
-        if (AttentionDirector.isWakeupConversation(conversationId)) {
-            return AttentionDirector.AttentionDecision(publish = false, cancelOngoingIds = emptyList())
-        }
-        val id = NotificationIdRegistry.idOf("run_result", conversationId)
-        val intent = AttentionIntent(
-            notificationId = id,
-            channel = NotificationIdRegistry.NotificationChannel.RUN_RESULTS,
-            objectKey = conversationId,
-            tag = conversationId,
-            title = "", body = "",
-            unattended = true,
-        )
-        return publish(context, intent, build(id))
+    /** run 结束清掉该 run 的主动沟通配额；重复调用幂等。 */
+    fun releaseRun(runId: String) {
+        runBudget.release(runId)
     }
 
-    /** 结果 channel 单独 ensure（兼容既有调用；完整统一后统一走 ensureAllChannels）。 */
-    fun ensureResultChannel(context: Context) = ensureAllChannels(context)
-
-    /** 撤掉一条进行中通知（终态收尾，避免「正在处理」僵尸）。 */
-    fun cancel(context: Context, id: Int, tag: String? = null) {
+    /** 撤掉一条进行中通知（带唯一句柄，不会漏 tag）。 */
+    fun cancel(context: Context, key: NotificationKey) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         runCatching {
-            if (tag == null) manager.cancel(id) else manager.cancel(tag, id)
+            if (key.tag == null) manager.cancel(key.id) else manager.cancel(key.tag, key.id)
         }
     }
+
+    fun cancel(context: Context, id: Int) = cancel(context, NotificationKey(id))
+
+    fun ensureResultChannel(context: Context) = ensureAllChannels(context)
 }

@@ -1,8 +1,6 @@
 package io.github.mangi.eta.agent.notify
 
 import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.RemoteInput
 import android.content.Context
@@ -46,11 +44,13 @@ internal object AgentNotifications {
      * requestCode + FLAG_UPDATE_CURRENT 时会互相覆盖 extras（例如把"去确认"的 tab 覆盖成别的分区）。
      */
     object RequestCodes {
-        const val APPROVAL_CONTENT = 6_001
-        const val APPROVAL_ACTION = 6_002
-        const val SCHEDULED_CONTENT = 6_010
-        const val BACKGROUND_COMMAND_CONTENT = 6_020
-        const val ASSISTANT_SPEECH_STOP = 6_030
+        // requestCode 段值唯一定义在 NotificationIdRegistry.allRequestCodeSegments，这里只转发引用，
+        // 不再各写一份字面量（号段唯一源，改一处即可）。
+        val APPROVAL_CONTENT: Int get() = NotificationIdRegistry.requestCodeOf("approval_content")
+        val APPROVAL_ACTION: Int get() = NotificationIdRegistry.requestCodeOf("approval_action")
+        val SCHEDULED_CONTENT: Int get() = NotificationIdRegistry.requestCodeOf("scheduled_content")
+        val BACKGROUND_COMMAND_CONTENT: Int get() = NotificationIdRegistry.requestCodeOf("background_command_content")
+        val ASSISTANT_SPEECH_STOP: Int get() = NotificationIdRegistry.requestCodeOf("assistant_speech_stop")
         // 后台任务自动唤醒的两个 requestCode 不在这里：它必须按任务分散（见
         // NotificationPolicy.jobWakeupRequestCode / jobWakeupActionRequestCode，
         // 用固定值 + FLAG_UPDATE_CURRENT 会让多条通知的会话参数互相覆盖）。
@@ -236,6 +236,11 @@ internal object AgentNotifications {
         )
     }
 
+    /** 通用 builder（枚举重载）：channel 只接受 [NotificationIdRegistry.NotificationChannel]，
+     *  从根杜绝「Builder 用字符串字面量、intent 用枚举」两套真相导致改 id 后系统静默丢弃。 */
+    fun builder(context: Context, channel: NotificationIdRegistry.NotificationChannel): Notification.Builder =
+        builder(context, channel.id)
+
     /** 通用 builder：兼容 O 以下，统一小图标、时间、点击行为。 */
     fun builder(context: Context, channelId: String): Notification.Builder =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -249,7 +254,11 @@ internal object AgentNotifications {
     /**
      * 发布一条 notify_user 主动沟通通知。[spec] 的语义全部由 [NotificationPolicy.proactive] 决定。
      */
-    fun showProactive(context: Context, spec: NotificationPolicy.Proactive) {
+    fun showProactive(
+        context: Context,
+        spec: NotificationPolicy.Proactive,
+        admission: AttentionIntent.AdmissionClaim,
+    ): AttentionDirector.AttentionDecision {
         val replyConversationId = spec.conversationId
         // 点通知主体保持既有行为（草稿注入 / 任务中心 / 仅打开 App）；「回复」按钮才用会话 id 精确路由，
         // 不改动 notify_user 原有的点击语义，避免破坏已在正常使用的草稿功能。
@@ -264,7 +273,9 @@ internal object AgentNotifications {
                     appIntent(context, spec.notificationId)
                 }
         }
-        val notification = builder(context, spec.channelId)
+        val notification = builder(context, if (spec.priority == NotificationPolicy.Priority.IMPORTANT)
+            NotificationIdRegistry.NotificationChannel.ATTENTION
+        else NotificationIdRegistry.NotificationChannel.PROACTIVE)
             .setContentTitle(spec.title)
             .setContentText(spec.body)
             .setStyle(Notification.BigTextStyle().bigText(spec.body))
@@ -287,15 +298,17 @@ internal object AgentNotifications {
                 ).build(),
             )
             .build()
-        AttentionPublisher.publish(context,
+        return AttentionPublisher.publish(context,
             AttentionIntent(
-                notificationId = spec.notificationId,
-                // 与实际投递的 spec.channelId 同源：important 走 ATTENTION、其余 PROACTIVE。
-                // 否则用户关掉 eta_attention 时 Director 仍按 eta_proactive 放行、系统静默丢弃。
+                key = NotificationKey(spec.notificationId),
+                // 与 Builder 实际投递的 channel 同源（都取自 NotificationIdRegistry 枚举）：
+                // important 走 ATTENTION、其余 PROACTIVE；否则 Director 按 PROACTIVE 放行、系统静默丢弃。
                 channel = if (spec.priority == NotificationPolicy.Priority.IMPORTANT)
                     NotificationIdRegistry.NotificationChannel.ATTENTION
                 else NotificationIdRegistry.NotificationChannel.PROACTIVE,
-                objectKey = spec.notificationId.toString(),
+                subject = spec.conversationId,
+                // 主动沟通准入：由唯一出口 gate -> 落地成功才记账；工具据此如实回 ok。
+                admission = admission,
             ), notification)
     }
 
@@ -304,9 +317,8 @@ internal object AgentNotifications {
      * [count] <= 0 时清除通知。
      */
     fun showApprovalPending(context: Context, count: Int) {
-        val manager = context.getSystemService(NotificationManager::class.java) ?: return
         if (count <= 0) {
-            runCatching { manager.cancel(NotificationPolicy.APPROVAL_PENDING_ID) }
+            AttentionPublisher.cancel(context, NotificationKey(NotificationIdRegistry.idOf("approval_pending")))
             return
         }
         ensureChannels(context)
@@ -316,7 +328,7 @@ internal object AgentNotifications {
             titleFmt = context.getString(R.string.notify_approval_title),
             bodyFmt = context.getString(R.string.notify_approval_body),
         )
-        val notification = builder(context, NotificationPolicy.CHANNEL_PROACTIVE)
+        val notification = builder(context, NotificationIdRegistry.NotificationChannel.PROACTIVE)
             .setContentTitle(title)
             .setContentText(body)
             .setStyle(Notification.BigTextStyle().bigText(body))
@@ -336,16 +348,14 @@ internal object AgentNotifications {
             .build()
         AttentionPublisher.publish(context,
             AttentionIntent(
-                notificationId = NotificationIdRegistry.idOf("approval_pending"),
+                key = NotificationKey(NotificationIdRegistry.idOf("approval_pending")),
                 channel = NotificationIdRegistry.channelOf("approval_pending"),
-                objectKey = "approval_pending", ), notification)
+                subject = "approval_pending",
+            ), notification)
     }
 
     fun cancelApprovalPending(context: Context) {
-        runCatching {
-            context.getSystemService(NotificationManager::class.java)
-                ?.cancel(NotificationPolicy.APPROVAL_PENDING_ID)
-        }
+        AttentionPublisher.cancel(context, NotificationKey(NotificationIdRegistry.idOf("approval_pending")))
     }
 
     /**
@@ -367,7 +377,7 @@ internal object AgentNotifications {
         context: Context,
         request: io.github.mangi.eta.agent.approval.AgentApprovalRequest,
         notificationId: Int,
-    ) {
+    ): AttentionDirector.AttentionDecision {
         val policy = io.github.mangi.eta.agent.approval.AgentApprovalAttentionPolicy
         val actions = policy.notificationActions(request)
         val danger = request.kind == io.github.mangi.eta.agent.approval.AgentApprovalKind.ToolRisk
@@ -412,7 +422,7 @@ internal object AgentNotifications {
             request.conversationId,
             request.id,
         )
-        val notification = builder(context, NotificationPolicy.CHANNEL_ATTENTION)
+        val notification = builder(context, NotificationIdRegistry.NotificationChannel.ATTENTION)
             .setContentTitle(title)
             .setContentText(body)
             .setStyle(Notification.BigTextStyle().bigText(body))
@@ -501,11 +511,12 @@ internal object AgentNotifications {
                 }
             }
             .build()
-        AttentionPublisher.publish(context,
+        return AttentionPublisher.publish(context,
             AttentionIntent(
-                notificationId = notificationId,
+                key = NotificationKey(notificationId),
                 channel = NotificationIdRegistry.channelOf("approval_attention"),
-                objectKey = request.id, ), notification)
+                subject = request.id,
+            ), notification)
     }
 
     /**
@@ -535,8 +546,6 @@ internal object AgentNotifications {
     private const val MAX_APPROVAL_BODY_CHARS = 160
 
     fun cancelApprovalAttention(context: Context, notificationId: Int) {
-        runCatching {
-            context.getSystemService(NotificationManager::class.java)?.cancel(notificationId)
-        }
+        AttentionPublisher.cancel(context, NotificationKey(notificationId))
     }
 }

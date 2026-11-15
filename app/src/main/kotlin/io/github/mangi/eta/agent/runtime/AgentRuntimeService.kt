@@ -456,37 +456,45 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
         return run
     }
 
-    private fun failBeforeExecution(run: RuntimeRunRegistry.Run, message: String) {
+    @JvmOverloads
+    private fun failBeforeExecution(
+        run: RuntimeRunRegistry.Run,
+        message: String,
+        publishNotification: Boolean = true,
+    ) {
         run.releaseIncoming()
         val result = AgentRuntimeWire.RunResult(
             run.runId, false, "", message,
             operation = run.request.operation, rewriteTargetMessageId = run.request.rewriteTargetMessageId,
         )
-        // 准备阶段失败（acquire 失败 / 图片准备失败 / 无可用的模型）历史上完全静默：
-        // 只 complete session 不发任何结果通知，前台服务一停用户什么也看不到。
-        // 从根修：经唯一出口 AttentionPublisher.publishFailureResult 发 run_result，复用
-        // buildRunResultNotification（与正常失败同一 builder、同 ID、同 tag），不碰
-        // updateRunStatus 的全局 resultPublished 状态机（避免一条 run 残留抑制下一条）。
-        // 它是「准备失败」这一互斥终态来源的唯一发布者，不会与 showRunResult 双发。
+        // 准备阶段失败（acquire 失败 / 图片准备失败 / 无可用的模型）历史上完全静默；现在统一走
+        // AttentionPublisher.publishTerminal 单一工厂（与正常终态同源、按会话幂等、不双发）。
+        // 用户主动停止（"已停止"）不发结果通知：与正常终态 failed=...&&error!="已停止" 同口径，
+        // 不再把「停止」误报成「运行失败」。
         val conversationId = run.conversationId
-        io.github.mangi.eta.agent.notify.AttentionPublisher.publishFailureResult(
-            context = this,
-            conversationId = conversationId,
-            build = { id ->
+        if (publishNotification) {
+            io.github.mangi.eta.agent.notify.AttentionPublisher.publishTerminal(
+                context = this,
+                runId = run.runId,
+                subject = conversationId,
+                // 准备阶段失败是异常：即便 App 在前台也必须可见，不能被前台静默策略吞掉。
+                suppressWhenForeground = false,
+                wakeupRound = run.request.handoff?.source ==
+                    AgentRuntimeWire.ETA_JOB_WAKEUP_HANDOFF_SOURCE,
+            ) { key ->
                 AgentExecutionService.buildRunResultNotification(
                     this, failed = true, detail = message.take(240),
                     conversationId = conversationId,
                     // 准备阶段失败常发生在 sendUnattendedRunStarted 之前（acquire 失败），会话
-                    // 还没被 UI 认领进聊天列表：此时挂「回复」按钮 / 按会话深链会点到空白页。
-                    // 故这条失败通知一律不挂回复、主体进任务中心（archive 也置空），
+                    // 还没被 UI 认领进聊天列表：不挂「回复」、主体进任务中心（archive 置空），
                     // 但仍是真实可见的结果通知，不静默。
                     uiConversation = false,
                     archiveSource = null,
                     archiveKey = null,
-                    notificationId = id,
+                    notificationId = key.id,
                 )
-            },
-        )
+            }
+        }
         dispatchResultIo {
             run.session.complete(result) {
                 runCatching { persistRunArtifacts(run.snapshotRequest(), result, emptyList()) }
@@ -607,6 +615,11 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
                 archiveKey = run.request.handoff?.payload
                     ?.let { io.github.mangi.eta.agent.runtime.AgentExternalArchivePayload.from(it)?.conversationKey }
                     ?.takeIf(String::isNotBlank),
+                runId = run.runId,
+                // 唤醒轮由 handoff source 判定（不是按会话前缀永久绑定）：唤醒会话里用户后续
+                // 追问是 AGENT_UI 普通 run，应正常拿 run_result 通知。
+                wakeupRound = run.request.handoff?.source ==
+                    AgentRuntimeWire.ETA_JOB_WAKEUP_HANDOFF_SOURCE,
             )
             val guiState = guiControl.state.value
             if (lastGuiOwnerRunId != run.runId || guiState.userPaused ||
@@ -860,7 +873,7 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
         val run = runs.get(runId) ?: return
         if (run.preparing) {
             run.session.controller.cancel()
-            failBeforeExecution(run, "已停止")
+            failBeforeExecution(run, "已停止", publishNotification = false)
             return
         }
         val session = run.session

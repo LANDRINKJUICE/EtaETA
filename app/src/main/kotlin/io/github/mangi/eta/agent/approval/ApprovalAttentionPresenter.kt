@@ -155,8 +155,8 @@ internal object ApprovalAttentionPresenter {
                 true
             } else {
                 runCatching {
-                    AgentNotifications.showApprovalAttention(ctx, request, notificationId)
-                    true
+                    // 落地结果如实回流：被裁决拒绝/发送失败时不记账，下轮仍会重试，不谎报已发出。
+                    AgentNotifications.showApprovalAttention(ctx, request, notificationId).publish
                 }.getOrDefault(false)
             }
             if (shown) {

@@ -8,14 +8,15 @@ package io.github.mangi.eta.agent.runtime
  * 2. UI 该为哪些 active run 补建会话（运行一开始就能进聊天列表、可对话）；
  * 3. 进展看门狗：长任务不被总墙钟一刀切误杀，只有持续无进展 / 超硬上限才超时。
  *
- * 前缀常量在此**唯一定义**，[AgentConversationIdentity] 直接引用，避免两处硬编码漂移。
+ * 前缀常量**唯一定义在** [io.github.mangi.eta.agent.notify.AttentionSubject]（通知裁决的会话分类
+ * 唯一源），这里 [JOB_WAKEUP_PREFIX] / [SCHEDULED_TASK_PREFIX] 只是转发引用，避免第三处字面量漂移。
  */
 internal object BackgroundRunPolicy {
-    /** 后台任务唤醒轮的稳定可回复会话前缀。 */
-    const val JOB_WAKEUP_PREFIX = "conv-wakeup-"
+    /** 后台任务唤醒轮的稳定可回复会话前缀（唯一字面量在 AttentionSubject）。 */
+    const val JOB_WAKEUP_PREFIX = io.github.mangi.eta.agent.notify.AttentionSubject.JOB_WAKEUP_PREFIX
 
-    /** 自动 / 计划任务的稳定可回复会话前缀。 */
-    const val SCHEDULED_TASK_PREFIX = "conv-schedule-"
+    /** 自动 / 计划任务的稳定可回复会话前缀（唯一字面量在 AttentionSubject）。 */
+    const val SCHEDULED_TASK_PREFIX = io.github.mangi.eta.agent.notify.AttentionSubject.SCHEDULED_TASK_PREFIX
 
     /** 所有「无人值守但可回复、需要 UI 认领、统一进状态层」的会话前缀。 */
     val UNATTENDED_PREFIXES: List<String> = listOf(JOB_WAKEUP_PREFIX, SCHEDULED_TASK_PREFIX)

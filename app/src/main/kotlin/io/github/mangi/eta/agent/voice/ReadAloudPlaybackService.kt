@@ -48,7 +48,8 @@ internal class ReadAloudPlaybackService : Service() {
             Intent(this, ReadAloudPlaybackService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        return Notification.Builder(this, CHANNEL)
+        return Notification.Builder(this,
+            io.github.mangi.eta.agent.notify.NotificationIdRegistry.channelOf("voice", "read_aloud").id)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(getString(R.string.read_aloud_notification_title))
             .setContentIntent(open)
@@ -61,8 +62,6 @@ internal class ReadAloudPlaybackService : Service() {
 
     companion object {
         private const val ACTION_STOP = "io.github.mangi.eta.action.STOP_READ_ALOUD"
-        private const val CHANNEL = "eta_read_aloud"
-        private const val NOTIFICATION_ID = 4204
 
         /** 当前朗读的停止入口；同一时间只有一个朗读，后开始的会替换前一个。 */
         @Volatile private var onStopRequested: (() -> Unit)? = null

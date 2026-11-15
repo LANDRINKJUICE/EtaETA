@@ -10,7 +10,8 @@ internal object AgentConversationIdentity {
     /** 后台任务唤醒 / 自动任务这类无人值守入口使用的真实 UI 会话前缀。
      *  必须与 [EXTERNAL_ARCHIVE_PREFIX] 区分：这类会话是 conversationsById 里可回复的普通会话，
      *  不是只读归档副本（否则发消息会被 isReadOnlyExternalArchiveConversation 拦掉、弹新空会话）。
-     *  唯一定义在 [BackgroundRunPolicy]（纯逻辑中心），此处只引用，避免两处硬编码漂移。 */
+     *  唯一字面量定义在 [io.github.mangi.eta.agent.notify.AttentionSubject]（会话分类唯一源），
+     *  [BackgroundRunPolicy] 与此处逐级转发引用，避免多处硬编码漂移。 */
     const val JOB_WAKEUP_CONVERSATION_PREFIX = BackgroundRunPolicy.JOB_WAKEUP_PREFIX
     /** 自动 / 计划任务的稳定可回复会话前缀，同样引用纯逻辑中心的唯一定义。 */
     const val SCHEDULED_TASK_CONVERSATION_PREFIX = BackgroundRunPolicy.SCHEDULED_TASK_PREFIX

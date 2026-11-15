@@ -24,7 +24,12 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          fetch-depth: 2
+          # pull_request 默认检出 refs/pull/N/merge（GitHub 合成的 merge 提交），git diff-tree 对它
+          # 默认不输出差异，会让「本轮改动面」判定失真（2026-11-15 三审 B1）。显式检出 PR head
+          # 真实 commit，让 HEAD 就是本轮最后一个功能提交；BASE 仍用 base.sha。
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          # PR base 可能比 depth=2 更远，取全量保证 BASE=base.sha 可解析（闸对不可解析 fail-closed）。
+          fetch-depth: 0
           persist-credentials: false
 
       # 未修项硬闸：本次改动新增 TODO/FIXME/@Ignore/@Disabled 即拦下（铁律 2）。

@@ -478,29 +478,25 @@ class NotificationPolicyTest {
     }
 
     @Test
-    fun `admission checks budget first then rate limit and consumes both`() {
+    fun `gate does not consume quota and commit only after a successful publish`() {
+        // 从根重构后限流只有 AttentionPublisher 一处：gate（wouldAllow，零副作用）→ 落地 → commit。
+        // 这里钉住两个原子谓词本身无副作用、且与 tryAcquire/commit 口径一致。
         val rate = NotificationPolicy.RateLimit(normalIntervalMillis = 30_000, importantIntervalMillis = 60_000)
         val budget = NotificationPolicy.RunBudget(maxPerRun = 2, maxImportantPerRun = 1)
-        assertEquals(
-            null,
-            NotificationPolicy.admission(NotificationPolicy.Priority.NORMAL, "run", 1_000, rate, budget),
-        )
-        // 冷却期内：限流拒绝（此时不再占用 run 配额）。
-        assertEquals(
-            NotificationPolicy.CODE_RATE_LIMITED,
-            NotificationPolicy.admission(NotificationPolicy.Priority.NORMAL, "run", 2_000, rate, budget),
-        )
+        // gate 可重复调用、不占额
+        assertTrue(rate.wouldAllow(NotificationPolicy.Priority.NORMAL, 1_000))
+        assertTrue(rate.wouldAllow(NotificationPolicy.Priority.NORMAL, 1_000))
+        assertTrue(budget.wouldAllow("run", important = false))
+        assertTrue(budget.wouldAllow("run", important = false))
+        // 模拟「落地成功」才 commit
+        assertTrue(rate.tryAcquire(NotificationPolicy.Priority.NORMAL, 1_000))
+        budget.commit("run", important = false)
+        // 冷却期内 gate 变假，且不会因重复 gate 再扣配额
+        assertFalse(rate.wouldAllow(NotificationPolicy.Priority.NORMAL, 2_000))
         assertEquals(1, budget.activeRuns())
-        // 冷却过后放行并占用第二个名额。
-        assertEquals(
-            null,
-            NotificationPolicy.admission(NotificationPolicy.Priority.NORMAL, "run", 31_000, rate, budget),
-        )
-        // 第三次：run 配额已满，即使冷却也拒绝。
-        assertEquals(
-            NotificationPolicy.CODE_RATE_LIMITED,
-            NotificationPolicy.admission(NotificationPolicy.Priority.NORMAL, "run", 99_000, rate, budget),
-        )
+        // 落地被拒时（不 commit）：配额与冷却都不应被消耗
+        assertFalse(rate.wouldAllow(NotificationPolicy.Priority.NORMAL, 2_000))
+        assertTrue(budget.wouldAllow("run", important = false))
     }
 
     @Test

@@ -9,6 +9,7 @@ import io.github.mangi.eta.R
 import io.github.mangi.eta.agent.notify.AgentNotifications
 import io.github.mangi.eta.agent.notify.NotificationPolicy
 import io.github.mangi.eta.agent.notify.AttentionIntent
+import io.github.mangi.eta.agent.notify.NotificationKey
 import io.github.mangi.eta.agent.notify.AttentionPublisher
 import io.github.mangi.eta.agent.notify.NotificationIdRegistry
 
@@ -23,7 +24,6 @@ import io.github.mangi.eta.agent.notify.NotificationIdRegistry
  * 通知点击直达任务中心的"自动任务"分区，而不是回首页让用户自己找。
  */
 internal object ScheduledTaskNotifications {
-    const val CHANNEL_ID = "scheduled_tasks"
 
     /**
      * 通知 id 分段（审查 m4）：
@@ -84,9 +84,10 @@ internal object ScheduledTaskNotifications {
     ) {
         AttentionPublisher.publish(context,
             AttentionIntent(
-                notificationId = NotificationIdRegistry.idOf("scheduled_task_running"),
+                key = NotificationKey(NotificationIdRegistry.idOf("scheduled_task_running")),
                 channel = NotificationIdRegistry.channelOf("scheduled_task_running"),
-                objectKey = conversationId, ), running(context, title, conversationId, stage, elapsedMillis))
+                subject = conversationId,
+            ), running(context, title, conversationId, stage, elapsedMillis))
     }
 
     fun runningId(): Int = RUNNING_NOTIFICATION_ID
@@ -121,9 +122,9 @@ internal object ScheduledTaskNotifications {
             .build()
         AttentionPublisher.publish(context,
             AttentionIntent(
-                notificationId = resultNotificationId(task.id),
+                key = NotificationKey(resultNotificationId(task.id)),
                 channel = NotificationIdRegistry.channelOf("scheduled_task_result"),
-                objectKey = task.id, unattended = true,
+                subject = task.id,
             ), notification)
     }
 
@@ -139,7 +140,7 @@ internal object ScheduledTaskNotifications {
     }
 
     private fun baseBuilder(context: Context, contentText: String): Notification.Builder =
-        AgentNotifications.builder(context, CHANNEL_ID)
+        AgentNotifications.builder(context, NotificationIdRegistry.channelOf("scheduled_task_running"))
             .setContentText(contentText)
             .setContentIntent(
                 AgentNotifications.taskCenterIntent(context, AgentNotifications.RequestCodes.SCHEDULED_CONTENT, "SCHEDULED"),

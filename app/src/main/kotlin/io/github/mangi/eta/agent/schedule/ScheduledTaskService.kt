@@ -78,6 +78,8 @@ internal class ScheduledTaskService : Service() {
             .ifBlank { getString(R.string.schedule_notification_running_title) }
         val conversationId = intent.getStringExtra(EXTRA_CONVERSATION_ID).orEmpty()
         // 先进入前台：Android 12+ 要求 startForegroundService 后在极短时间内 startForeground。
+        // FGS 载体也必须走统一 channel 注册（与其余 3 个 FGS 一致，护栏强制）。
+        io.github.mangi.eta.agent.notify.AttentionPublisher.ensureAllChannels(this)
         val entered = runCatching {
             val notification = ScheduledTaskNotifications.running(this, title, conversationId)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {

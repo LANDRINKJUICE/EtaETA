@@ -19,7 +19,8 @@ internal class AssistantSpeechForeground(private val service: Service) {
             io.github.mangi.eta.agent.notify.AgentNotifications.RequestCodes.ASSISTANT_SPEECH_STOP,
             Intent(service, EtaAssistantOverlayService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-        val notification = Notification.Builder(service, CHANNEL)
+        val notification = Notification.Builder(service,
+            io.github.mangi.eta.agent.notify.NotificationIdRegistry.channelOf("voice", "assistant").id)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
             .setContentText(service.getString(R.string.assistant_speech_running_note))
@@ -44,7 +45,5 @@ internal class AssistantSpeechForeground(private val service: Service) {
 
     companion object {
         const val ACTION_STOP = "io.github.mangi.eta.STOP_ASSISTANT_SPEECH"
-        private const val CHANNEL = "eta_assistant_speech"
-        private const val NOTIFICATION_ID = 4203
     }
 }
