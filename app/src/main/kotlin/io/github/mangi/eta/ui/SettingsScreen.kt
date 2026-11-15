@@ -26,6 +26,7 @@ import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.FilterAlt
 import androidx.compose.material.icons.rounded.GppMaybe
 import androidx.compose.material.icons.rounded.Hearing
+import androidx.compose.material.icons.rounded.HelpOutline
 import androidx.compose.material.icons.rounded.Hub
 import androidx.compose.material.icons.rounded.ImportContacts
 import androidx.compose.material.icons.rounded.Insights
@@ -548,7 +549,7 @@ private fun SettingsPageContent(
                         title = stringResource(R.string.settings_ask_user_title),
                         summary = stringResource(R.string.settings_ask_user_summary),
                         key = Prefs.Keys.AGENT_ASK_USER_ENABLED,
-                        icon = Icons.Rounded.ChatBubble,
+                        icon = Icons.Rounded.HelpOutline,
                         iconTint = SettingsIconColors.Blue,
                     )
                     CouiIconDivider()
@@ -1077,7 +1078,7 @@ private fun SettingsPageContent(
                             title = stringResource(R.string.settings_ask_user_title),
                             summary = stringResource(R.string.settings_ask_user_summary),
                             key = Prefs.Keys.AGENT_ASK_USER_ENABLED,
-                            icon = Icons.Rounded.ChatBubble,
+                            icon = Icons.Rounded.HelpOutline,
                             iconTint = SettingsIconColors.Blue,
                         )
                         SwitchPref(
