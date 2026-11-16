@@ -29,7 +29,7 @@ import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.FolderZip
 import androidx.compose.material.icons.rounded.Image
-import androidx.compose.material.icons.rounded.InsertDriveFile
+import androidx.compose.material.icons.automirrored.rounded.InsertDriveFile
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material.icons.rounded.Save
@@ -99,7 +99,7 @@ internal fun fmEntryVisual(entry: FileManagerRepository.FsEntry): Pair<ImageVect
         "c", "cpp", "h", "hpp", "go", "rs", "rb", "php", "yml", "yaml", "toml", "ini",
         "log", "conf", "gradle", "csv", "sql", "bat",
         -> Icons.Rounded.Description to Color(0xFF78909C)
-        else -> Icons.Rounded.InsertDriveFile to Color(0xFF90A4AE)
+        else -> Icons.AutoMirrored.Rounded.InsertDriveFile to Color(0xFF90A4AE)
     }
 }
 
@@ -467,12 +467,12 @@ internal fun FmPropertiesDialog(
             FmPropertyRow(stringResource(R.string.fm_name), details.path.substringAfterLast('/'))
             FmPropertyRow(
                 stringResource(R.string.fm_type),
-                if (details.isDir) context.getString(R.string.fm_folder) else context.getString(R.string.fm_file),
+                if (details.isDir) stringResource(R.string.fm_folder) else stringResource(R.string.fm_file),
             )
             if (!details.isDir) {
                 FmPropertyRow(stringResource(R.string.fm_size), fmFormatSize(context, details.sizeBytes) + " (${details.sizeBytes} B)")
             } else if (details.childCount != null) {
-                FmPropertyRow(stringResource(R.string.fm_contains), context.getString(R.string.fm_dir_item_count, details.childCount))
+                FmPropertyRow(stringResource(R.string.fm_contains), stringResource(R.string.fm_dir_item_count, details.childCount))
             }
             FmPropertyRow(stringResource(R.string.fm_location), details.path.substringBeforeLast('/'))
             FmPropertyRow(stringResource(R.string.fm_date), fmFormatDate(details.mtimeEpochSeconds))
