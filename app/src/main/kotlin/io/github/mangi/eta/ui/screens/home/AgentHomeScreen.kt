@@ -87,6 +87,7 @@ internal fun AgentHomeScreen(
                     onAttachFiles = { uris -> onAction(AgentHomeAction.FilesAttached(uris)) },
                     onAttachFolder = { uri -> onAction(AgentHomeAction.FolderAttached(uri)) },
                     onAttachFilePath = { path -> onAction(AgentHomeAction.FilePathAttached(path)) },
+                    onOpenFileManager = { onAction(AgentHomeAction.OpenFileManager) },
                     onRemoveFileReference = { id -> onAction(AgentHomeAction.RemoveFileReference(id)) },
                     onEditMessage = { id -> onAction(AgentHomeAction.EditMessage(id)) },
                     onCancelMessageEdit = { onAction(AgentHomeAction.CancelMessageEdit) },

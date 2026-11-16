@@ -91,6 +91,7 @@ internal fun AgentAttachmentPickerButton(
     onAttachFiles: (List<String>) -> Unit,
     onAttachFolder: (String) -> Unit,
     onAttachFilePath: (String) -> Unit,
+    onOpenFileManager: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -127,6 +128,7 @@ internal fun AgentAttachmentPickerButton(
         stringResource(R.string.attachment_file),
         stringResource(R.string.attachment_folder),
         stringResource(R.string.attachment_enter_path),
+        stringResource(R.string.route_file_manager),
     )
     val onSelectOption: (Int) -> Unit = { index ->
         when (index) {
@@ -139,6 +141,7 @@ internal fun AgentAttachmentPickerButton(
                 pathInput = ""
                 showPathDialog = true
             }
+            4 -> onOpenFileManager()
         }
     }
 

@@ -166,6 +166,7 @@ internal fun AgentChatInputBar(
     onAttachFiles: (List<String>) -> Unit,
     onAttachFolder: (String) -> Unit,
     onAttachFilePath: (String) -> Unit,
+    onOpenFileManager: () -> Unit,
     onRemoveFileReference: (String) -> Unit,
     onCancelMessageEdit: () -> Unit,
     modifier: Modifier = Modifier,
@@ -435,6 +436,7 @@ internal fun AgentChatInputBar(
                                 onAttachFiles = onAttachFiles,
                                 onAttachFolder = onAttachFolder,
                                 onAttachFilePath = onAttachFilePath,
+                                onOpenFileManager = onOpenFileManager,
                             )
 
                             Spacer(modifier = Modifier.width(2.dp))

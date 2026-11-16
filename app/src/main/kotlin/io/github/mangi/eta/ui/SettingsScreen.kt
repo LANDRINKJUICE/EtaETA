@@ -94,6 +94,7 @@ import io.github.mangi.eta.systemizer.SystemizerInstallResult
 import io.github.mangi.eta.ui.app.EnhancementSettingsHistory
 import io.github.mangi.eta.ui.app.LocalUiStyle
 import io.github.mangi.eta.ui.app.rememberDeviceCapabilities
+import io.github.mangi.eta.ui.components.ChatActionIcons
 import io.github.mangi.eta.ui.components.LanguagePreference
 import io.github.mangi.eta.ui.components.MiuixDialogActions
 import io.github.mangi.eta.ui.components.MiuixScaffoldPage
@@ -572,6 +573,17 @@ private fun SettingsPageContent(
                             )
                         },
                         onClick = { onNavigate(AppRoute.LinuxEnvironment) },
+                    )
+                    CouiIconDivider()
+                    CouiPreference(
+                        title = stringResource(R.string.route_file_manager),
+                        icon = {
+                            CouiSettingsIcon(
+                                ChatActionIcons.FileManager,
+                                SettingsIconColors.Blue,
+                            )
+                        },
+                        onClick = { onNavigate(AppRoute.FileManager) },
                     )
                 }
 
@@ -1099,6 +1111,16 @@ private fun SettingsPageContent(
                                 )
                             },
                             onClick = { onNavigate(AppRoute.LinuxEnvironment) },
+                        )
+                        ArrowPreference(
+                            title = stringResource(R.string.route_file_manager),
+                            startAction = {
+                                SettingsIcon(
+                                    icon = ChatActionIcons.FileManager,
+                                    tint = SettingsIconColors.Blue,
+                                )
+                            },
+                            onClick = { onNavigate(AppRoute.FileManager) },
                         )
                     }
                 }

@@ -15,6 +15,10 @@ sealed interface AppRoute : NavKey {
     @Serializable
     data object Terminal : AppRoute
 
+    /** 双窗文件管理器（MT 交互范式复刻）：聊天加号菜单、顶栏溢出菜单与设置页三处入口。 */
+    @Serializable
+    data object FileManager : AppRoute
+
     @Serializable
     data object Tools : AppRoute
 

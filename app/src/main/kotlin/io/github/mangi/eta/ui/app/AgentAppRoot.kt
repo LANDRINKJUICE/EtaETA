@@ -101,6 +101,7 @@ import io.github.mangi.eta.ui.screens.terminal.LinuxEnvironmentScreen
 import io.github.mangi.eta.ui.screens.terminal.LinuxFilesScreen
 import io.github.mangi.eta.ui.screens.terminal.SharedFoldersScreen
 import io.github.mangi.eta.ui.screens.terminal.TerminalEntryScreen
+import io.github.mangi.eta.ui.screens.filemanager.FileManagerScreen
 import io.github.mangi.eta.ui.screens.terminal.WorkspaceScreen
 import io.github.mangi.eta.ui.screens.tools.AgentToolsScreen
 import io.github.mangi.eta.ui.screens.tools.WebToolsSettingsScreen
@@ -392,6 +393,7 @@ fun AgentAppRoot(
             onStopKimiWeb = appViewModel::stopKimiWeb,
             onRefreshKimiWeb = appViewModel::refreshKimiWeb,
             onOpenBrowser = { openConversationBrowser() },
+            onOpenFileManager = { pushRoute(AppRoute.FileManager) },
             onOpenTaskCenter = { pushRoute(AppRoute.TaskCenter()) },
             onSelectConversation = { conversationId -> selectConversation(conversationId) },
             onConversationTogglePin = { conversation ->
@@ -508,6 +510,7 @@ fun AgentAppRoot(
                                 AgentHomeAction.OpenSystemEnhance -> pushRoute(AppRoute.SystemEnhance)
                                 AgentHomeAction.OpenSettings -> pushRoute(AppRoute.Settings)
                                 AgentHomeAction.OpenBrowser -> openConversationBrowser()
+                                AgentHomeAction.OpenFileManager -> pushRoute(AppRoute.FileManager)
                                 AgentHomeAction.ExpandRunTrace -> Unit
                             }
                         },
@@ -534,6 +537,11 @@ fun AgentAppRoot(
                         consoleStore = appViewModel.consoleStore,
                         onOpenEnvironment = { pushRoute(AppRoute.LinuxEnvironment) },
                     )
+                }
+            }
+            entry<AppRoute.FileManager>(swipeDismiss = swipeDismiss) {
+                RoutedShell(route = AppRoute.FileManager) {
+                    FileManagerScreen(onBack = ::popRoute)
                 }
             }
             entry<AppRoute.Tools>(swipeDismiss = swipeDismiss) {
