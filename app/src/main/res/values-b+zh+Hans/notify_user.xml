@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 主动沟通（notify_user）与通知灵动化新增文案：简体中文。 -->
+<resources>
+    <string name="notify_channel_proactive">Agent 主动提醒</string>
+    <string name="notify_channel_proactive_desc">后台任务有了值得你关注的结果时，Agent 主动发出的通知；也包括“有操作在等确认”的提醒。</string>
+    <string name="notify_channel_attention">紧急 Agent 提醒</string>
+    <string name="notify_channel_attention_desc">只用于真正紧急的主动提醒：更高优先级并带提示音。单独关掉不影响普通提醒。</string>
+
+    <string name="notify_default_title">Agent 提醒</string>
+
+    <string name="notify_action_open_task_center">打开任务中心</string>
+    <string name="notify_action_review">去确认</string>
+    <string name="notify_action_view_result">查看结果</string>
+
+
+    <!-- 审批通知「后台回复」RemoteInput：action 标签 + 输入框提示 -->
+    <string name="approval_reply_action_danger">拒绝并说明</string>
+    <string name="approval_reply_action_ask">我自己说</string>
+    <string name="approval_reply_hint_danger">告诉 Agent 应该怎么改</string>
+    <string name="approval_reply_hint_ask">输入你自己的答案</string>
+
+    <string name="notify_approval_title">%1$d 个操作等待你确认</string>
+    <string name="notify_approval_body">%1$d 个操作 Agent 已暂停执行。打开任务中心决定是否放行。</string>
+
+    <string name="notify_elapsed_format">%1$d 秒</string>
+    <string name="notify_stage_running">运行中</string>
+    <string name="notify_stage_starting">正在启动</string>
+
+    <string name="settings_proactive_notify">主动通知</string>
+    <string name="settings_proactive_notify_summary">允许 Agent 在后台任务或自动任务产生值得关注的结果时主动发通知。默认克制发送；紧急提醒是独立 channel。</string>
+    <string name="background_command_channel">后台命令结果</string>
+    <string name="background_command_channel_description">后台终端命令或守护服务结束时显示结果。</string>
+    <string name="assistant_speech_channel">助手语音</string>
+    <string name="assistant_speech_channel_description">仅在助手浮窗聆听或朗读期间显示。</string>
+    <string name="assistant_speech_running_note">仅在助手浮窗可见时运行</string>
+    <!-- notify_user 通知栏直接回复（Direct Reply） -->
+    <string name="notify_reply_action">回复</string>
+    <string name="notify_reply_hint">输入回复内容…</string>
+    <string name="notify_reply_failed">回复发送失败，请在会话里重新发送</string>
+</resources>

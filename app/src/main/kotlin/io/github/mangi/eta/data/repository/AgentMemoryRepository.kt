@@ -2,10 +2,12 @@ package io.github.mangi.eta.data.repository
 
 import android.content.Context
 import android.util.AtomicFile
+import io.github.mangi.eta.agent.memory.AgentMemorySemanticIndex
 import io.github.mangi.eta.data.datastore.SettingsDataStore
 import java.io.File
 import java.io.IOException
 import java.security.MessageDigest
+import java.time.LocalDate
 import kotlinx.coroutines.flow.Flow
 
 internal data class AgentMemorySnapshot(
@@ -39,6 +41,13 @@ internal sealed interface AgentMemoryMutation {
         val content: String,
     ) : AgentMemoryMutation
 
+    /** 按 Markdown 标题整体替换一节（标题保留，正文换成 content）；节不存在时追加到文末。 */
+    data class UpsertSection(
+        override val revision: String,
+        val heading: String,
+        val content: String,
+    ) : AgentMemoryMutation
+
     data class Clear(
         override val revision: String,
     ) : AgentMemoryMutation
@@ -58,6 +67,14 @@ internal class AgentMemoryException(
 /** 单一 MEMORY.md 的有界、原子文件存储。 */
 internal class AgentMemoryStore(
     rootDir: File,
+    /** 元数据时间戳来源；测试注入固定日期，运行时取当天。 */
+    private val today: () -> LocalDate = { LocalDate.now() },
+    /**
+     * 是否对「分割线以下」套记忆硬约束（日期/同名/字数）。现实 MEMORY.md = true；
+     * 角色剧情记忆 = false（剧情里常见 `---` 场景分隔，不该被现实记忆的日期约束误拦），
+     * 但敏感串扫描始终开启。
+     */
+    private val enforceSectionRules: Boolean = true,
 ) {
     private val memoryDir = File(rootDir, DIRECTORY_NAME)
     private val atomicFile = AtomicFile(File(memoryDir, FILE_NAME))
@@ -65,6 +82,11 @@ internal class AgentMemoryStore(
 
     fun snapshot(): AgentMemorySnapshot = synchronized(lock) {
         snapshotLocked()
+    }
+
+    /** 解析全文为结构化节；旧文件没有元数据注释时得到无元数据条目。 */
+    fun entries(): List<AgentMemoryEntry> = synchronized(lock) {
+        AgentMemoryEntries.parse(snapshotLocked().content)
     }
 
     fun read(
@@ -88,22 +110,42 @@ internal class AgentMemoryStore(
         }
         val updated = when (mutation) {
             is AgentMemoryMutation.ReplaceRange -> replaceRange(current, mutation)
-            is AgentMemoryMutation.Append -> append(current, mutation.content)
+            is AgentMemoryMutation.Append ->
+                append(current, AgentMemoryEntries.stampSections(mutation.content, today()))
+
+            is AgentMemoryMutation.UpsertSection -> upsertSection(current, mutation)
             is AgentMemoryMutation.Clear -> ""
         }
-        writeLocked(updated)
+        writeLocked(updated, current.content)
         AgentMemoryWriteResult.Success(snapshotOf(updated))
     }
 
     fun replaceAll(content: String): AgentMemorySnapshot = synchronized(lock) {
-        writeLocked(content)
+        writeLocked(content, snapshotLocked().content)
         snapshotOf(content)
     }
 
     fun replaceAllIfRevision(content: String, revision: String): AgentMemoryWriteResult = synchronized(lock) {
         val current = snapshotLocked()
         if (current.revision != revision) return@synchronized AgentMemoryWriteResult.Conflict(current)
-        writeLocked(content)
+        writeLocked(content, current.content)
+        AgentMemoryWriteResult.Success(snapshotOf(content))
+    }
+
+    /**
+     * 受信任的整篇替换（自动过期整理专用）：带 revision 乐观锁，且只扫敏感串、
+     * 不吃「分割线以下」的用户写入约束（整理是系统内务，不该被日期/重名规则拦）。
+     * 冲突时放弃本轮（下次启动/开开关再整理），不覆盖期间发生的新写入。
+     */
+    fun replaceAllTrustedIfRevision(content: String, revision: String): AgentMemoryWriteResult = synchronized(lock) {
+        val current = snapshotLocked()
+        if (current.revision != revision) return@synchronized AgentMemoryWriteResult.Conflict(current)
+        // 只复用敏感串闸门（enforceSectionRules=false），其余 section 约束跳过。
+        AgentMemoryValidator.validate(content, current.content, enforceSectionRules = false)?.let { violation ->
+            throw AgentMemoryException(code = violation.code, message = violation.message)
+        }
+        // 绕过 writeLocked 的 section 校验，但仍走同一套文件上限/原子写。
+        writeRawLocked(content)
         AgentMemoryWriteResult.Success(snapshotOf(content))
     }
 
@@ -129,7 +171,18 @@ internal class AgentMemoryStore(
         return snapshotOf(content, bytes)
     }
 
-    private fun writeLocked(content: String) {
+    private fun writeLocked(content: String, oldContent: String) {
+        // 单一咽喉：所有写入路径（手编保存 / 清空 / memory_write / 自动沉淀 / 角色记忆 /
+        // replaceAllIfRevision）都会经过这里。分割线以下套硬约束，顶部区豁免；
+        // 增量校验：只卡本次新增/改动的节，存量历史节放行（不追溯老数据）。
+        AgentMemoryValidator.validate(content, oldContent, enforceSectionRules)?.let { violation ->
+            throw AgentMemoryException(code = violation.code, message = violation.message)
+        }
+        writeRawLocked(content)
+    }
+
+    /** 只做文件上限与原子写，不含业务校验；供受信任的内务写入复用。 */
+    private fun writeRawLocked(content: String) {
         val bytes = content.toByteArray(Charsets.UTF_8)
         if (bytes.size > MAX_FILE_BYTES) {
             throw AgentMemoryException(
@@ -193,6 +246,80 @@ internal class AgentMemoryStore(
         if (snapshot.content.isEmpty()) return content
         return snapshot.content.trimEnd('\n') + "\n" + content
     }
+
+    private fun upsertSection(
+        snapshot: AgentMemorySnapshot,
+        mutation: AgentMemoryMutation.UpsertSection,
+    ): String {
+        val heading = mutation.heading.trim()
+        if (!HEADING_LINE.matches(heading)) {
+            throw AgentMemoryException(
+                code = "MEMORY_HEADING_INVALID",
+                message = "heading 必须是 1 到 3 级 Markdown 标题，如 '## 当前服务'",
+            )
+        }
+        val level = heading.takeWhile { it == '#' }.length
+        val lines = snapshot.content.memoryLines().toMutableList()
+
+        // 只把围栏代码块之外的行当作标题候选，避免正文里的 '# 注释' 被误判为节边界。
+        val headingCandidates = headingLineIndexes(lines)
+        val starts = headingCandidates.filter { lines[it].trim() == heading }
+        if (starts.size > 1) {
+            throw AgentMemoryException(
+                code = "MEMORY_HEADING_AMBIGUOUS",
+                message = "记忆中有多个同名标题 '$heading'，请先调用 memory_get 确认后改用 replace_range",
+            )
+        }
+        val start = starts.firstOrNull() ?: -1
+        if (start < 0) {
+            val appended = listOf(heading) +
+                AgentMemoryEntries.stampSection(heading, mutation.content, today()).memoryLines()
+            return append(snapshot, appended.joinToString("\n"))
+        }
+        // 节的结束位置：下一个同级或更高级标题。
+        val end = headingCandidates.firstOrNull { index ->
+            if (index <= start) return@firstOrNull false
+            val line = lines[index]
+            val lineLevel = line.takeWhile { it == '#' }.length
+            lineLevel in 1..level && line.getOrNull(lineLevel) == ' '
+        } ?: lines.size
+        // 替换同一标题时继承已有元数据：id 与 created 属于这一节的历史，不能被覆盖。
+        val previous = AgentMemoryEntries
+            .parse(lines.subList(start, end).joinToString("\n"))
+            .firstOrNull()
+            ?.metadata
+        val section = listOf(heading) +
+            AgentMemoryEntries
+                .stampSection(heading, mutation.content, today(), previous)
+                .memoryLines()
+        lines.subList(start, end).clear()
+        lines.addAll(start, section)
+        return lines.joinToString("\n")
+    }
+
+    /** 全文扫描一次，返回围栏外 Markdown 标题行的下标。 */
+    private fun headingLineIndexes(lines: List<String>): List<Int> {
+        val result = mutableListOf<Int>()
+        var fence: String? = null
+        lines.forEachIndexed { index, line ->
+            val trimmed = line.trimStart()
+            val marker = when {
+                trimmed.startsWith("```") -> "```"
+                trimmed.startsWith("~~~") -> "~~~"
+                else -> null
+            }
+            if (marker != null) {
+                fence = if (fence == marker) null else marker
+                return@forEachIndexed
+            }
+            if (fence == null && line.length - line.trimStart().length < 4 && HEADING_LINE.matches(line.trim())) {
+                result += index
+            }
+        }
+        return result
+    }
+
+    private val HEADING_LINE = Regex("^#{1,3}\\s+.+$")
 
     private fun page(
         snapshot: AgentMemorySnapshot,
@@ -310,6 +437,8 @@ internal object AgentMemoryRepository {
         if (!::store.isInitialized) {
             store = AgentMemoryStore(context.applicationContext.filesDir)
         }
+        // 四期向量缓存与记忆文件同目录；未启用语义检索时不会产生任何文件。
+        AgentMemorySemanticIndex.init(context.applicationContext.filesDir)
     }
 
     fun snapshot(): AgentMemorySnapshot {
@@ -334,6 +463,41 @@ internal object AgentMemoryRepository {
     fun replaceAll(content: String): AgentMemorySnapshot {
         ensureInitialized()
         return store.replaceAll(content)
+    }
+
+    /** 带 revision 乐观锁的整篇替换（UI 编辑保存用，避免覆盖进行中 run 的写入）。 */
+    fun replaceAllIfRevision(content: String, revision: String): AgentMemoryWriteResult {
+        ensureInitialized()
+        return store.replaceAllIfRevision(content, revision)
+    }
+
+    /**
+     * 启动时执行一次自动过期整理：开关打开才动；把分割线以下超阈值天数的整节移入 # 归档。
+     * 返回是否发生了改动（供调用方决定是否刷新 UI / 记日志）。纯本地、不发模型回合。
+     */
+    fun archiveExpiredIfEnabled(
+        enabled: Boolean,
+        now: java.time.LocalDate = java.time.LocalDate.now(),
+    ): Boolean {
+        if (!enabled) return false
+        ensureInitialized()
+        // 记忆总开关关着时不整理、不写盘。
+        if (runCatching { kotlinx.coroutines.runBlocking { isEnabled() } }.getOrDefault(true).not()) return false
+        val current = store.snapshot()
+        val updated = io.github.mangi.eta.agent.memory.AgentMemoryExpiry
+            .archiveExpired(current.content, now)
+        if (updated == current.content) return false
+        // 带 revision 乐观锁的受信任写入：冲突就放弃本轮（下次再整理），不覆盖期间的新写入。
+        return when (store.replaceAllTrustedIfRevision(updated, current.revision)) {
+            is AgentMemoryWriteResult.Success -> true
+            is AgentMemoryWriteResult.Conflict -> false
+        }
+    }
+
+    /** 结构化节视图，供相关性注入与语义检索共用。 */
+    fun entries(): List<AgentMemoryEntry> {
+        ensureInitialized()
+        return store.entries()
     }
 
     fun enabledFlow(): Flow<Boolean> = SettingsDataStore.memoryEnabledFlow()

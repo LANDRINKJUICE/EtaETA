@@ -313,7 +313,7 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
                 } else {
                     val runtimeConfig = runBlocking {
                         if (AgentRuntimeRequestConfigResolver.usesDefaultRuntimeConfig(request)) {
-                            RuntimeConfigRepository.currentRuntimeConfig()
+                            RuntimeConfigRepository.assistantOverlayRuntimeConfig()
                         } else {
                             RuntimeConfigRepository.oauthRuntimeConfigFor(
                                 providerId = request.config.providerId,
@@ -448,16 +448,53 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
                 "Agent runtime keep-alive start failed: type=${throwable.safeLogType()}"
             }
         }
+        // 无人值守后台 run（唤醒 / 自动任务 / 未来新增）已登记进 Registry，此刻发统一信号：
+        // 前台 UI 收到即认领这条会话进聊天列表（运行一开始就可观测 / 可对话）。放在 admit 之后
+        // 而非入口，保证 UI 的 queryActiveRuns 必能命中，从根上消除「广播早于 run 提交」的竞态。
+        sendUnattendedRunStarted(this, run.conversationId, run.runId)
         publishExecutionState()
         return run
     }
 
-    private fun failBeforeExecution(run: RuntimeRunRegistry.Run, message: String) {
+    @JvmOverloads
+    private fun failBeforeExecution(
+        run: RuntimeRunRegistry.Run,
+        message: String,
+        publishNotification: Boolean = true,
+    ) {
         run.releaseIncoming()
         val result = AgentRuntimeWire.RunResult(
             run.runId, false, "", message,
             operation = run.request.operation, rewriteTargetMessageId = run.request.rewriteTargetMessageId,
         )
+        // 准备阶段失败（acquire 失败 / 图片准备失败 / 无可用的模型）历史上完全静默；现在统一走
+        // AttentionPublisher.publishTerminal 单一工厂（与正常终态同源、按会话幂等、不双发）。
+        // 用户主动停止（"已停止"）不发结果通知：与正常终态 failed=...&&error!="已停止" 同口径，
+        // 不再把「停止」误报成「运行失败」。
+        val conversationId = run.conversationId
+        if (publishNotification) {
+            io.github.mangi.eta.agent.notify.AttentionPublisher.publishTerminal(
+                context = this,
+                runId = run.runId,
+                subject = conversationId,
+                // 准备阶段失败是异常：即便 App 在前台也必须可见，不能被前台静默策略吞掉。
+                suppressWhenForeground = false,
+                wakeupRound = run.request.handoff?.source ==
+                    AgentRuntimeWire.ETA_JOB_WAKEUP_HANDOFF_SOURCE,
+            ) { key ->
+                AgentExecutionService.buildRunResultNotification(
+                    this, failed = true, detail = message.take(240),
+                    conversationId = conversationId,
+                    // 准备阶段失败常发生在 sendUnattendedRunStarted 之前（acquire 失败），会话
+                    // 还没被 UI 认领进聊天列表：不挂「回复」、主体进任务中心（archive 置空），
+                    // 但仍是真实可见的结果通知，不静默。
+                    uiConversation = false,
+                    archiveSource = null,
+                    archiveKey = null,
+                    notificationId = key.id,
+                )
+            }
+        }
         dispatchResultIo {
             run.session.complete(result) {
                 runCatching { persistRunArtifacts(run.snapshotRequest(), result, emptyList()) }
@@ -564,6 +601,26 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
         mainHandler.post {
             if (destroyed) return@post
             run.completedContext = completedContext
+            AgentExecutionService.updateRunStatus(
+                this,
+                null,
+                activeRunCount = runs.all().count { !it.session.isTerminal },
+                round = run.overlayState.round,
+                detailText = (if (result.ok) result.content else result.error.orEmpty()).take(240),
+                finished = result.ok,
+                failed = !result.ok && result.error != "已停止",
+                conversationId = run.conversationId,
+                handoffSource = run.request.handoff?.source,
+                archiveSource = run.request.handoff?.source,
+                archiveKey = run.request.handoff?.payload
+                    ?.let { io.github.mangi.eta.agent.runtime.AgentExternalArchivePayload.from(it)?.conversationKey }
+                    ?.takeIf(String::isNotBlank),
+                runId = run.runId,
+                // 唤醒轮由 handoff source 判定（不是按会话前缀永久绑定）：唤醒会话里用户后续
+                // 追问是 AGENT_UI 普通 run，应正常拿 run_result 通知。
+                wakeupRound = run.request.handoff?.source ==
+                    AgentRuntimeWire.ETA_JOB_WAKEUP_HANDOFF_SOURCE,
+            )
             val guiState = guiControl.state.value
             if (lastGuiOwnerRunId != run.runId || guiState.userPaused ||
                 (guiState.ownerRunId != null && guiState.ownerRunId != run.runId)) return@post
@@ -816,7 +873,7 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
         val run = runs.get(runId) ?: return
         if (run.preparing) {
             run.session.controller.cancel()
-            failBeforeExecution(run, "已停止")
+            failBeforeExecution(run, "已停止", publishNotification = false)
             return
         }
         val session = run.session
@@ -976,10 +1033,16 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
         } else {
             (owner ?: activeRuns.firstOrNull())?.overlayState?.status
         }
+        val overlay = (owner ?: activeRuns.firstOrNull())?.overlayState
         AgentExecutionService.updateRunStatus(
             this,
             status,
             activeRunCount = activeRuns.size,
+            round = overlay?.round ?: 0,
+            detailText = overlay?.detailText.orEmpty(),
+            thought = overlay?.thought.orEmpty(),
+            finished = overlay?.phase == io.github.mangi.eta.agent.overlay.AgentOverlayPhase.FINISHED,
+            failed = overlay?.phase == io.github.mangi.eta.agent.overlay.AgentOverlayPhase.FAILED,
         )
     }
 

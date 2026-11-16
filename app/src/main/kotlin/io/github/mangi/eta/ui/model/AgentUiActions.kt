@@ -33,6 +33,7 @@ sealed interface AgentHomeAction {
     data object OpenSystemEnhance : AgentHomeAction
     data object OpenSettings : AgentHomeAction
     data object OpenBrowser : AgentHomeAction
+    data object OpenFileManager : AgentHomeAction
     data object ExpandRunTrace : AgentHomeAction
 }
 
@@ -69,6 +70,10 @@ sealed interface AgentSystemEnhanceAction {
 sealed interface AgentMemoryAction {
     data object NavigateBack : AgentMemoryAction
     data class ToggleEnabled(val enabled: Boolean) : AgentMemoryAction
+    data class ToggleRelevance(val enabled: Boolean) : AgentMemoryAction
+    data class ToggleDistillation(val enabled: Boolean) : AgentMemoryAction
+    data class ToggleSemanticRecall(val enabled: Boolean) : AgentMemoryAction
+    data class ToggleAutoExpire(val enabled: Boolean) : AgentMemoryAction
     data class DraftChanged(val content: String) : AgentMemoryAction
     data object Save : AgentMemoryAction
     data object Clear : AgentMemoryAction

@@ -163,6 +163,26 @@ class AgentToolCatalogTest {
     }
 
     @Test
+    fun askUserToolIsExposedOnlyWhenTheAskUserSwitchIsOn() {
+        val on = AgentToolCatalog.build(
+            terminalTools = false,
+            browserTools = false,
+            askUser = true,
+        ).toolNames()
+        assertTrue("ask_user" in on)
+
+        val off = AgentToolCatalog.build(
+            terminalTools = false,
+            browserTools = false,
+            askUser = false,
+        ).toolNames()
+        assertFalse("ask_user 关闭后不应再下发 schema", "ask_user" in off)
+        // 只摘掉 ask_user，不动其它会话级工具
+        assertTrue("schedule_task" in off)
+        assertTrue("macro_record" in off)
+    }
+
+    @Test
     fun memoryToolsAreExposedOnlyWhenEnabledAndDeclareBoundedOperations() {
         val disabled = AgentToolCatalog.build(
             terminalTools = false,
@@ -182,7 +202,7 @@ class AgentToolCatalogTest {
         val properties = write.getJSONObject("parameters").getJSONObject("properties")
         assertEquals(3_500, properties.getJSONObject("content").getInt("maxLength"))
         assertEquals(
-            listOf("replace_range", "append", "clear"),
+            listOf("replace_range", "append", "upsert_section", "clear"),
             properties.getJSONObject("mode").getJSONArray("enum").stringValues(),
         )
     }

@@ -61,7 +61,8 @@ internal class McpRunSnapshot(
                 val server = if (needsRefresh) {
                     runCatching {
                         McpServerManager.discover(configured, bearerToken).also {
-                            McpServerRepository.update(it)
+                            // 只回写探测相关列，避免旧快照整行覆盖用户期间改动的配置。
+                            McpServerRepository.updateDiscovery(it)
                         }
                     }.getOrNull()
                         ?: return@forEach

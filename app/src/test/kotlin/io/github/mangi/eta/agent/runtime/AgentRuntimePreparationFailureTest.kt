@@ -37,9 +37,14 @@ class AgentRuntimePreparationFailureTest {
                 storedBeforeDelivery = AgentRuntimeResultStore.list(context).any { it.result.runId == request.runId }
                 delivered.countDown()
             }))
-            AgentRuntimeService::class.java.getDeclaredMethod("failBeforeExecution", RuntimeRunRegistry.Run::class.java, String::class.java).apply {
-                isAccessible = true
-            }.invoke(serviceController.get(), run, "无法准备请求")
+            // 从根重构后 failBeforeExecution 有第三参 publishNotification（默认 true）：
+            // 反射必须按 JVM 实际签名 (Run, String, boolean) 取，显式传 true = 准备失败应发终态通知。
+            AgentRuntimeService::class.java.getDeclaredMethod(
+                "failBeforeExecution",
+                RuntimeRunRegistry.Run::class.java,
+                String::class.java,
+                java.lang.Boolean.TYPE,
+            ).apply { isAccessible = true }.invoke(serviceController.get(), run, "无法准备请求", true)
             assertTrue(delivered.await(10, TimeUnit.SECONDS))
             assertTrue(storedBeforeDelivery)
             assertTrue(AgentRunCheckpointStore.list(context).isEmpty())

@@ -300,6 +300,97 @@ internal object ChatActionIcons {
         }
     }
 
+    /** 顶栏与菜单共用的“新建对话”线性气泡加号图标（24x24 视口）。 */
+    val NewChat: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "ChatNewConversation",
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f,
+        ).apply {
+            path(
+                stroke = SolidColor(Color.Black),
+                strokeLineWidth = 1.85f,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round,
+            ) {
+                moveTo(4.38f, 16.4f)
+                arcTo(
+                    horizontalEllipseRadius = 8.8f,
+                    verticalEllipseRadius = 8.8f,
+                    theta = 0f,
+                    isMoreThanHalf = true,
+                    isPositiveArc = true,
+                    x1 = 7.6f,
+                    y1 = 19.62f,
+                )
+                lineTo(2.9f, 21.1f)
+                close()
+            }
+            path(
+                stroke = SolidColor(Color.Black),
+                strokeLineWidth = 1.85f,
+                strokeLineCap = StrokeCap.Round,
+            ) {
+                moveTo(8.7f, 12f)
+                horizontalLineTo(15.3f)
+                moveTo(12f, 8.7f)
+                verticalLineTo(15.3f)
+            }
+        }.build()
+    }
+
+    /**
+     * 双窗文件管理器专属图标：并排两个窗格，各带一条路径栏与一行文件行（24x24 视口）。
+     * 顶栏溢出菜单、聊天加号菜单与设置页共用，避免与既有图标重复。
+     */
+    val FileManager: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "ChatFileManager",
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f,
+        ).apply {
+            path(
+                stroke = SolidColor(Color.Black),
+                strokeLineWidth = 1.8f,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round,
+            ) {
+                // 左窗格
+                moveTo(3f, 5f)
+                horizontalLineTo(10.6f)
+                verticalLineTo(19f)
+                horizontalLineTo(3f)
+                close()
+                // 右窗格
+                moveTo(13.4f, 5f)
+                horizontalLineTo(21f)
+                verticalLineTo(19f)
+                horizontalLineTo(13.4f)
+                close()
+            }
+            path(
+                stroke = SolidColor(Color.Black),
+                strokeLineWidth = 1.8f,
+                strokeLineCap = StrokeCap.Round,
+            ) {
+                // 左窗格内部：路径栏 + 文件行
+                moveTo(4.6f, 8.6f)
+                horizontalLineTo(9f)
+                moveTo(4.6f, 13f)
+                horizontalLineTo(9f)
+                // 右窗格内部
+                moveTo(15f, 8.6f)
+                horizontalLineTo(19.4f)
+                moveTo(15f, 13f)
+                horizontalLineTo(19.4f)
+            }
+        }.build()
+    }
+
     private inline fun icon(
         name: String,
         block: ImageVector.Builder.() -> Unit,

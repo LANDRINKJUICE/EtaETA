@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  后台任务（terminal_job）失败后自动唤醒 Agent 的文案。
+  独立成文件而不塞进 strings.xml / notify_user.xml：那两处已有其它未提交轮次在改，独立文件避免同处冲突。
+-->
+<resources>
+    <!-- 设置开关 -->
+    <string name="settings_job_wakeup">Auto-handle failed background tasks</string>
+    <string name="settings_job_wakeup_summary">When a background command fails, times out or is interrupted, Eta wakes an agent round to finish the work. Turn this off to only get a result notification.</string>
+
+    <!-- 唤醒通知 -->
+    <string name="job_wakeup_title">Eta is auto-handling a failed background task: %1$s</string>
+    <string name="job_wakeup_title_watch">Eta is handling a watched background task: %1$s</string>
+    <string name="job_wakeup_body_suffix">Waking the agent to find the cause and fix it; you will see the report here.</string>
+    <string name="job_wakeup_body_suffix_watch">The job finished as watched; waking the agent to look at the result.</string>
+    <string name="job_wakeup_chain_title">Background task keeps failing, auto-handling stopped: %1$s</string>
+    <string name="job_wakeup_chain_body">Handled automatically %1$d rounds without success, so Eta stopped waking the agent. Check the task log and handle it yourself.</string>
+    <string name="job_wakeup_reason_global_limit">Eta already auto-handled 2 background tasks in the last 10 minutes, so this one was skipped. Check the task log and handle it yourself.</string>
+    <string name="job_wakeup_status_exit">exit code %1$d</string>
+    <string name="job_wakeup_status_reason">ended: %1$s</string>
+    <!-- 终态（与"正在自动处理"同一通知 ID 原地更新） -->
+    <string name="job_wakeup_done_title">Background task auto-handled: %1$s</string>
+    <string name="job_wakeup_done_body">The agent finished this round. Open the conversation to see what it did.</string>
+    <string name="job_wakeup_failed_title">Auto-handling failed: %1$s</string>
+    <string name="job_wakeup_failed_body">This round ended in an error, so nothing is confirmed fixed. Open the conversation to see where it stopped.</string>
+    <string name="job_wakeup_timeout_title">Auto-handling timed out: %1$s</string>
+    <string name="job_wakeup_timeout_body">This round exceeded the time limit and was cancelled without a conclusion. Check the task log and handle it yourself.</string>
+    <string name="job_wakeup_skipped_title">Not auto-handled: %1$s</string>
+    <string name="job_wakeup_skipped_body">Eta could not start this round (execution was not allowed, or the loop guard was unavailable). Check the task log and handle it yourself.</string>
+
+    <string name="job_wakeup_subtext">Background task wakeup</string>
+    <!-- 自动 / 计划任务的会话列表标题与首屏占位（区别于「后台命令唤醒」） -->
+    <string name="schedule_session_subtext">Scheduled task</string>
+    <string name="schedule_session_archive_user">A scheduled task is running; you can follow its progress or reply here.</string>
+    <string name="job_wakeup_unknown_subject">background command %1$s</string>
+
+    <!-- 归档会话标题（点击通知后进入的那条会话） -->
+    <string name="job_wakeup_archive_title">Auto-handling: %1$s</string>
+    <string name="job_wakeup_archive_user">A background command finished, so the agent was woken to handle it.</string>
+
+    <!-- 唤醒 run 的 prompt -->
+    <string name="job_wakeup_prompt_header">[Background task wakeup] The background command below just finished, and it did not succeed. You are woken automatically to take over.</string>
+    <string name="job_wakeup_prompt_tail_label">Tail of the task output:</string>
+    <string name="job_wakeup_prompt_truncated">…(earlier output omitted)&#10;</string>
+    <string name="job_wakeup_prompt_footer">The user may not be online right now. This round continues a task already authorized in an online conversation: finish it and produce the result. For example after a failed build, rerun the build, fetch the artifact and deliver the APK, carrying everything through to completion. Do not downgrade work into suggestions and do not require the user to come back and approve. The danger gate only hard-guards key areas: system partitions, the boot chain, Android-side phone data, broad deletes, remount, format, installing or uninstalling or freezing system apps and sensitive settings. A hit still shows a confirmation card for all sources alike; if nobody answers within 2 minutes that single action is not executed and is never done silently or reported as done — the user has NOT agreed to it, so do not retry it or rephrase it to bypass the gate. Treat unconfirmed / not executed / possibly unattended / the user has not decided for you as a fact and judge yourself how to finish all the rest of the work normally; do not let this one action stall the task. IMPORTANT: the gate does NOT block git push, builds, packaging or ordinary file edits in the workspace; these are normal tasks this round should carry through. Prefer not to call ask_user (nobody may be online), and prefer not to run operations that would touch key areas; do not make decisions on the user behalf that they might dislike. If you do need a decision, an inquiry card is still available as a fallback and has the same 2-minute timeout. Never report a blocked key-area action as done. If no action is needed, say so in one or two sentences. Jobs you start from this run will not wake the agent again.</string>
+    <string name="job_wakeup_prompt_header_watch">[Background task wakeup] The background command below has finished per its watch setting (success included). You are woken automatically to review the result.</string>
+    <string name="job_wakeup_prompt_footer_watch">The user may not be online right now. Check whether the result meets the goal, and carry the remaining work (handoff, logs, fetching the artifact, delivery and so on) through to completion. The danger gate only hard-guards key areas: system partitions, the boot chain, Android-side phone data, broad deletes, remount, format, installing or uninstalling or freezing system apps and sensitive settings. A hit still shows a confirmation card for all sources alike; if nobody answers within 2 minutes that single action is not executed, is never done silently or reported as done, and must not be retried or rephrased to bypass the gate — the user has NOT agreed to it. All other work still completes normally. IMPORTANT: the gate does NOT block git push, builds, packaging or ordinary file edits in the workspace, so these remain available. Prefer not to call ask_user (nobody may be online); if you do, the inquiry card has the same 2-minute timeout. Never report a blocked key-area action as done. If no action is needed, say so in one or two sentences. Jobs you start from this run will not wake the agent again.</string>
+    <!-- 唤醒 run 运行中的阶段文案（通知同 ID 就地变形） -->
+    <string name="job_wakeup_stage_tool">Calling %1$s</string>
+    <string name="job_wakeup_stage_thinking">Thinking</string>
+    <string name="job_wakeup_stage_answering">Composing answer</string>
+    <string name="job_wakeup_stage_subagent">Subagent working</string>
+    <string name="job_wakeup_stage_round">Round %1$s</string>
+    <string name="job_wakeup_busy_title">Auto-handling skipped: %1$s</string>
+    <string name="job_wakeup_busy_body">Another background task is still being handled; this one was not started. It will not be retried automatically.</string>
+    <string name="job_wakeup_stopped_title">Auto-handling stopped: %1$s</string>
+    <string name="job_wakeup_stopped_body">Stopped before completion; no automatic retry.</string>
+</resources>

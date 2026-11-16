@@ -1,0 +1,38 @@
+name: Compile Check (all branches)
+
+# 2026-11-15 从根新增：agent-release.yml 的 push.branches 只挂 feat/agent-self-memory，
+# 实际开发分支 feature/agent-intelligence-rounds 推上去【不会自动编译任何东西】，本地白名单
+# 基线又不编 android 侧文件，导致 b046fc6 的编译阻断一路绿灯到云端出包才炸。
+# 本 workflow 轻量、只跑 :app:compileDebugKotlin（不上 lint/test/签名），覆盖除 main 外所有分支的
+# push，确保「任何分支一推就有全量 Kotlin 编译」；main/发版仍由 android-release.yml 全量把关。
+on:
+  push:
+    branches-ignore:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compile-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compile:
+    name: 全量 Kotlin 编译（含 android 侧文件）
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          # BASE=HEAD^ + 多 commit 闸必须能解析到父提交；缺这个会让 git diff 闸空转假绿。
+          fetch-depth: 2
+          persist-credentials: false
+      - name: 配置构建环境
+        uses: ./.github/actions/setup-build
+      - name: 未修项 / 通知架构 / 契约构造点 / 资源引用 / 文档一致性闸
+        run: BASE=HEAD^ sh scripts/check-unfixed.sh
+      - name: 全量 Kotlin 编译
+        run: ./gradlew --no-daemon --no-configuration-cache :app:compileDebugKotlin

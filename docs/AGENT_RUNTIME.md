@@ -137,7 +137,7 @@ Gemini 使用原生 Interactions API 和 `x-goog-api-key`，固定 `stream:true`
 
 Gemini 工具参数在 Provider 边界做组合分支兼容投影：`oneOf`、`anyOf`、`allOf` 分支中的 `required` 引用外层已声明属性时，为缺少局部定义的分支补齐该属性声明，保留原有必填、组合和附加属性约束。转换不修改公共工具目录，不跨嵌套对象或数组传递属性；引用与资源标识保留原位置，限制附加属性的分支不会从外层继承声明，避免改变 Schema 语义。
 
-Gemini 的完整原生 steps、思考和搜索签名只在当前 run 内回放，不进入稳定会话或运行归档。签名工具链尚未完成时保持请求前缀并延后自动压缩，强制压缩明确失败。跨 run、跨 Provider 或压缩后，旧消息与工具记录作为明确标注的文本历史投影，不把缺少签名的旧工具交换重新构造成原生调用。工具截图仍沿用完整工具批次后的单轮观察消息。思考档位来自 `GeminiModelCapabilities`；已确认强制思考的模型不能选择 Off，未知手动模型仅提供 Default，不猜测档位或工具混用能力。原生模型目录支持分页并限制累计大小，已有兼容连接不会自动改为 Gemini。
+Gemini 的完整原生 steps、思考和搜索签名只在当前 run 内回放，不进入稳定会话或运行归档。签名工具链尚未完成时保持请求前缀并延后自动压缩，强制压缩明确失败。跨 run、跨 Provider 或压缩后，旧消息与工具记录作为明确标注的文本历史投影，不把缺少签名的旧工具交换重新构造成原生调用。工具截图仍沿用完整工具批次后的单轮观察消息。思考配置按用户覆盖、远端元数据、本地已知默认值的顺序解析。未知模型默认只使用 Default；模型编辑页允许手动勾选 Interactions 协议的 Minimal、Low、Medium、High，服务端校验具体模型是否支持，请求失败会明确报告而不自动降级。关闭“配置思考档位”只恢复 Default，不发送关闭模型思考的参数；恢复自动会移除用户覆盖。工具混用能力仍独立确认，不由手动思考配置推断。原生模型目录支持分页并限制累计大小，已有兼容连接不会自动改为 Gemini。 Gemini 4 Carbon（`gemini-4-carbon`）支持 Default、Low、Medium、High，服务端默认 Medium，不能关闭思考；Carbon 已加入内置预设，旧安装仅补入新增项；已有同 ID 模型不会被替换。请求通过 `generation_config.thinking_level` 指定档位，并使用 `thinking_summaries: "auto"` 请求摘要；`thought.summary` 与流式 `thought_summary` 用于展示，签名不作为文字展示，服务端也可能只返回签名而没有摘要。参数合同见 [Google 思考文档](https://ai.google.dev/gemini-api/docs/thinking)。
 
 Gemini Google Search 仅在用户开启、模型已确认支持、入口声明并通过 Runtime 校验可以展示建议时生效。Eta 聊天和原生助手浮窗支持该能力；小布、小爱、旧客户端和其他入口保持本地搜索。搜索与函数混用使用 `validated`，能力目前属于预览。搜索调用与结果的完整签名回放留在模型层，引用按 UTF-8 字节位置转换；搜索建议附在对应回答下方，无正文的工具轮将建议延后到下一次回答。建议通过独立只读 WebView 展示，脚本、文件访问和网络子资源关闭，用户点击 HTTP(S) 链接交给外部浏览器。
 
@@ -358,15 +358,15 @@ App 按上次成功提交的内容比较会话变更，只更新变化的元数�
 
 自动压缩只依据当前成功模型请求返回的实际输入 usage，达到用户填写窗口的 85% 时，在完整工具批次结束后的下一次请求前或任务完成后触发。首次请求前不估算文本、工具或图片的 token 数；缺少实际输入 usage 时不猜测容量，也不采用累计用量或输出用量代替输入。失败重试的 usage 不沿用；压缩成功后旧用量失效，等待下一次模型响应更新。
 
-压缩使用当前会话模型，额外请求会计费。摘要请求禁止本地及托管工具，也不接受自定义正文覆盖其输入；输入移除敏感工具原始参数、结果、图片正文与 opaque reasoning。自动与手动压缩均覆盖可安全替换的已完成历史，保留当前用户指令与未消费图片。主会话切分只能发生在完整工具批次之间。
+压缩使用当前会话模型，额外请求会计费。从主会话循环发起压缩时，摘要请求沿用当前轮次的稳定系统约束、工具目录、会话标识与非受保护自定义请求配置，仅在已有历史后追加只读摘要指令，并排除屏幕上下文元数据与瞬时截图观察；Chat Completions、Responses 与 Gemini Interactions 通过 `tool_choice=none` 禁止工具调用，Anthropic 保持原 `tool_choice` 以免使 `messages` 缓存失效并靠指令与流式拦截禁止调用（若仍触发工具调用或 `tool_choice` 遭拒绝则退回一次无工具隔离摘要）；受保护的 `messages`/`input`/`tools`/`tool_choice`/`system` 字段不接受自定义正文覆盖。自动与手动压缩均覆盖可安全替换的已完成历史，保留当前用户指令与未消费图片。主会话切分只能发生在完整工具批次之间。
 
-摘要一次发送全部待整理的脱敏历史，不按估算大小分片，不进行细分或网络重试。请求设置覆盖连接、服务端处理和流式读取的总超时，SSE 心跳不能无限延长等待。只有完整、有界且实际序列化文本缩小的摘要才提交；溢出、空摘要、截断、过滤、工具调用、超时或取消均保留原文，不提交半成品。
+摘要一次发送历史并生成带有归档标识（如 `fold-1`）、覆盖轮次范围、关键实体线索及检索提示的结构化摘要，不按估算大小分片或网络重试（上述单次隔离退回除外）。请求设置覆盖连接、服务端处理和流式读取的总超时，SSE 心跳不能无限延长等待。只有完整、有界且实际序列化文本缩小的摘要才提交；溢出、空摘要、截断、过滤、工具调用、超时或取消均保留原文，不提交半成品。
 
-摘要作为带有明确说明的 assistant 历史保存，不提升为系统指令。成功后重建模型上下文，保留系统约束及近期规范化消息；被压缩的原文始终保留在完整脱敏历史中，不用摘要覆盖。Responses 的旧 opaque output Items 不跨越压缩边界，也不跨 run、跨 Provider 持久化。
+摘要作为带有明确说明的 assistant 历史保存，不提升为系统指令；压缩事件单独记录压缩请求自身的输入、命中、缓存写入、输出用量与归档标识，并在用量统计中与普通对话轮次、子智能体用量分别展示，不混入普通轮次的缓存命中统计。成功后重建模型上下文，保留系统约束及近期规范化消息；被压缩的原文始终保留在完整脱敏历史中，不用摘要覆盖。Responses 的旧 opaque output Items 不跨越压缩边界，也不跨 run、跨 Provider 持久化。
 
 上下文替换快照保存版本、操作标识、用户轮次和覆盖的 transcript 边界。完整工具批次的脱敏 transcript 独立写入在途检查点；快照先落盘，再替换运行上下文。快照后产生的增量在恢复时按边界接回，避免崩溃后遗漏已完成步骤。终态结果和归档保留完整 transcript 与快照；批量 drain 每批只列出有限条结果和引用，客户端校验 run 与 handoff 归属后单独读取完整结果。App 串行提交历史、模型投影及已应用标记，成功落盘后才 ACK。未确认结果和待导入归档不按年龄或数量淘汰。
 
-App 会话提供 `conversation_history` 工具，搜索或分页读取当前会话的完整脱敏原文。工具由 Runtime 绑定会话身份，模型不能指定其他会话；单次输出有界并返回续读游标，大消息可按字符偏移继续读取。它不依赖 MEMORY.md 开关，也不向模型暴露数据库路径。摘要仍然有损，历史工具让模型能按需核对摘要省略的细节；完整存储不代表每次请求都把所有历史塞入模型窗口。编辑或删除旧轮次时从完整历史重建对应前缀，旧版本已缺失的前缀沿用明确提示。
+对话提供 `conversation_history` 工具，搜索或按索引展开当前会话的完整脱敏原文（App 会话读取持久化 `journal` 与当前 `transcript`，无持久会话的入口读取本次运行历史与当前 `transcript`）。工具由 Runtime 绑定会话身份，模型不能指定其他会话；按 `query` 检索长消息时返回围绕命中位置的聚焦片段及位置元数据，按 `message_index` 与 `offset` 可继续展开完整消息。它不依赖 MEMORY.md 开关，也不向模型暴露数据库路径。摘要仍然有损，历史工具让模型能按需核对摘要省略的细节；完整存储不代表每次请求都把所有历史塞入模型窗口。编辑或删除旧轮次时从完整历史重建对应前缀，旧版本已缺失的前缀沿用明确提示。
 
 普通与角色会话可在已结束轮次的最终回复旁选择“在新对话中分支”。分支复制截至该回复的完整持久化记录，包括当前展示窗口之外的消息，并从脱敏原文重建模型上下文，避免当前摘要夹带后续轮次。角色配置、已有回复候选及选中项一并保留；模型选择与推理设置沿用源会话。新会话使用独立消息标识，保存成功后打开，不自动发起模型请求；草稿、待发送附件、队列与运行绑定不复制。源会话生成、重写、压缩或编辑期间不可分支；缺少完整历史或稳定消息标识、摘要跨越分支点或工具交换未闭合时明确拒绝创建。
 
@@ -400,6 +400,174 @@ App 恢复时以 `checkpoint + outbox + active session` 统一对账，不再用
 
 重新订阅沿用已有的 attach 响应作为历史回放结束边界：Runtime 在同一会话锁内依次发送安全历史、成功响应，再加入实时订阅，实时事件与终态不能越过此边界。App 客户端在响应前缓冲历史并一次性交付 UI，UI 在一个状态快照中重建该 run 的消息投影；只有边界后的新增内容进入实时更新。旧服务若先发送终态，客户端先交付已缓冲历史再交付结果。恢复前清理可重建的旧投影，保留原始用户请求和没有对应回放事件的补充内容，避免重复追加或丢失用户输入。任务终态独立于文字显现状态，最终结果会收口尚未结束的文字标记；缺少结果的工具记录显示未知状态，不伪造成功。
 
+## 危险操作确认与 ask_user
+
+工具执行前有两类由用户在聊天流里决定的卡片，两者都不经过系统 Dialog：
+
+- **危险操作拦截卡（自动）**：`AgentToolApprovalGate` 在 `AgentLocalTools` 分发工具之前调用
+  `AgentToolRiskEvaluator` 做静态判定。判定是纯函数（工具名 + 参数 + 默认 cwd → `RiskVerdict`），
+  `ShellCommandAnalyzer` 负责命令解析：
+  - 按管道 / `;` / `&&` / `||` / 换行切分，`|` 只切阶段；`su -c`、`sh -c`、`adb shell`、`bash -c`
+    剥壳后递归分析；`$(...)` 与反引号单独递归；
+  - 管道末段是无参 shell 时，把前段"要打印的内容"当作脚本再分析一遍
+    （`printf '...' | sh`、`base64 -d x | sh` 因此都会被拦）；
+  - `find -exec/-execdir/-ok` 分析被执行的命令并把搜索根当作作用范围，`find -delete` 直接算删除；
+    `xargs` 分析携带的命令并标记"操作对象来自标准输入"；
+  - `sh script.sh`、`source`、`.`、`eval`、`perl/python/node/awk` 等无法读取内容的间接执行
+    一律命中 `INDIRECT_EXECUTION`；
+  - 收集 `NAME=value` 赋值并在判定前替换 `$NAME`/`${NAME}`，跟踪 `cd` 把相对写入目标解析成绝对路径；
+    替换不了（`$()`、`${X:-y}`、未知变量）或 cwd 未知的相对路径命中 `UNRESOLVED_TARGET`；
+    带 `session_id` 的持久会话里这类命中升级为 HIGH（cwd 与变量跨调用累计）；
+  - 写入判定只看"写入位置"：`cp /system/build.prop /sdcard/` 属于只读复制，不拦；
+    但 `mv` 的源也会被移走，因此源与目标都按写入判定。
+  首要规则是**系统分区与启动链只可读、只可复制**（`/system`、`/vendor`、`/system_dlkm`、
+  `/vendor_dlkm`、`/odm_dlkm`、`/product`、`/boot`、`/init_boot`、`/debug_ramdisk`、`/dev/block`、
+  `/super`、`/mnt/vendor` 等），写入、读写重挂载、格式化、Magisk 分区操作、`fastboot flash`
+  一律需要确认；其次是 `rm -rf` 大范围删除、写入其他应用私有目录、`pm uninstall/disable`、
+  `settings put secure` 与敏感 global 键。`/dev/null`、`/dev/zero`、`/dev/urandom` 等 sink 放行。
+  命中后工具**挂起**在该 run 的工作线程上，聊天流尾部出现确认卡。拒绝返回 `USER_DENIED`，
+  超时、运行结束或"允许之后运行又被停止"返回 `USER_NOT_CONFIRMED`，绝不默认放行。
+- **询问卡（Agent 主动）**：`ask_user` 工具带 `question`、`explanation`、2–4 个 `options`
+  与 `allow_free_text`，结果作为工具结果返回（`choice_id`/`choice`/`free_text`/`answered_via`）；
+  用户没回答时返回 `USER_NO_ANSWER`，模型不得臆测选择。
+
+挂起/恢复机制：`AgentApprovalCoordinator` 是进程内单例，`StateFlow` 暴露等待列表，Compose 聊天流
+直接收集渲染。等待用 `LinkedBlockingQueue.poll` 而不是 sleep 轮询：`resolve`、`abandonRun`、
+进程内取消都会立刻唤醒等待者，没有信号时最多阻塞一个轮询间隔（100ms）用于检查取消标记。
+`resolve` 与"超时 / 撤卡 / 停止运行"以 `active` 上的移除为唯一线性化点（决策先写入、再 CAS 摘下）：
+谁成功摘下谁生效，因此不会出现"UI 显示已允许但工具已按超时返回"，也不会留下无人消费的决策。
+运行结束时 `AgentRuntimeRunExecutor` 会 `abandonRun`，撤下该 run 的所有卡片。
+
+"本会话内允许同类"的授权由 `AgentSessionApprovalGrants` 以（会话 id，工具名，风险类别，风险等级）
+为键保存在内存中：
+- 等级参与键：允许"重启到 recovery"（MEDIUM）不会放开 `dd` 写 boot（同类 CRITICAL）；
+- **CRITICAL 永不接受会话授权**，卡片只给"仅允许一次"；
+- 无法归属到具体会话（conversationId 为空）时同样只给"仅允许一次"；
+- 进程退出、会话删除即失效，不写任何偏好或数据库。
+
+危险拦截默认开启，可在设置里关闭（`agent_danger_tool_guard`）；询问卡没有开关，由模型自行决定是否提问。
+用户确认指令只注入普通会话（`roleplayContext == null`），角色会话保持沉浸；但闸门本身对角色会话同样生效。
+有卡片在等待时，`AgentExecutionService` 的常驻通知会显示"N 个操作等待你确认"，覆盖浮层与后台场景。
+
+## 自动任务（无人值守 run）
+
+用户可以让 Agent 把一句自然语言指令存成"到点自动执行"的任务（工具 `schedule_task`，模型可见
+create / list / enable / disable / delete / run_now）。它复用现有 Runtime，而不是另开一条执行路径。
+
+调度链路：
+
+1. `ScheduledTaskStore`（`filesDir/scheduled-tasks/tasks.json`，临时文件 + 原子 move 替换）保存
+   id、标题、指令正文、调度规则、启用状态、下次触发时间与最近一次执行结果；单文件上限 50 条，
+   逐条解码容错，坏记录只跳过自己。
+2. `TaskScheduleCalculator` 是纯函数：一次性按绝对时间；每天/每周按本地时区墙钟时间；
+   间隔任务以"上次计划触发时间"为锚点推进（不随执行耗时漂移），并把错过的轮次直接跳到最近的未来时刻。
+3. `ScheduledTaskScheduler` 用 `AlarmManager.setExactAndAllowWhileIdle` 排期；`canScheduleExactAlarms`
+   为 false（用户撤销"闹钟和提醒"）时降级为 `setAndAllowWhileIdle` 并把降级状态回报给工具与 UI，
+   不假装准时；`setExact` 抛异常同样降级。
+4. `ScheduledTaskReceiver` 是唯一系统入口。闹钟是一次性消耗品，所以**先排期、再派发**：
+   `ScheduledTaskRunner.advanceSchedule` 先算出下一轮、落盘并挂好闹钟（一次性任务则写入
+   `claim_at` 认领标记），返回"这一轮要不要跑"，然后才 `startForegroundService` 起
+   `ScheduledTaskService`（specialUse 前台服务）。可见的并发闸门只决定这一次跑不跑，跳过一次
+   不会让任务永久停摆。重复广播（开机补跑与闹钟成对到达）在认领窗口（15 分钟）内被识别为同一轮。
+   开机（`BOOT_COMPLETED`）、应用更新、改时间、改时区、精确闹钟授权变化触发整表重建；
+   重建用 `goAsync()` 托管广播，并在补跑窗口（24h）内补一次错过的一次性任务，超窗口则记为跳过并停用。
+5. `ScheduledTaskRunner` 在服务工作线程上把任务翻译成一次普通 run：`RunRequest` 的 handoff 源是
+   `eta_scheduled_task`，`conversationId` 由唯一 runId 派生，因此不会与用户正在进行的会话互相打断；
+   模型配置在 Runtime 侧用 `RuntimeConfigRepository.currentRuntimeConfig()` 解析（入口不携带模型选择）。
+   执行前先推进并落盘下一轮排期，长任务不会挤掉下一次触发。
+6. 结果写回任务（`last_outcome` / `last_result` / `run_count` / `last_duration_ms`）并发通知；
+   一次性任务执行完自动停用，保留历史。单次运行有 10 分钟墙钟上限（`ScheduledTaskRunner.MAX_RUN_MILLIS`），
+   超时中断工作线程并由 `AgentRuntimeClient` 向 Runtime 发 `MSG_CANCEL`，不会留下仍在烧模型的孤儿任务。
+
+安全边界：自动任务**没有**任何绕过确认的通道。工具调用仍经 `AgentToolRiskEvaluator`，命中危险规则时
+卡片照样挂起；由于无人值守，用户不回答就会在 `AGENT_APPROVAL_TIMEOUT_MILLIS`（5 分钟）后超时返回
+`USER_NOT_CONFIRMED`，操作不执行。系统提示与 run 提示都要求模型：遇到 `USER_NOT_CONFIRMED` 不重试、
+不调用 `ask_user`，改用只读或安全方式完成并在结果里说明未执行的部分。
+
+`schedule_task` 本身也是持久化注入面：`action=create` 会命中风险类别
+`AGENT_SCHEDULED_TASK_CREATE`（MEDIUM），在聊天流里弹卡让用户确认"以后要自动执行什么"；
+查看、启停、删除不弹卡。自动任务触发的 run 内部禁止再次创建/修改自动任务（`SCHEDULED_TASK_READ_ONLY`），
+避免任务自增殖。
+
+## 宏录制
+
+`macro_record`（start / stop / cancel / status）把用户自己的屏幕操作录成 `macro_save` 同格式的宏：
+
+1. 捕获由无障碍服务旁路完成（`MacroRecorder` + `AgentAccessibilityService`）：
+   `TYPE_VIEW_CLICKED` / `TYPE_VIEW_LONG_CLICKED`（取节点边界中心 + text/desc）、
+   `TYPE_VIEW_TEXT_CHANGED`（用每个输入框上一次的完整文本折算成新增字符；整体替换时按新内容整段记录）、
+   `TYPE_VIEW_SCROLLED`（记录 delta，归一化时合成等长滑动）、
+   `onKeyEvent`（仅录制中且白名单按键 BACK/ENTER/RECENTS，**永远返回 false 不消费事件**）。
+   点击类事件与按键过滤只在录制期间通过运行期 `serviceInfo` 打开，结束逐位还原。
+2. 密码保护：`isPassword` 的节点内容一个字符都不进内存，只记一条 `sensitive` 占位，归一化时丢弃并计数，
+   结果里明确告诉模型"这部分没录到、回放时需要用户自己输入"。
+3. 归一化（`MacroActionNormalizer`，纯函数）：去抖同位置重复点击、合并同方向微滑、合并连续追加输入、
+   丢弃越界坐标、把超过上限的间隔截断为 `wait_ms`（≤3s）、总数截到 50（与 `gesture_batch`/`macro_save` 同限）。
+   滚动按**手势**折叠：同 windowId、相邻间隔 ≤400ms 的事件合成一次滑动，位移取累计 |delta| 并封顶 600px；
+   方向按 AOSP 语义取反（`scrollDeltaY` 为正表示内容上移，也就是手指上滑），避免回放上下颠倒。
+   输出动作字段与 `gesture_batch` 完全一致，`macro_run` 可直接回放。
+4. 可感知状态：录制中有一条常驻通知（含"停止并保存"动作），录制结束有结果通知；
+   `GuiMacroStore` 的记录新增 `source`（agent / recording），旧文件按 agent 处理。
+   到达步数（400）或时长（3 分钟）上限时自动收尾并按建议名保存，通知里说明"已到上限自动停止"。
+   通知 id 分段：自动任务 9000..9290，宏录制 9600（录制中）/9601（结果），互不覆盖。
+5. Eta 自己派发的 GUI 动作会短暂抑制捕获（`MacroRecorder.suppressFor`），避免把 Agent 的动作录成用户的操作；
+   平台限制是无法观测"原始触摸轨迹"，因此手势以系统事件重建，快速连点可能被去抖合并。
+
+## 任务中心（统一任务视图）
+
+任务中心回答一个具体问题：**Eta 此刻在忙什么，哪些在等我**。它是投影层，不新增第二份事实：
+
+- **待确认**：直接订阅 `AgentApprovalCoordinator.pending`（进程内单例、`StateFlow`），就地渲染
+  `AgentApprovalRequestCard`（与聊天流是同一个组件，行为完全一致：允许一次 / 允许本会话 / 拒绝并反馈 /
+  `ask_user` 选择与自由文本）。卡片已失效（超时、运行结束、被撤销）时 `resolve` 返回 false，
+  页面提示"已失效"而不是假装成功。
+- **自动任务**：复用 `ScheduledTasksStore` 与 `ScheduledTasksSection`（列表、下次触发、开关、立即执行、
+  删除、最近结果），任务中心通过 `snapshotFlow` 把它的 Compose 状态镜像进自己唯一的 `StateFlow`，
+  因此全 App 只有一份自动任务列表实现。旧的 `AppRoute.ScheduledTasks` 路由保留，直接打开任务中心的
+  自动任务分区——不是死链接，也不会出现两套 UI。
+- **运行中**：`LiveRunRegistry`（`agentLiveRuns`，进程内单例 + `StateFlow`）只记元数据：
+  `runId`、来源（chat / voice / scheduled / subagent / distill / external）、开始时间、父子关系与
+  登记序号；标题取 run 指令的首行并截断到 120 字符，**只存在于内存**，不落盘、不进日志。
+  `AgentRuntimeRunExecutor.execute` 进入时登记、`finally` 注销（重复注销幂等）；
+  子代理在 `SubagentExecutor` 里单独登记一条并带父 run。容量上限 32，异常路径也不会无限增长。
+  停止按钮走 `AgentRuntimeClient.cancelRun`，与聊天里的 Stop 是同一条路径。
+- **后台任务与服务**：读 `DetachedTaskSupervisor.list()`（与 `terminal_job`、`terminal_daemon` 共用同一份
+  记录文件与全局锁），只显示仍存活的行（`job_` 为一次性命令，`dm_` 为长驻服务），可停止。
+  探活要起 shell，因此只在进入分区、手动刷新和执行动作后拉一次，不在页面常驻期间轮询。
+- **宏**：`GuiMacroStore.list()`（名称、说明、动作数、`source` 区分录制 / 手动），可删除。
+- **用量**：见下一节。
+
+页面装配在 `ui/screens/taskcenter/TaskCenterScreen.kt`，状态与动作在 `ui/app/TaskCenterStore.kt`，
+纯展示逻辑（分区名解析、时长与 token 格式化）抽到 `ui/model/TaskCenterFormatting.kt` 以便单元测试。
+入口：Agent 主页顶栏图标（COUI / MIUIx 两套）、设置页"任务中心"分组（任务中心、用量与花费、
+用量统计开关）。旧路由 `ScheduledTasks` 与新路由 `TaskCenter(tab)` 共用同一实现。
+
+## 用量统计（本地、只记元数据）
+
+埋点位置是唯一的模型请求出口 `AgentLoop`：每完成一轮 provider 请求记一条记录。
+
+- 归属（`UsageAttribution`）由调用方显式传入：`AgentRuntimeRunExecutor` 传 handoff 来源
+  （`agent_ui` → chat、`eta_voice` → voice、`eta_scheduled_task` → scheduled），
+  `SubagentExecutor` 传 `subagent`，记忆沉淀回合传 `distill`。没有归属的内部旁路
+  （语音转写改写等）默认不入账，避免污染口径。
+- 字段只有元数据：时间、来源、用途（`chat` / `reply_rewrite`）、providerId / providerName、模型名、
+  prompt / completion / cached token、`estimated` 标记、runId。**绝不记录 prompt、回复正文或工具参数**；
+  所有字符串字段截断到 64 字符（runId 128），异常配置写不爆文件。
+- 口径：服务端回报了 usage 就用真实值；缺字段或报 0 时按字符数估算（4 字符 ≈ 1 token，
+  惰性求值：只有真的需要估算时才遍历消息），并把 `estimated` 置为 true，页面单独标出估算条数。
+- 存储：`filesDir/usage/usage.jsonl`，一行一次请求，追加写；保留 90 天、最多 20000 行、文件超过 8MB
+  也会触发裁剪；裁剪走"临时文件 + 原子 move"，进程被杀不会留下半截账本。同进程内所有实例共用一把锁。
+- 零阻塞：`UsageLogSink` 是守护线程 + 有界队列（512），队列满直接丢弃这条统计；写入异常在 worker
+  内部吞掉，绝不冒泡到 run 线程；`close()` 只置位唤醒，不 join。
+- 展示：今日 / 7 日 / 30 日按**本地自然日**切分（今日 = 今天 0 点起），另按来源与模型分组
+  （30 日窗口，按 token 总量降序，同量按请求数、再按 key，顺序稳定不跳位）。
+- 开关：`Prefs.Keys.AGENT_USAGE_STATS_ENABLED`，默认开；关闭后不再写入新记录（历史数据保留，
+  页面顶部提示已关闭）。设置页与任务中心"用量"区都能改。
+
+## 界面改动约定
+
+可写文件的子代理（`coder`）与主 Agent 在修改 `ui/` 下任何 Compose 页面前，必须先读 [UI 设计规范](UI_DESIGN_GUIDE.md)：以既有页面结构为模板，COUI 与 MIUIX 两个分支同时改，只用 `CouiPageDefaults`／`MiuixTheme` 的既有常量与主题色，不自造颜色、间距与组件。该约束由 `SubagentProfile.CODER.roleInstruction` 注入，对该角色所有运行生效；组件级对应关系见 [设置与管理组件](UI_COMPONENTS.md)。
+
 ## 验证
 
 核心回归测试位于：
@@ -418,6 +586,22 @@ App 恢复时以 `checkpoint + outbox + active session` 统一对账，不再用
 - `AgentMemoryStoreTest`
 - `AgentMemoryContextBuilderTest`
 - `EtaDatabaseMigrationTest`
+- `ToolRiskEvaluatorTest`（危险判定规则，含只读放行与误拦回归）
+- `AgentToolApprovalGateTest`（允许/拒绝/超时/停止运行/会话授权）
+- `AgentApprovalCoordinatorTest`（挂起恢复、超时、撤卡）
+- `AgentSessionApprovalGrantsTest`（会话级授权粒度与失效）
+- `AgentAskUserToolTest`（参数校验与未回答语义）
+- `TaskScheduleCalculatorTest`（每天/每周/间隔/一次性、跨天跨周、夏令时、锚点不漂移）
+- `ScheduledTaskCodecTest`（任务编解码、坏记录跳过、摘要与标题收口）
+- `MacroActionNormalizerTest`（去抖、微滑合并、间隔截断、密码丢弃、上限截断、滚动方向与手势折叠）
+- `ScheduledTaskAdvanceTest`（到点先排期、一次性任务认领与重复广播、认领窗口边界）
+- `ToolCatalogVisibilityTest`（角色会话隐藏 ask_user / schedule_task / macro_record）
+- `LiveRunRegistryTest`（登记与注销成对幂等、顺序稳定、父子关系、容量上限、标题截断）
+- `UsageRecordTest`（JSONL 编解码、字段夹紧、坏行跳过、字符估算）
+- `UsageAggregationTest`（今日/7 日/30 日本地自然日窗口、估算计数、分组排序、未来时间戳）
+- `UsageStoreTest`（追加读取保真、90 天保留、条数上限、并发追加、异步落点关闭语义）
+- `UsageTelemetryTest`（真实 usage 优先、缺失/0 估算并标记、开关与异常不影响主链路）
+- `TaskCenterFormattingTest`（分区名解析容错、运行时长进位、token 千位分隔）
 
 最终验证仍运行项目统一命令：
 

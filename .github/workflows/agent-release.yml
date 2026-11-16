@@ -1,0 +1,100 @@
+name: Agent Release (Unsigned)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/agent-self-memory
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Lint 与单元测试
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      # 未修项硬闸：新增 TODO/FIXME/@Ignore/@Disabled 即拦下（铁律 2），出包前必过。
+      - name: 未修项闸
+        run: BASE=HEAD^ sh scripts/check-unfixed.sh
+      - name: 配置构建环境
+        uses: ./.github/actions/setup-build
+      - name: Lint 与单元测试
+        run: >-
+          ./gradlew --no-daemon --no-configuration-cache --continue
+          :app:lintDebug :app:testDebugUnitTest
+      - name: 上传检查报告
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: agent-verify-reports
+          path: |
+            app/build/reports/
+            app/build/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  release-apk:
+    name: 仅构建未签名 Release APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: 配置构建环境
+        uses: ./.github/actions/setup-build
+      - name: 构建 Release APK（不读取签名 Secrets）
+        run: >-
+          ./gradlew --no-daemon --no-configuration-cache
+          "-Peta.buildMetadata=${GITHUB_SHA::7}"
+          :app:assembleRelease
+      - name: 确认 Release 产物
+        id: apk
+        run: |
+          shopt -s nullglob
+          apks=(app/build/outputs/apk/release/Eta-v*.apk)
+          if [[ ${#apks[@]} -ne 1 ]]; then
+            echo "::error::Release APK 数量异常（${#apks[@]}）。"
+            exit 1
+          fi
+          echo "release_path=${apks[0]}" >> "$GITHUB_OUTPUT"
+      - name: 上传 Release APK
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: eta-agent-release-unsigned
+          path: ${{ steps.apk.outputs.release_path }}
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
+
+      # release 包经过 R8 混淆，没有 mapping.txt 就只能看到形如 wg5 的短类名（见 ToolExecutionGuard 注释）。
+      # 与 APK 同批归档，保证"拿到安装包就能还原线上堆栈"。
+      - name: 确认并上传 Release mapping
+        id: mapping
+        run: |
+          mapping="app/build/outputs/mapping/release/mapping.txt"
+          if [[ ! -s "$mapping" ]]; then
+            echo "::error::未生成 release mapping.txt，线上堆栈将无法还原。"
+            exit 1
+          fi
+          echo "mapping_path=$mapping" >> "$GITHUB_OUTPUT"
+      - name: 上传 Release mapping.txt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: eta-agent-release-mapping
+          path: ${{ steps.mapping.outputs.mapping_path }}
+          archive: false
+          if-no-files-found: error
+          retention-days: 14

@@ -12,6 +12,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
@@ -153,4 +154,70 @@ class MainActivityLaunchRequestsTest {
             parcel.recycle()
         }
     }
+
+    /** 用官方 RemoteInput.addResultsToIntent 构造结果 Intent，与 getResultsFromIntent 配对、不手搓 clipData。 */
+    private fun replyIntent(
+        token: String?,
+        text: CharSequence,
+        nonce: String = io.github.mangi.eta.agent.notify.ReplyToken.newNonce(),
+    ): Intent {
+        val results = android.os.Bundle().apply {
+            putCharSequence(MainActivity.REPLY_RESULT_KEY, text)
+        }
+        val intent = Intent(MainActivity.ACTION_REPLY_TO_CONVERSATION)
+            .putExtra(MainActivity.EXTRA_CONVERSATION_ID, "conv-1")
+            .putExtra(MainActivity.EXTRA_NOTIFICATION_ID, 9301)
+            .putExtra(MainActivity.EXTRA_REPLY_NONCE, nonce)
+            .also { if (token != null) it.putExtra(MainActivity.EXTRA_REPLY_TOKEN, token) }
+        android.app.RemoteInput.addResultsToIntent(
+            arrayOf(android.app.RemoteInput.Builder(MainActivity.REPLY_RESULT_KEY).build()),
+            intent,
+            results,
+        )
+        return intent
+    }
+
+    @Test
+    fun `通知回复带合法令牌才注入消息`() {
+        val context = RuntimeEnvironment.getApplication()
+        val token = io.github.mangi.eta.agent.notify.ReplyToken.current(context)
+        val result = MainActivityLaunchRequests().accept(replyIntent(token, "  继续吧  "), context)
+        assertEquals(
+            ConversationReplyRequest("conv-1", "继续吧", 9301),
+            result.conversationReply,
+        )
+    }
+
+    @Test
+    fun `通知回复令牌缺失或伪造一律不接受`() {
+        val context = RuntimeEnvironment.getApplication()
+        // 无令牌
+        assertEquals(
+            null,
+            MainActivityLaunchRequests().accept(replyIntent(null, "注入内容"), context).conversationReply,
+        )
+        // 错误令牌
+        assertEquals(
+            null,
+            MainActivityLaunchRequests().accept(replyIntent("forged", "注入内容"), context).conversationReply,
+        )
+    }
+
+
+    @Test
+    fun `同一回复 nonce 第二次被拒不再注入消息`() {
+        val context = RuntimeEnvironment.getApplication()
+        val token = io.github.mangi.eta.agent.notify.ReplyToken.current(context)
+        val nonce = io.github.mangi.eta.agent.notify.ReplyToken.newNonce()
+        // 第一次：合法令牌 + 首次 nonce → 注入。
+        val first = MainActivityLaunchRequests().accept(replyIntent(token, "只发一次", nonce), context)
+        assertEquals(
+            ConversationReplyRequest("conv-1", "只发一次", 9301),
+            first.conversationReply,
+        )
+        // 第二次：模拟进程被杀后 system_server 用旧 Intent 重建、再 accept 同一 nonce → 不重复注入。
+        val second = MainActivityLaunchRequests().accept(replyIntent(token, "只发一次", nonce), context)
+        assertEquals(null, second.conversationReply)
+    }
+
 }

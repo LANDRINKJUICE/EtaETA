@@ -159,8 +159,10 @@ internal fun McpServersScreen(
                 .exceptionOrNull()?.message
         }
         if (error == null) {
+            val pendingToken = token
             scope.launch {
                 working = true
+                // 返回「已保存的服务器」与「工具发现是否失败」，用于区分 Toast 文案。
                 val result = withContext(Dispatchers.IO) {
                     runCatching {
                         val draft = McpServerSetting(
@@ -168,28 +170,34 @@ internal fun McpServersScreen(
                             name = normalizedName,
                             url = normalizedUrl,
                             protocolMode = McpProtocolMode.AUTO,
-                            authorizationType = if (token.isBlank()) {
+                            authorizationType = if (pendingToken.isBlank()) {
                                 McpAuthorizationType.NONE
                             } else {
                                 McpAuthorizationType.BEARER
                             },
                         )
-                        val discovered = McpServerManager.discover(draft, token)
-                        McpServerRepository.add(discovered, token)
+                        // 联网发现失败不再丢弃整次新增：先落库（工具列表为空），
+                        // 用户稍后在详情页点「刷新」即可重试。与 eta_mcp_upsert 的容错一致。
+                        val discovery = runCatching {
+                            McpServerManager.discover(draft, pendingToken)
+                        }
+                        val resolved = discovery.getOrDefault(draft)
+                        McpServerRepository.add(resolved, pendingToken) to discovery.exceptionOrNull()
                     }
                 }
                 working = false
-                result.onSuccess {
+                result.onSuccess { (saved, discoveryFailure) ->
                     showAdd = false
                     name = ""
                     url = ""
                     token = ""
                     error = null
-                    Toast.makeText(
-                        context,
-                        resources.getString(R.string.mcp_server_added, it.tools.size),
-                        Toast.LENGTH_SHORT,
-                    ).show()
+                    val message = if (discoveryFailure == null) {
+                        resources.getString(R.string.mcp_server_added, saved.tools.size)
+                    } else {
+                        resources.getString(R.string.mcp_server_added_offline)
+                    }
+                    Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                 }.onFailure {
                     error = it.message ?: resources.getString(R.string.mcp_connection_failed)
                 }
@@ -204,7 +212,7 @@ internal fun McpServersScreen(
                 onBack = onBack,
                 actions = {
                     CouiTopAppBarIconButton(
-                        icon = CouiIcons.Add,
+                        icon = CouiIcons.Outlined.Add,
                         contentDescription = stringResource(R.string.mcp_add_server),
                         onClick = { showAdd = true },
                     )
@@ -652,20 +660,33 @@ internal fun McpServerDetailScreen(
                 confirmText = stringResource(R.string.action_save),
                 onConfirm = {
                     server?.let { current ->
-                        scope.launch(Dispatchers.IO) {
-                            McpServerRepository.update(
-                                current.copy(
-                                    authorizationType = if (token.isBlank()) {
-                                        McpAuthorizationType.NONE
-                                    } else {
-                                        McpAuthorizationType.BEARER
-                                    },
-                                ),
-                                bearerToken = token,
-                            )
+                        val pendingToken = token
+                        scope.launch {
+                            val result = runCatching {
+                                withContext(Dispatchers.IO) {
+                                    McpServerRepository.update(
+                                        current.copy(
+                                            authorizationType = if (pendingToken.isBlank()) {
+                                                McpAuthorizationType.NONE
+                                            } else {
+                                                McpAuthorizationType.BEARER
+                                            },
+                                        ),
+                                        bearerToken = pendingToken,
+                                    )
+                                }
+                            }
+                            result.onSuccess {
+                                token = ""
+                                showToken = false
+                            }.onFailure { failure ->
+                                Toast.makeText(
+                                    context,
+                                    failure.message ?: resources.getString(R.string.settings_write_failed),
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            }
                         }
-                        token = ""
-                        showToken = false
                     }
                 },
                 onDismissRequest = { showToken = false },
@@ -826,20 +847,34 @@ internal fun McpServerDetailScreen(
                         onCancel = { showToken = false },
                         onConfirm = {
                             server?.let { current ->
-                                scope.launch(Dispatchers.IO) {
-                                    McpServerRepository.update(
-                                        current.copy(
-                                            authorizationType = if (token.isBlank()) {
-                                                McpAuthorizationType.NONE
-                                            } else {
-                                                McpAuthorizationType.BEARER
-                                            },
-                                        ),
-                                        bearerToken = token,
-                                    )
+                                val pendingToken = token
+                                scope.launch {
+                                    val result = runCatching {
+                                        withContext(Dispatchers.IO) {
+                                            McpServerRepository.update(
+                                                current.copy(
+                                                    authorizationType = if (pendingToken.isBlank()) {
+                                                        McpAuthorizationType.NONE
+                                                    } else {
+                                                        McpAuthorizationType.BEARER
+                                                    },
+                                                ),
+                                                bearerToken = pendingToken,
+                                            )
+                                        }
+                                    }
+                                    result.onSuccess {
+                                        token = ""
+                                        showToken = false
+                                    }.onFailure { failure ->
+                                        Toast.makeText(
+                                            context,
+                                            failure.message
+                                                ?: resources.getString(R.string.settings_write_failed),
+                                            Toast.LENGTH_SHORT,
+                                        ).show()
+                                    }
                                 }
-                                token = ""
-                                showToken = false
                             }
                         },
                     )
@@ -936,7 +971,7 @@ private fun McpToolSwitchRow(
                     Column(modifier = Modifier.weight(1f)) {
                         CouiText(
                             text = displayTitle,
-                            kind = CouiTextKind.PreferenceTitle,
+                            kind = CouiTextKind.ItemTitle,
                             color = colors.title,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -944,7 +979,7 @@ private fun McpToolSwitchRow(
                         if (showRawName) {
                             CouiText(
                                 text = tool.name,
-                                kind = CouiTextKind.Description,
+                                kind = CouiTextKind.GroupFooter,
                                 color = colors.summary.copy(alpha = 0.75f),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
@@ -1018,7 +1053,7 @@ private fun McpToolSwitchRow(
                     ) {
                         CouiText(
                             text = if (expanded) "收起说明" else "展开说明",
-                            kind = CouiTextKind.Description,
+                            kind = CouiTextKind.GroupFooter,
                             color = colors.accent,
                         )
                         CouiIcon(

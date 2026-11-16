@@ -17,6 +17,8 @@ import io.github.mangi.eta.data.model.AppearanceSettings
 import io.github.mangi.eta.data.model.AppearanceThemeMode
 import io.github.mangi.eta.data.model.AppearanceTopBarBlurStyle
 import io.github.mangi.eta.data.model.AppearanceUiStyle
+import io.github.mangi.eta.data.model.AssistantOverlaySettings
+import io.github.mangi.eta.data.model.ConversationTitleSettings
 import io.github.mangi.eta.data.model.SpeechSettings
 import io.github.mangi.eta.data.model.SubagentSettings
 import io.github.mangi.eta.data.model.WebToolsSettings
@@ -32,6 +34,8 @@ internal object SettingsDataStore {
     private val SPEECH_SETTINGS = stringPreferencesKey("speech_settings_v1")
     private val WEB_TOOLS_SETTINGS = stringPreferencesKey("web_tools_settings_v1")
     private val SUBAGENT_SETTINGS = stringPreferencesKey("subagent_settings_v1")
+    private val CONVERSATION_TITLE_SETTINGS = stringPreferencesKey("conversation_title_settings_v1")
+    private val ASSISTANT_OVERLAY_SETTINGS = stringPreferencesKey("assistant_overlay_settings_v1")
     private val speechJson = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
@@ -73,6 +77,57 @@ internal object SettingsDataStore {
         dataStore.edit { it[WEB_TOOLS_SETTINGS] = speechJson.encodeToString(settings) }
     }
 
+    /**
+     * 读取网页设置的**原始 JSON**（从未写过时为 null）。
+     *
+     * 与 [webToolsSettingsFlow] 的区别：这里不吞解析失败、不回落默认值。调用方据此区分
+     * "还没配过"（可以按默认值起手）与"配过但坏了"（必须拒绝写入，而不是拿默认值覆盖掉
+     * 用户原有可能只是暂时读不出来的配置）。
+     */
+    suspend fun webToolsSettingsRaw(): String? {
+        ensureInitialized()
+        return dataStore.data.first()[WEB_TOOLS_SETTINGS]
+    }
+
+    /** 语音设置的原始 JSON；语义同 [webToolsSettingsRaw]。 */
+    suspend fun speechSettingsRaw(): String? {
+        ensureInitialized()
+        return dataStore.data.first()[SPEECH_SETTINGS]
+    }
+
+    /**
+     * 在 `dataStore.edit {}` 事务内对原始 JSON 打补丁：读到的永远是该事务内的最新值，
+     * 其它写者（设置页、Agent 工具）不会与本次读-改-写交错。
+     *
+     * @param transform 收到事务内的原始字符串（从未写过时为 null），返回要落盘的新字符串；
+     *   返回 null 表示放弃写入（存储保持原值，方法返回 false）；抛异常则事务整体失败、不落盘。
+     * @return 是否真的写入。
+     */
+    suspend fun patchWebToolsSettingsRaw(transform: (String?) -> String?): Boolean =
+        patchRaw(WEB_TOOLS_SETTINGS, transform)
+
+    /** 语音设置的事务内原始 JSON 补丁；语义同 [patchWebToolsSettingsRaw]。 */
+    suspend fun patchSpeechSettingsRaw(transform: (String?) -> String?): Boolean =
+        patchRaw(SPEECH_SETTINGS, transform)
+
+    private suspend fun patchRaw(
+        key: Preferences.Key<String>,
+        transform: (String?) -> String?,
+    ): Boolean {
+        ensureInitialized()
+        var applied = false
+        dataStore.edit { prefs ->
+            // edit{} 遇到并发写会用最新数据重跑本块，标志位必须每次重置，否则上一次尝试的结果会串味。
+            applied = false
+            val updated = transform(prefs[key])
+            if (updated != null) {
+                prefs[key] = updated
+                applied = true
+            }
+        }
+        return applied
+    }
+
     fun subagentSettingsFlow(): Flow<SubagentSettings> {
         ensureInitialized()
         return dataStore.data
@@ -91,6 +146,46 @@ internal object SettingsDataStore {
     suspend fun setSubagentSettings(settings: SubagentSettings) {
         ensureInitialized()
         dataStore.edit { it[SUBAGENT_SETTINGS] = speechJson.encodeToString(settings) }
+    }
+
+    fun conversationTitleSettingsFlow(): Flow<ConversationTitleSettings> {
+        ensureInitialized()
+        return dataStore.data
+            .catch { cause ->
+                if (cause is IOException) emit(emptyPreferences()) else throw cause
+            }
+            .map { prefs ->
+                prefs[CONVERSATION_TITLE_SETTINGS]?.let { raw ->
+                    runCatching { speechJson.decodeFromString<ConversationTitleSettings>(raw) }.getOrNull()
+                } ?: ConversationTitleSettings()
+            }
+    }
+
+    suspend fun conversationTitleSettings(): ConversationTitleSettings = conversationTitleSettingsFlow().first()
+
+    suspend fun setConversationTitleSettings(settings: ConversationTitleSettings) {
+        ensureInitialized()
+        dataStore.edit { it[CONVERSATION_TITLE_SETTINGS] = speechJson.encodeToString(settings) }
+    }
+
+    fun assistantOverlaySettingsFlow(): Flow<AssistantOverlaySettings> {
+        ensureInitialized()
+        return dataStore.data
+            .catch { cause ->
+                if (cause is IOException) emit(emptyPreferences()) else throw cause
+            }
+            .map { prefs ->
+                prefs[ASSISTANT_OVERLAY_SETTINGS]?.let { raw ->
+                    runCatching { speechJson.decodeFromString<AssistantOverlaySettings>(raw) }.getOrNull()
+                } ?: AssistantOverlaySettings()
+            }
+    }
+
+    suspend fun assistantOverlaySettings(): AssistantOverlaySettings = assistantOverlaySettingsFlow().first()
+
+    suspend fun setAssistantOverlaySettings(settings: AssistantOverlaySettings) {
+        ensureInitialized()
+        dataStore.edit { it[ASSISTANT_OVERLAY_SETTINGS] = speechJson.encodeToString(settings) }
     }
 
     private const val STORE_NAME = "eta_settings"

@@ -15,6 +15,10 @@ sealed interface AppRoute : NavKey {
     @Serializable
     data object Terminal : AppRoute
 
+    /** 双窗文件管理器（MT 交互范式复刻）：聊天加号菜单、顶栏溢出菜单与设置页三处入口。 */
+    @Serializable
+    data object FileManager : AppRoute
+
     @Serializable
     data object Tools : AppRoute
 
@@ -26,6 +30,12 @@ sealed interface AppRoute : NavKey {
 
     @Serializable
     data object Subagents : AppRoute
+
+    @Serializable
+    data object ConversationTitleSettings : AppRoute
+
+    @Serializable
+    data object AssistantOverlaySettings : AppRoute
 
     @Serializable
     data object Characters : AppRoute
@@ -71,6 +81,19 @@ sealed interface AppRoute : NavKey {
 
     @Serializable
     data object Memory : AppRoute
+
+    /** 到点自动执行的 agent 任务列表；现在作为任务中心的「自动任务」分区呈现。 */
+    @Serializable
+    data object ScheduledTasks : AppRoute
+
+    /**
+     * 任务中心：待确认、自动任务、运行中/后台、宏与用量的总览页。
+     *
+     * [tab] 只保存 [io.github.mangi.eta.ui.model.TaskCenterTab] 的名字（空串表示默认分区）；
+     * 用字符串而不是枚举，避免导航序列化与 UI 枚举互相绑定。
+     */
+    @Serializable
+    data class TaskCenter(val tab: String = "") : AppRoute
 
     @Serializable
     data object LinuxEnvironment : AppRoute

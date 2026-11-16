@@ -106,7 +106,7 @@ Provider 层支持 OpenAI-compatible Chat Completions、Responses API、Anthropi
 
 Eta 自身实现了完整的 Android 原生数字助理服务（`VoiceInteractionService`），可作为系统默认数字助理运行，长按电源键直接唤醒 Eta 本体执行任务：
 
-- **Eta 原生数字助理**：从电源键直接唤起 Eta 本体全局浮窗，竖屏下光效从按键位置沿屏幕边缘进入并汇聚到底部，支持语音提问、切换键盘输入或点击建议提问，上拉浮窗即可回到 Eta 主界面接管当前会话；唤醒时由系统直接提供当前屏幕截图与应用内容，无需额外点击或开启无障碍截图。语音识别支持千问或豆包在线接口，也可在设置中独立关闭语音识别以直接弹出文字输入栏与键盘；只需麦克风权限与对应服务配置，不依赖设备自带识别服务。语音播报支持千问、豆包、Gemini 和 MiniMax，可配置音色并试听，支持助手回答自动播报、聊天听写以及手动/自动朗读（退到后台或锁屏可继续播放），详见[语音配置](docs/VOICE.md)。
+- **Eta 原生数字助理**：从电源键直接唤起 Eta 本体全局浮窗，竖屏下光效从按键位置沿屏幕边缘进入并汇聚到底部，支持语音提问、切换键盘输入或点击建议提问，上拉浮窗即可回到 Eta 主界面接管当前会话；唤醒时由系统直接提供当前屏幕截图与应用内容，无需额外点击或开启无障碍截图。语音识别支持千问、豆包和 Mimo 在线接口，也可在设置中独立关闭语音识别以直接弹出文字输入栏与键盘；只需麦克风权限与对应服务配置，不依赖设备自带识别服务。语音播报支持千问、豆包、Gemini、MiniMax 和 Mimo，可配置音色并试听，支持助手回答自动播报、聊天听写以及手动/自动朗读（退到后台或锁屏可继续播放），详见[语音配置](docs/VOICE.md)。
 - **长按电源键路由**：在设置中选择长按电源键唤起 Eta 本体、Gemini 或系统默认助手。
 - **小布 / 超级小爱接管**：习惯使用厂商原有入口时，也可保留小布或超级小爱的界面，将请求交由 Eta 本体与自选模型处理。
 
@@ -194,6 +194,7 @@ Eta 先从现有 Android 上的模型、上下文与工具做起。真正落地�
 - [Agent Runtime](docs/AGENT_RUNTIME.md)：Agent Loop、Provider、steering、transcript 与结果恢复。
 - [HyperOS 系统入口](docs/HYPEROS_SYSTEM_ENTRY.md)：电源键、一圈即搜的适配条件与验证边界。
 - [终端原生组件](docs/TERMINAL_NATIVE.md)：PTY、PRoot 及随包源码的构建方式。
+- [UI 设计规范](docs/UI_DESIGN_GUIDE.md)：COUI/Miuix 双界面组件对应、间距/字号/文案约定与禁忌清单，改动界面前必读。
 
 ## 关于 PR 与贡献
 
@@ -223,6 +224,8 @@ AI 时代下，处理外部 PR 变得比以往更加困难：大量由 AI 生成
 
 ## 许可证
 
-Eta 采用 [PolyForm Noncommercial License 1.0.0](LICENSE)，未经[作者](https://github.com/Mangi-11)书面授权，禁止个人二次分发、贩卖、收费代装及其他商业使用。
+Copyright © 2026 [蛮吉 (Mangi-11)](https://github.com/Mangi-11)
+
+本项目基于 GPL-3.0 开源，详情请参阅 [LICENSE](LICENSE)。
 
 <sub></sub>社区：<a href="https://linux.do">LINUX DO</sub>

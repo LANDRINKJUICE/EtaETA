@@ -64,7 +64,7 @@ internal object AgentSubagentToolCatalog {
                     .put("maxLength", 48)
                     .put(
                         "description",
-                        "Preset type (\"explore\", \"coder\", \"plan\", or a saved custom profile) OR any ad-hoc kebab-case role name (e.g. \"bill-analyzer\", \"apk-inspector\") to spawn an ephemeral specialized subagent on the fly. Defaults to \"explore\" when omitted. Do not set when `resume` is provided.",
+                        "Preset type (${SubagentProfile.BUILTIN_PROFILES.joinToString(", ") { "\"${it.name}\"" }}, or a saved custom profile) OR any ad-hoc kebab-case role name (e.g. \"bill-analyzer\", \"apk-inspector\") to spawn an ephemeral specialized subagent on the fly. Defaults to \"explore\" when omitted. Do not set when `resume` is provided.",
                     ),
             )
             .put(
@@ -87,6 +87,22 @@ internal object AgentSubagentToolCatalog {
                         "description",
                         "Optional tool allowlist for an ad-hoc subagent (e.g. [\"summarize_bills\", \"search_bills\"]). Omit to use the preset's tools or all non-GUI tools.",
                     ),
+            )
+            .put(
+                "timeout_seconds",
+                JSONObject()
+                    .put("type", "integer")
+                    .put("minimum", 0)
+                    .put("maximum", 3600)
+                    .put("description", "Budget: cancel the subagent after this many seconds and return partial output (cooperative: a tool already executing finishes first). 0 (default) means unlimited."),
+            )
+            .put(
+                "max_turns",
+                JSONObject()
+                    .put("type", "integer")
+                    .put("minimum", 0)
+                    .put("maximum", 500)
+                    .put("description", "Budget: cancel the subagent when it exceeds this many model rounds (SUBAGENT_BUDGET_EXCEEDED). 0 (default) means unlimited."),
             )
             .put(
                 "resume",

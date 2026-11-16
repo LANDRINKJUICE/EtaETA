@@ -91,6 +91,7 @@ internal fun AgentAttachmentPickerButton(
     onAttachFiles: (List<String>) -> Unit,
     onAttachFolder: (String) -> Unit,
     onAttachFilePath: (String) -> Unit,
+    onOpenFileManager: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -127,6 +128,7 @@ internal fun AgentAttachmentPickerButton(
         stringResource(R.string.attachment_file),
         stringResource(R.string.attachment_folder),
         stringResource(R.string.attachment_enter_path),
+        stringResource(R.string.route_file_manager),
     )
     val onSelectOption: (Int) -> Unit = { index ->
         when (index) {
@@ -139,21 +141,22 @@ internal fun AgentAttachmentPickerButton(
                 pathInput = ""
                 showPathDialog = true
             }
+            4 -> onOpenFileManager()
         }
     }
 
     Box(modifier = modifier) {
         IconButton(
             onClick = { anchor.open { showPopup = true } },
-            minWidth = ChatInputActionSize,
-            minHeight = ChatInputActionSize,
+            minWidth = 34.dp,
+            minHeight = 34.dp,
             modifier = Modifier.couiMenuAnchor(anchor),
         ) {
             Icon(
                 imageVector = Icons.Rounded.Add,
                 contentDescription = stringResource(R.string.ui_add_attachment_dba9e8),
-                modifier = Modifier.size(ChatInputActionIconSize),
-                tint = MiuixTheme.colorScheme.onSurface,
+                modifier = Modifier.size(21.dp),
+                tint = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.72f),
             )
         }
         when (LocalUiStyle.current) {

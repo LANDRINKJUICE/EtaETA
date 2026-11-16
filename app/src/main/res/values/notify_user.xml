@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  主动沟通（notify_user）与通知灵动化新增文案。
+  独立成文件而不塞进 strings.xml：四期记忆/拦截卡/自动任务/任务中心几轮都在改 strings.xml，
+  独立文件避免与它们的未提交改动在同一处冲突。
+-->
+<resources>
+    <!-- 新增 channel：普通主动沟通 / 紧急关注 -->
+    <string name="notify_channel_proactive">Agent updates</string>
+    <string name="notify_channel_proactive_desc">Notifications the agent sends when a background task has something worth your attention, and reminders that an action is waiting for your confirmation.</string>
+    <string name="notify_channel_attention">Urgent agent alerts</string>
+    <string name="notify_channel_attention_desc">Reserved for genuinely urgent agent notifications: uses a higher priority and plays a sound. You can turn this channel off without affecting normal updates.</string>
+
+    <!-- notify_user 默认标题 -->
+    <string name="notify_default_title">Agent update</string>
+
+    <!-- 通知上的动作按钮 -->
+    <string name="notify_action_open_task_center">Open task center</string>
+    <string name="notify_action_review">Review</string>
+    <string name="notify_action_view_result">View result</string>
+
+    <!-- 危险操作等待确认（常驻单条，数量原地更新） -->
+
+    <!-- 审批通知「后台回复」RemoteInput：action 标签 + 输入框提示 -->
+    <string name="approval_reply_action_danger">Deny &amp; explain</string>
+    <string name="approval_reply_action_ask">Type a reply</string>
+    <string name="approval_reply_hint_danger">Tell the agent what to do instead</string>
+    <string name="approval_reply_hint_ask">Type your own answer</string>
+
+    <string name="notify_approval_title">%1$d action(s) waiting for your confirmation</string>
+    <string name="notify_approval_body">%1$d action(s) paused before running something risky. Open the task center to allow or reject.</string>
+
+    <!-- 常驻通知实时状态 -->
+    <string name="notify_elapsed_format">%1$ds</string>
+    <string name="notify_stage_running">Running</string>
+    <string name="notify_stage_starting">Starting</string>
+
+    <!-- 设置开关 -->
+    <string name="settings_proactive_notify">Proactive notifications</string>
+    <string name="settings_proactive_notify_summary">Let the agent send a notification when a background or scheduled task produces a result worth your attention. Restrained by design; urgent alerts are a separate channel.</string>
+    <string name="background_command_channel">Background commands</string>
+    <string name="background_command_channel_description">Shows when a background terminal command or service finishes.</string>
+    <string name="assistant_speech_channel">Assistant voice</string>
+    <string name="assistant_speech_channel_description">Shown only while the assistant overlay is listening or speaking.</string>
+    <string name="assistant_speech_running_note">Runs only while the assistant overlay is visible</string>
+    <!-- notify_user 通知栏直接回复（Direct Reply） -->
+    <string name="notify_reply_action">Reply</string>
+    <string name="notify_reply_hint">Type a reply</string>
+    <string name="notify_reply_failed">Reply could not be sent. Please try again in the conversation.</string>
+</resources>
