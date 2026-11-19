@@ -108,6 +108,12 @@ internal class AgentAppState(
     private val appContext = context.applicationContext
     private val runMessageProjector = AgentRunMessageProjector()
     private val runStore = AgentRunStore(scope) { runId, event -> applyRunEvent(runId, event) }
+
+    // ── DSH（DeepSeek Harness）会话支持 ──
+    /** DSH 引擎总协调器：进程、鉴权、会话与流式事件的翻译入口。 */
+    private val dshCoordinator by lazy { io.github.mangi.eta.agent.dsh.DshCoordinator(appContext) }
+    /** 活跃 DSH run 的收集 job；stopRun 时据此终止流式渲染。 */
+    private val dshRunJobs = mutableMapOf<String, kotlinx.coroutines.Job>()
     private val pendingConversationDeletes = mutableSetOf<String>()
     private val persistenceLock = Any()
     private var persistenceJob: Job? = null
@@ -1215,6 +1221,26 @@ internal class AgentAppState(
         persistConversations()
     }
 
+    /** 启动（或复用）DSH 引擎并把带 token 的启动 URL 回调给 UI；失败回调 null。 */
+    fun launchDshWeb(onReady: (String?) -> Unit) {
+        scope.launch(Dispatchers.IO) {
+            val url = try {
+                dshCoordinator.launchUrlForWebView()
+            } catch (_: Exception) {
+                null
+            }
+            withContext(Dispatchers.Main.immediate) { onReady(url) }
+        }
+    }
+
+    /** 新建 DSH 会话：同一套聊天页，消息由本地 DSH 引擎流式生成。 */
+    fun createDshConversation() {
+        createConversation()
+        homeState = homeState.copy(backend = io.github.mangi.eta.data.db.ConversationEntity.BACKEND_DSH)
+        refreshConversationSummaries()
+        persistConversations()
+    }
+
     fun branchConversation(conversationId: String, messageId: String, draftText: String = homeState.input) {
         if (selectedConversationId != conversationId || branchingConversationId != null || persistencePaused ||
             !homeState.isConversationLoaded || homeState.isStreaming || homeState.isCompacting ||
@@ -1684,6 +1710,10 @@ internal class AgentAppState(
         editBoundary: AgentConversationRevisionReducer.Boundary?,
         preserveCurrentDraft: Boolean = false,
     ) {
+        if (state.backend == io.github.mangi.eta.data.db.ConversationEntity.BACKEND_DSH) {
+            dispatchDshMessage(conversationId, state, prompt, editBoundary, preserveCurrentDraft)
+            return
+        }
         val fileReferences = pendingFileReferences.map { it.reference }
         val runtimePrompt = AgentFileReferencePromptCodec.format(prompt, fileReferences)
         val runId = "run-${UUID.randomUUID()}"
@@ -2467,9 +2497,177 @@ internal class AgentAppState(
 
     private fun requestCancelRun(runId: String, byUser: Boolean = false) {
         if (!runStore.requestStop(runId, byUser)) return
+        val dshJob = dshRunJobs.remove(runId)
+        if (dshJob != null) {
+            // DSH run：取消本地收集并立即定格气泡；引擎侧 turn 自然跑完，结果不再回灌。
+            scope.launch(Dispatchers.Main.immediate) {
+                dshJob.cancel()
+                finishDshRun(runId, stopped = true)
+            }
+            return
+        }
         scope.launch(Dispatchers.IO) {
             AgentRuntimeClient(appContext, AndroidAgentLogger).cancelRun(runId)
         }
+    }
+
+    // ── DSH 会话的发送与运行 ──
+
+    /** DSH 会话的发送入口：V1 为纯文本对话，编辑重发与附件暂不支持。 */
+    private fun dispatchDshMessage(
+        conversationId: String,
+        state: AgentChatHomeUiState,
+        prompt: String,
+        editBoundary: AgentConversationRevisionReducer.Boundary?,
+        preserveCurrentDraft: Boolean,
+    ) {
+        if (editBoundary != null) {
+            cancelMessageEdit()
+            return
+        }
+        val runId = "run-${UUID.randomUUID()}"
+        val userMessage = UserMessageUi(id = "user-$runId", content = prompt)
+        val title = conversationTitles[conversationId]?.takeIf { it.isNotBlank() }
+            ?: prompt.trim().let { if (it.length > 24) it.take(24) + "…" else it.ifBlank { appContext.getString(R.string.conversation_unnamed) } }
+        conversationTitles = conversationTitles + (conversationId to title)
+        if (selectedConversationId == conversationId) {
+            conversationPaneState = conversationPaneState.copy(selectedConversationId = conversationId)
+        }
+        launchDshConversationRun(
+            conversationId = conversationId,
+            runId = runId,
+            prompt = prompt,
+            messages = state.messages + userMessage,
+            state = if (preserveCurrentDraft) state.copy(messageEdit = null) else state.copy(
+                input = "",
+                pendingImages = emptyList(),
+                pendingFileReferences = emptyList(),
+                messageEdit = null,
+            ),
+        )
+    }
+
+    private fun launchDshConversationRun(
+        conversationId: String,
+        runId: String,
+        prompt: String,
+        messages: List<AgentChatMessageUi>,
+        state: AgentChatHomeUiState,
+    ) {
+        if (conversationId in pendingConversationDeletes || !runStore.register(runId, conversationId)) return
+        updateConversation(
+            conversationId,
+            state.copy(isStreaming = true, isCompacting = false, messages = messages),
+        )
+        refreshConversationSummaries()
+        val initialPersistence = persistConversations()
+        val job = scope.launch(Dispatchers.IO) {
+            try {
+                // write-ahead：用户消息未落库前不启动引擎交互。
+                if (!initialPersistence.await()) {
+                    withContext(Dispatchers.Main.immediate) {
+                        finishDshRun(runId, error = appContext.getString(R.string.conversation_persistence_failed))
+                    }
+                    return@launch
+                }
+                val conversation = dshCoordinator.openSession(conversationId)
+                if (conversation == null) {
+                    withContext(Dispatchers.Main.immediate) {
+                        finishDshRun(runId, error = appContext.getString(R.string.dsh_engine_unavailable))
+                    }
+                    return@launch
+                }
+                val attemptIndex = mutableMapOf<String, Int>()
+                var nextIndex = 0
+                val settled = CompletableDeferred<Boolean>()
+                val collectJob = launch {
+                    conversation.events.collect { event ->
+                        when (event) {
+                            is io.github.mangi.eta.agent.dsh.DshStreamEvent.AttemptStarted -> {
+                                val index = nextIndex++
+                                attemptIndex[event.attemptKey] = index
+                                withContext(Dispatchers.Main.immediate) {
+                                    enqueueRunEvent(runId, AgentEvent.AssistantBlockStart(0, AgentEvent.AssistantBlockKind.TEXT, index))
+                                }
+                            }
+                            is io.github.mangi.eta.agent.dsh.DshStreamEvent.TextDelta -> {
+                                val index = attemptIndex[event.attemptKey] ?: return@collect
+                                withContext(Dispatchers.Main.immediate) {
+                                    enqueueRunEvent(runId, AgentEvent.AssistantBlockDelta(0, AgentEvent.AssistantBlockKind.TEXT, index, event.delta.length, event.delta))
+                                }
+                            }
+                            is io.github.mangi.eta.agent.dsh.DshStreamEvent.ReasoningDelta -> {
+                                val index = attemptIndex[event.attemptKey] ?: return@collect
+                                withContext(Dispatchers.Main.immediate) {
+                                    enqueueRunEvent(runId, AgentEvent.AssistantBlockDelta(0, AgentEvent.AssistantBlockKind.THINKING, index, event.delta.length, event.delta))
+                                }
+                            }
+                            is io.github.mangi.eta.agent.dsh.DshStreamEvent.AttemptCommitted -> {
+                                val index = attemptIndex[event.attemptKey] ?: return@collect
+                                withContext(Dispatchers.Main.immediate) {
+                                    enqueueRunEvent(runId, AgentEvent.AssistantBlockEnd(
+                                        0, AgentEvent.AssistantBlockKind.TEXT, index,
+                                        contentChars = event.text.length, replacementContent = event.text,
+                                    ))
+                                }
+                                settled.complete(true)
+                            }
+                            is io.github.mangi.eta.agent.dsh.DshStreamEvent.AttemptAbandoned -> Unit
+                        }
+                    }
+                }
+                try {
+                    if (!dshCoordinator.sendPrompt(conversationId, prompt)) {
+                        withContext(Dispatchers.Main.immediate) {
+                            finishDshRun(runId, error = appContext.getString(R.string.dsh_prompt_failed))
+                        }
+                        return@launch
+                    }
+                    // 等待最终 assistant/message 落盘；中途被取消时 CancellationException 自然上抛。
+                    kotlinx.coroutines.withTimeoutOrNull(20 * 60_000L) { settled.await() }
+                } finally {
+                    collectJob.cancel()
+                }
+                withContext(Dispatchers.Main.immediate) { finishDshRun(runId) }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                AndroidAgentLogger.error("DshRun failed: type=${failure.safeLogType()}")
+                withContext(Dispatchers.Main.immediate) { finishDshRun(runId, error = failure.message) }
+            } finally {
+                dshRunJobs.remove(runId)
+            }
+        }
+        dshRunJobs[runId] = job
+        runStore.observe(runId, job)
+    }
+
+    /** DSH run 收尾：定格气泡、清运行态；与 applyRunResult 的 runtime 结算互斥使用。 */
+    private fun finishDshRun(runId: String, error: String? = null, stopped: Boolean = false) {
+        dshRunJobs.remove(runId)
+        updateRunTrace(runId) { messages ->
+            val finalizedThinking = runMessageProjector.finalizeThinking(runId, messages)
+            val finalizedText = runMessageProjector.finalizeText(runId, finalizedThinking)
+            if (error != null) {
+                finalizedText + SystemNoticeMessageUi(
+                    id = "dsh-error-$runId",
+                    code = SystemNoticeCode.RuntimeFailed,
+                    detail = error,
+                )
+            } else if (stopped) {
+                finalizedText + SystemNoticeMessageUi(
+                    id = "dsh-stopped-$runId",
+                    code = SystemNoticeCode.Stopped,
+                )
+            } else {
+                finalizedText
+            }
+        }
+        setConversationStreaming(runId, false)
+        runMessageProjector.clearRun(runId)
+        runStore.remove(runId)
+        refreshConversationSummaries()
+        persistConversations()
     }
 
     private fun isReplyRewrite(runId: String): Boolean =

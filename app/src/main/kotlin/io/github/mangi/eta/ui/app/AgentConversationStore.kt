@@ -118,6 +118,7 @@ internal object AgentConversationStore {
                                     updatedAt = state.updatedAt.takeIf { it != 0L } ?: System.currentTimeMillis(),
                                     modelId = state.modelId,
                                     isPinned = state.isPinned,
+                                    backend = state.backend ?: ConversationEntity.BACKEND_ETA,
                                 )
                                 phase = "write_metadata"
                                 dao.insertConversations(listOf(row))
@@ -270,6 +271,7 @@ internal object AgentConversationStore {
                 thinkingEnabled = conversation.reasoningEffortValue.enablesReasoning,
                 reasoningEffort = conversation.reasoningEffortValue,
                 modelId = conversation.modelId,
+                backend = conversation.backend,
                 messageStartIndex = page.startIndex,
                 hasEarlierMessages = page.hasEarlierMessages,
             )

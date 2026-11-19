@@ -76,6 +76,7 @@ internal class AgentConversationPersistence(initial: AgentConversationStore.Snap
         val roleplay: RoleplayBinding?,
         val roleplayMessages: RoleplayMessageState,
         val modelId: String?,
+        val backend: String?,
         val messages: List<AgentChatMessageUi>,
         val history: List<AgentModelClient.ConversationMessage>,
         val journal: List<AgentModelClient.ConversationMessage>,
@@ -90,7 +91,7 @@ internal class AgentConversationPersistence(initial: AgentConversationStore.Snap
         ) : this(
             title, updatedAt, isPinned, state.reasoningEffort, state.appliedRuntimeRunIds,
             state.roleplay, if (state.roleplay == null) RoleplayMessageState() else state.roleplayMessages,
-            state.modelId, state.messages, state.history, state.journal.ifEmpty { state.history },
+            state.modelId, state.backend, state.messages, state.history, state.journal.ifEmpty { state.history },
             state.isConversationLoaded, state.messageStartIndex,
         )
 
@@ -98,6 +99,7 @@ internal class AgentConversationPersistence(initial: AgentConversationStore.Snap
             title == other.title && updatedAt == other.updatedAt && isPinned == other.isPinned &&
                 reasoningEffort == other.reasoningEffort &&
                 appliedRuntimeRunIds == other.appliedRuntimeRunIds && roleplay == other.roleplay &&
-                roleplayMessages == other.roleplayMessages && modelId == other.modelId
+                roleplayMessages == other.roleplayMessages && modelId == other.modelId &&
+                backend == other.backend
     }
 }

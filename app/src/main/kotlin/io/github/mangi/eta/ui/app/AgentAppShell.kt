@@ -136,6 +136,8 @@ internal fun AgentAppShell(
     onNewConversation: () -> Unit,
     onOpenTerminal: () -> Unit,
     onOpenBrowser: () -> Unit,
+    onNewDshConversation: () -> Unit = {},
+    onOpenDshWeb: () -> Unit = {},
     onSelectConversation: (String) -> Unit,
     onConversationTogglePin: (ConversationSummaryUi) -> Unit,
     onConversationRename: (ConversationSummaryUi) -> Unit,
@@ -220,6 +222,8 @@ internal fun AgentAppShell(
                                                 onNewConversation = onNewConversation,
                                                 onOpenTerminal = onOpenTerminal,
                                                 onOpenBrowser = onOpenBrowser,
+                                                onNewDshConversation = onNewDshConversation,
+                                                onOpenDshWeb = onOpenDshWeb,
                                             )
                                         }
                                     }
@@ -328,6 +332,8 @@ private fun CouiTopBarOverflowMenu(
     onNewConversation: () -> Unit,
     onOpenTerminal: () -> Unit,
     onOpenBrowser: () -> Unit,
+    onNewDshConversation: () -> Unit,
+    onOpenDshWeb: () -> Unit,
 ) {
     var showMenu by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -339,6 +345,8 @@ private fun CouiTopBarOverflowMenu(
     val newConversationText = stringResource(R.string.action_new_conversation)
     val openTerminalText = stringResource(R.string.action_open_terminal)
     val openBrowserText = stringResource(R.string.action_open_browser)
+    val dshConversationText = stringResource(R.string.action_new_dsh_conversation)
+    val dshWebText = stringResource(R.string.action_open_dsh_web)
     val autoReadText = stringResource(
         if (autoReadEnabled) R.string.speech_disable_auto_read else R.string.speech_enable_auto_read,
     )
@@ -346,6 +354,8 @@ private fun CouiTopBarOverflowMenu(
         newConversationText,
         openTerminalText,
         openBrowserText,
+        dshConversationText,
+        dshWebText,
         autoReadText,
         hasSpeechPlayback,
         autoReadEnabled,
@@ -354,6 +364,8 @@ private fun CouiTopBarOverflowMenu(
             add(CouiMenuItem(value = 0, text = newConversationText, icon = Icons.Rounded.MapsUgc))
             add(CouiMenuItem(value = 1, text = openTerminalText, icon = Icons.Rounded.Terminal))
             add(CouiMenuItem(value = 2, text = openBrowserText, icon = Icons.Rounded.Language))
+            add(CouiMenuItem(value = 10, text = dshConversationText, icon = Icons.Rounded.SmartToy))
+            add(CouiMenuItem(value = 11, text = dshWebText, icon = Icons.Rounded.Public))
             if (hasSpeechPlayback) {
                 add(
                     CouiMenuItem(
@@ -387,6 +399,8 @@ private fun CouiTopBarOverflowMenu(
                     0 -> onNewConversation()
                     1 -> onOpenTerminal()
                     2 -> onOpenBrowser()
+                    10 -> onNewDshConversation()
+                    11 -> onOpenDshWeb()
                     3 -> speechSettings?.let { current ->
                         scope.launch {
                             SpeechSettingsRepository.save(current.copy(chatAutoSpeak = !current.chatAutoSpeak))
@@ -426,6 +440,8 @@ private fun AgentTopBar(
             onNewConversation = onNewConversation,
             onOpenTerminal = onOpenTerminal,
             onOpenBrowser = onOpenBrowser,
+            onNewDshConversation = onNewDshConversation,
+            onOpenDshWeb = onOpenDshWeb,
         ) {
             AgentTopBarChatHeader(
                 conversationTitle = homeTitle,
@@ -457,6 +473,8 @@ private fun HomeMiuixTopBar(
     onNewConversation: () -> Unit,
     onOpenTerminal: () -> Unit,
     onOpenBrowser: () -> Unit,
+    onNewDshConversation: () -> Unit = {},
+    onOpenDshWeb: () -> Unit = {},
     centerContent: @Composable () -> Unit,
 ) {
     val surfaceColor = MiuixTheme.colorScheme.surface
@@ -539,6 +557,8 @@ private fun HomeMiuixTopBar(
                     onNewConversation = onNewConversation,
                     onOpenTerminal = onOpenTerminal,
                     onOpenBrowser = onOpenBrowser,
+                    onNewDshConversation = onNewDshConversation,
+                    onOpenDshWeb = onOpenDshWeb,
                 )
             }
         },
@@ -566,6 +586,8 @@ private fun TopBarOverflowMenu(
     onNewConversation: () -> Unit,
     onOpenTerminal: () -> Unit,
     onOpenBrowser: () -> Unit,
+    onNewDshConversation: () -> Unit = {},
+    onOpenDshWeb: () -> Unit = {},
 ) {
     var showMenu by remember { mutableStateOf(false) }
     LaunchedEffect(isCurrentRoute) {
@@ -579,6 +601,8 @@ private fun TopBarOverflowMenu(
     val newConversationText = stringResource(R.string.action_new_conversation)
     val openTerminalText = stringResource(R.string.action_open_terminal)
     val openBrowserText = stringResource(R.string.action_open_browser)
+    val dshConversationText = stringResource(R.string.action_new_dsh_conversation)
+    val dshWebText = stringResource(R.string.action_open_dsh_web)
     val autoReadText = stringResource(
         if (autoReadEnabled) R.string.speech_disable_auto_read else R.string.speech_enable_auto_read,
     )
@@ -641,6 +665,22 @@ private fun TopBarOverflowMenu(
                     onClick = {
                         showMenu = false
                         onOpenBrowser()
+                    },
+                )
+                GlassPopupItem(
+                    text = dshConversationText,
+                    icon = MiuixIcons.Glass.NewMessage,
+                    onClick = {
+                        showMenu = false
+                        onNewDshConversation()
+                    },
+                )
+                GlassPopupItem(
+                    text = dshWebText,
+                    icon = MiuixIcons.Glass.GlobalVpn,
+                    onClick = {
+                        showMenu = false
+                        onOpenDshWeb()
                     },
                 )
                 if (hasSpeechPlayback) {

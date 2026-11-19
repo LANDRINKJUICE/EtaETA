@@ -58,6 +58,10 @@
   <string name="action_more">More options</string>
   <string name="action_open_terminal">Open terminal</string>
   <string name="action_open_browser">Open browser</string>
+  <string name="action_new_dsh_conversation">New DSH chat</string>
+  <string name="action_open_dsh_web">Open DSH web</string>
+  <string name="dsh_engine_unavailable">DSH engine is not available. Install the DSH profile in the Linux environment first, then try again.</string>
+  <string name="dsh_prompt_failed">Failed to deliver the message to the DSH engine.</string>
   <string name="route_tools">Tools</string>
   <string name="route_skills" translatable="false">Skills</string>
   <string name="route_permissions">Permissions</string>
@@ -980,6 +984,9 @@
   <string name="linux_ssh_tools">SSH remote access</string>
   <string name="linux_ssh_tools_summary">Install the full OpenSSH suite (sshd, ssh-keygen, ssh-agent, and sftp-server); the base environment already includes the ssh/scp/sftp client</string>
   <string name="linux_ssh_tools_ready">sshd, ssh-keygen, and ssh-agent are ready</string>
+  <string name="linux_dsh_tools">DeepSeek Harness (DSH)</string>
+  <string name="linux_dsh_tools_summary">Install the official DSH engine via npm; requires the Node.js environment first</string>
+  <string name="linux_dsh_tools_ready">DSH engine is ready; start it from the home menu</string>
   <string name="linux_profile_dependency_missing">Install %1$s first</string>
   <string name="linux_profile_stage_checking">Checking the Linux base environment</string>
   <string name="linux_profile_stage_downloading">Downloading %1$s</string>

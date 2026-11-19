@@ -97,7 +97,29 @@ internal object LinuxPackageProfiles {
             ),
         ),
     )
-    val ALL = listOf(PYTHON, NODE, SSH)
+
+    /**
+     * 官方 DeepSeek Harness 引擎（@deepseek-ai/dsh），npm 分发，运行在 Node profile 之上。
+     * 版本锁定：上游明示 rc 期存在破坏性变更，不做 @latest 漂移；升级 = 改版本号并递增 revision 重装。
+     */
+    private const val DSH_INSTALL_SCRIPT =
+        "mkdir -p /opt/eta/dsh-home && " +
+            "npm install -g --prefix /usr/local --registry=https://registry.npmmirror.com " +
+            "@deepseek-ai/dsh@0.2.2-rc.5 || " +
+            "npm install -g --prefix /usr/local @deepseek-ai/dsh@0.2.2-rc.5"
+
+    val DSH = LinuxPackageProfile(
+        id = "dsh",
+        markerName = AlpineEnvironmentPaths.DSH_TOOLS_MARKER,
+        revision = AlpineEnvironmentPaths.DSH_TOOLS_REVISION,
+        dependsOn = NODE,
+        specs = mapOf(
+            LinuxDistribution.ALPINE to LinuxPackageSpec(setupScript = DSH_INSTALL_SCRIPT),
+            LinuxDistribution.DEBIAN to LinuxPackageSpec(setupScript = DSH_INSTALL_SCRIPT),
+        ),
+    )
+
+    val ALL = listOf(PYTHON, NODE, SSH, DSH)
 }
 
 internal fun linuxPackageProfileReady(rootfs: File, profile: LinuxPackageProfile): Boolean {

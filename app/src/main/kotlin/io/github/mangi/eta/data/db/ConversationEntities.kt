@@ -11,8 +11,7 @@ import kotlinx.serialization.Serializable
 @Serializable
 @Entity(tableName = "conversations")
 internal data class ConversationEntity(
-    @PrimaryKey val id: String,
-    val title: String,
+    @PrimaryKey val id: String,    val title: String,
     @ColumnInfo(name = "thinking_enabled") val thinkingEnabled: Boolean,
     @ColumnInfo(name = "reasoning_effort", defaultValue = "'default'")
     val reasoningEffort: String = ReasoningEffort.DEFAULT.wireValue,
@@ -25,7 +24,14 @@ internal data class ConversationEntity(
     /** 会话最近使用的本地 Model.id；null 表示跟随默认模型。 */
     @ColumnInfo(name = "model_id") val modelId: String? = null,
     @ColumnInfo(name = "is_pinned", defaultValue = "0") val isPinned: Boolean = false,
-)
+    /** 会话后端：eta（默认，走 Agent Runtime）或 dsh（官方 DeepSeek Harness 引擎）。 */
+    @ColumnInfo(name = "backend", defaultValue = "'eta'") val backend: String = BACKEND_ETA,
+) {
+    companion object {
+        const val BACKEND_ETA = "eta"
+        const val BACKEND_DSH = "dsh"
+    }
+}
 
 internal data class ConversationMetadata(
     val id: String,
@@ -39,6 +45,7 @@ internal data class ConversationMetadata(
     @ColumnInfo(name = "updated_at") val updatedAt: Long,
     @ColumnInfo(name = "model_id") val modelId: String? = null,
     @ColumnInfo(name = "is_pinned") val isPinned: Boolean = false,
+    @ColumnInfo(name = "backend") val backend: String = ConversationEntity.BACKEND_ETA,
 )
 
 /** 会话侧栏只读取定长预览，不读取上下文、角色卡与修订正文。 */
