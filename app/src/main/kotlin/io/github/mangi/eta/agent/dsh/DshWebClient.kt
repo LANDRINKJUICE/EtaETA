@@ -85,6 +85,7 @@ internal class DshWebClient(
                 val body = response.body?.string().orEmpty()
                 if (response.code != 200) throw DshRpcException("HTTP_${response.code}", body.take(300))
                 val parsed = JSONObject(body)
+                if (parsed.optString("rpcId") != rpcId) throw DshRpcException("RPC_ID_MISMATCH", "响应 rpcId 与请求不一致")
                 val result = parsed.optJSONObject("result") ?: throw DshRpcException("BAD_RESPONSE", body.take(300))
                 if (result.optBoolean("ok")) {
                     result.optJSONObject("value") ?: JSONObject()

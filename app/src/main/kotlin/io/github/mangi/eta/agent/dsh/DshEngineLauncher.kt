@@ -131,7 +131,7 @@ internal class DshEngineLauncher(
         const val LAUNCH_ID = "dsh-launch"
         const val DEFAULT_PORT = 3080
 
-        fun launchUrlFromLogs(text: String): String? = LAUNCH_URL_REGEX.find(text)?.value
+        fun launchUrlFromLogs(text: String): String? = LAUNCH_URL_REGEX.findAll(text).lastOrNull()?.value
 
         /** 启动行 `dsh web: http://127.0.0.1:3080/?token=<43 位 base64url>`；token 字符集收紧防吃进 ANSI 尾巴。 */
         private val LAUNCH_URL_REGEX = Regex(

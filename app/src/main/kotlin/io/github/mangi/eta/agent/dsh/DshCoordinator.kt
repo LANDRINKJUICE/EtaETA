@@ -6,6 +6,7 @@ import io.github.mangi.eta.agent.terminal.LinuxEnvironmentPaths
 import io.github.mangi.eta.agent.terminal.SharedFolderMounts
 import io.github.mangi.eta.core.AndroidAgentLogger
 import io.github.mangi.eta.data.repository.LinuxEnvironmentSettingsRepository
+import io.github.mangi.eta.agent.terminal.terminalEnvironment
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -82,9 +83,11 @@ internal class DshCoordinator(private val context: Context) {
         conversations[conversationKey]?.events
 
     suspend fun sendPrompt(conversationKey: String, text: String): Boolean {
-        val conversation = conversations[conversationKey] ?: openSession(conversationKey)?.let {
-            conversations[conversationKey] = it
-        } ?: return false
+        var conversation = conversations[conversationKey]
+        if (conversation == null) {
+            conversation = openSession(conversationKey) ?: return false
+            conversations[conversationKey] = conversation
+        }
         return conversation.prompt(text)
     }
 

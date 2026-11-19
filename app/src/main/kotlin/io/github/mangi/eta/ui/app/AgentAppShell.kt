@@ -22,6 +22,8 @@ import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Public
+import androidx.compose.material.icons.rounded.SmartToy
 import androidx.compose.material.icons.automirrored.outlined.ShortText
 import androidx.compose.material.icons.automirrored.rounded.VolumeOff
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
@@ -264,6 +266,8 @@ internal fun AgentAppShell(
                                 onNewConversation = onNewConversation,
                                 onOpenTerminal = onOpenTerminal,
                                 onOpenBrowser = onOpenBrowser,
+                                onNewDshConversation = onNewDshConversation,
+                                onOpenDshWeb = onOpenDshWeb,
                                 homeTitle = homeTitle,
                                 homeCharacter = homeCharacter,
                                 homeModelPickerState = homeModelPickerState,
@@ -424,6 +428,8 @@ private fun AgentTopBar(
     onNewConversation: () -> Unit,
     onOpenTerminal: () -> Unit,
     onOpenBrowser: () -> Unit,
+    onNewDshConversation: () -> Unit = {},
+    onOpenDshWeb: () -> Unit = {},
     homeTitle: String?,
     homeCharacter: RoleplayChatUi?,
     homeModelPickerState: AgentModelPickerUiState?,

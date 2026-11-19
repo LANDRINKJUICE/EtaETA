@@ -215,6 +215,7 @@ internal object AgentConversationStore {
                 }),
                 input = "", isStreaming = false, thinkingEnabled = effort.enablesReasoning,
                 reasoningEffort = effort, modelId = conversation.modelId, isConversationLoaded = false,
+                backend = conversation.backend,
                 conversationCharacterName = character?.first, conversationCharacterAvatarPath = character?.second,
             )
             titles[conversation.id] = conversation.title.takeUnless { it == LEGACY_UNNAMED_TITLE }.orEmpty()

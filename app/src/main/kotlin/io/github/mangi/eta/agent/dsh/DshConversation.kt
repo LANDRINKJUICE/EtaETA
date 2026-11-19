@@ -162,7 +162,7 @@ internal class DshSocketHub(private val client: DshWebClient) {
     fun ensureOpen(onFatal: (String) -> Unit) {
         synchronized(lock) {
             if (webSocket != null) return
-            webSocket = client.client.newWebSocket(client.webSocketRequest(), object : WebSocketListener() {
+            webSocket = DshWebClient.client.newWebSocket(client.webSocketRequest(), object : WebSocketListener() {
                 override fun onMessage(webSocket: WebSocket, text: String) {
                     val frame = try {
                         JSONObject(text)
@@ -173,7 +173,8 @@ internal class DshSocketHub(private val client: DshWebClient) {
                         "item" -> {
                             val handler: ((JSONObject) -> Unit)?
                             synchronized(lock) { handler = streams[frame.optString("streamId")] }
-                            frame.optJSONObject("value")?.let(handler::invoke)
+                            val value = frame.optJSONObject("value") ?: return
+                            handler?.invoke(value)
                         }
                         "error" -> onFatal(frame.optJSONObject("error")?.optString("message") ?: "stream error")
                         "end" -> Unit
@@ -185,7 +186,7 @@ internal class DshSocketHub(private val client: DshWebClient) {
                     notifyFaults(t.message ?: "socket failure")
                 }
 
-                override fun onClosed(webSocket: WebSocket, response: Response) {
+                override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                     synchronized(lock) { this@DshSocketHub.webSocket = null }
                 }
             })

@@ -1242,6 +1242,8 @@ internal class AgentAppState(
     }
 
     fun branchConversation(conversationId: String, messageId: String, draftText: String = homeState.input) {
+        // DSH 会话的历史由引擎持有，V1 不支持分支（分支出的 eta 会话没有可重放的历史）。
+        if (homeState.backend == io.github.mangi.eta.data.db.ConversationEntity.BACKEND_DSH) return
         if (selectedConversationId != conversationId || branchingConversationId != null || persistencePaused ||
             !homeState.isConversationLoaded || homeState.isStreaming || homeState.isCompacting ||
             homeState.messageEdit != null || homeState.roleplayMessages.pendingRewrites.isNotEmpty() ||
@@ -1919,6 +1921,8 @@ internal class AgentAppState(
     fun regenerateMessage(messageId: String) {
         if (homeState.isStreaming || homeState.messageEdit != null || isBranchingCurrentConversation) return
         val conversationId = selectedConversationId ?: return
+        // DSH 会话的历史在引擎侧，V1 不支持重生成与压缩。
+        if (homeState.backend == io.github.mangi.eta.data.db.ConversationEntity.BACKEND_DSH) return
         if (homeState.roleplay != null) {
             val target = homeState.messages.filterIsInstance<AgentMessageUi>().firstOrNull { it.id == messageId } ?: return
             val prefix = RoleplayConversationReducer.rewriteHistory(homeState, messageId) ?: return
@@ -1965,6 +1969,7 @@ internal class AgentAppState(
 
     fun compactCurrentContext() {
         val conversationId = selectedConversationId ?: return
+        if (homeState.backend == io.github.mangi.eta.data.db.ConversationEntity.BACKEND_DSH) return
         if (isBranchingCurrentConversation || runStore.activeRunId(conversationId) != null || !homeState.canCompactContext || modelPickerState.isChanging) return
         launchConversationRun(
             conversationId = conversationId,
@@ -2623,12 +2628,24 @@ internal class AgentAppState(
                         }
                         return@launch
                     }
-                    // 等待最终 assistant/message 落盘；中途被取消时 CancellationException 自然上抛。
-                    kotlinx.coroutines.withTimeoutOrNull(20 * 60_000L) { settled.await() }
+                    // 等待最终 assistant/message 落盘；超时按错误收尾，不静默定格。
+                    val settledOk = kotlinx.coroutines.withTimeoutOrNull(20 * 60_000L) { settled.await() } == true
+                    val pendingText = withContext(Dispatchers.Main.immediate) {
+                        val id = conversationIdForRun(runId)
+                        val state = id?.let { conversationsById[it] }
+                        if (settledOk || state == null) null
+                        else state.messages.filterIsInstance<AgentMessageUi>().lastOrNull { it.isStreaming }?.content
+                    }
+                    withContext(Dispatchers.Main.immediate) {
+                        when {
+                            settledOk -> finishDshRun(runId)
+                            pendingText.isNullOrBlank() -> finishDshRun(runId, error = "DSH 引擎响应超时")
+                            else -> finishDshRun(runId, error = "DSH 流式输出未完成，内容已保留")
+                        }
+                    }
                 } finally {
                     collectJob.cancel()
                 }
-                withContext(Dispatchers.Main.immediate) { finishDshRun(runId) }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
@@ -2668,6 +2685,13 @@ internal class AgentAppState(
         runStore.remove(runId)
         refreshConversationSummaries()
         persistConversations()
+        // 与 ETA 路径同构：删除请求挂起时，run 结算后真正删除；否则消息发送被永久阻断。
+        val conversationId = conversationIdForRun(runId)
+        if (conversationId != null && conversationId in pendingConversationDeletes &&
+            runStore.activeRunId(conversationId) == null
+        ) {
+            deleteSettledConversation(conversationId)
+        }
     }
 
     private fun isReplyRewrite(runId: String): Boolean =
