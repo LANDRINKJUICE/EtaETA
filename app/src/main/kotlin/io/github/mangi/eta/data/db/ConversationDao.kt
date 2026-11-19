@@ -11,7 +11,7 @@ import androidx.room.Upsert
 @Dao
 internal interface ConversationDao : ChunkedTextDao {
     @Query(
-        "SELECT c.id, c.title, c.reasoning_effort, c.created_at, c.updated_at, c.model_id, c.is_pinned, " +
+        "SELECT c.id, c.title, c.reasoning_effort, c.created_at, c.updated_at, c.model_id, c.is_pinned, c.backend, " +
             "(c.roleplay_json != '') AS has_roleplay, " +
             "m.id AS message_id, m.type AS message_type, m.tool_name, " +
             "COALESCE((SELECT substr(content, 1, 256) FROM agent_text_chunks " +

@@ -62,6 +62,7 @@ internal data class ConversationIndexRow(
     @ColumnInfo(name = "tool_name") val toolName: String?,
     @ColumnInfo(name = "has_roleplay") val hasRoleplay: Boolean,
     @ColumnInfo(name = "is_pinned") val isPinned: Boolean = false,
+    @ColumnInfo(name = "backend") val backend: String = "eta",
 )
 
 internal data class ConversationIdentity(
