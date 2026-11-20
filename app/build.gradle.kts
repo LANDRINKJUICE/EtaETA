@@ -93,6 +93,12 @@ android {
         compose = true
     }
 
+    // 单测 JVM 独立堆：EtaBackupStreamingTest 需要同时驻留多份 17MB 级字符串，
+    // Gradle daemon 的 4G 配置不覆盖 test executor，runner 默认堆会 OOM。
+    tasks.withType<Test>().configureEach {
+        maxHeapSize = "3g"
+    }
+
     androidResources {
         localeFilters += listOf("en", "b+zh+Hans", "b+zh+Hant")
     }
