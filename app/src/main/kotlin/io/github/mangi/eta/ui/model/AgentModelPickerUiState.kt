@@ -5,6 +5,7 @@ import io.github.mangi.eta.agent.subagent.SubagentActivitySnapshot
 import io.github.mangi.eta.data.model.Model
 import io.github.mangi.eta.data.model.ProviderAuthModes
 import io.github.mangi.eta.data.model.ProviderSetting
+import io.github.mangi.eta.data.model.ProviderSourceTypes
 import io.github.mangi.eta.data.provider.ProviderSourceRegistry
 import java.text.NumberFormat
 import java.util.Locale
@@ -160,6 +161,72 @@ internal object AgentModelPickerProjector {
             displayName = model.displayName.ifBlank { model.modelId },
             contextWindow = model.effectiveContextWindow,
         )
+}
+
+/**
+ * DSH 引擎的模型目录投影：把 `session/modelCatalog` 的 provider 分组映射成选择器结构。
+ *
+ * 引擎侧的模型 id 由「provider + model」共同确定，因此选择器里的 [AgentModelOptionUi.id]
+ * 用 `provider/model` 复合键，选中后拆开分别回传给引擎。
+ */
+internal object DshModelCatalogProjector {
+    fun project(
+        catalog: org.json.JSONObject?,
+        selectedProvider: String?,
+        selectedModel: String?,
+    ): AgentModelPickerUiState {
+        catalog ?: return AgentModelPickerUiState()
+        val groups = mutableListOf<AgentModelProviderGroupUi>()
+        val rawGroups = catalog.optJSONArray("groups") ?: org.json.JSONArray()
+        for (index in 0 until rawGroups.length()) {
+            val group = rawGroups.optJSONObject(index) ?: continue
+            val providerId = group.optString("id")
+            if (providerId.isBlank()) continue
+            val models = mutableListOf<AgentModelOptionUi>()
+            val rawModels = group.optJSONArray("models") ?: org.json.JSONArray()
+            for (modelIndex in 0 until rawModels.length()) {
+                val model = rawModels.optJSONObject(modelIndex) ?: continue
+                val modelId = model.optString("id")
+                if (modelId.isBlank()) continue
+                models += AgentModelOptionUi(
+                    id = optionId(providerId, modelId),
+                    providerId = providerId,
+                    providerName = group.optString("name").ifBlank { providerId },
+                    providerSourceType = ProviderSourceTypes.CUSTOM,
+                    modelId = modelId,
+                    displayName = model.optString("name").ifBlank { modelId },
+                    contextWindow = null,
+                )
+            }
+            if (models.isNotEmpty()) {
+                groups += AgentModelProviderGroupUi(
+                    providerId = providerId,
+                    providerName = group.optString("name").ifBlank { providerId },
+                    providerSourceType = ProviderSourceTypes.CUSTOM,
+                    models = models,
+                )
+            }
+        }
+        val target = if (selectedProvider.isNullOrBlank() || selectedModel.isNullOrBlank()) {
+            null
+        } else {
+            optionId(selectedProvider, selectedModel)
+        }
+        val selected = groups.asSequence()
+            .flatMap { it.models.asSequence() }
+            .firstOrNull { it.id == target }
+            ?: groups.firstOrNull()?.models?.firstOrNull()
+        return AgentModelPickerUiState(providerGroups = groups, selectedModel = selected)
+    }
+
+    private fun optionId(provider: String, model: String): String = "$provider/$model"
+
+    /** 从复合键拆出引擎要的 provider 与 model。 */
+    fun split(optionId: String): Pair<String, String>? {
+        val separator = optionId.indexOf('/')
+        if (separator <= 0 || separator == optionId.lastIndex) return null
+        return optionId.substring(0, separator) to optionId.substring(separator + 1)
+    }
 }
 
 internal val AgentModelPickerUiState.modelCount: Int

@@ -143,6 +143,9 @@ private val StopIconSize = 10.dp
 @Composable
 internal fun AgentChatInputBar(
     input: String,
+    backend: String = "eta",
+    onBackendChange: (String) -> Unit = {},
+    showBackendSwitch: Boolean = false,
     isCompacting: Boolean,
     contextUsage: AgentContextUsageUi,
     showContextUsage: Boolean,
@@ -500,6 +503,14 @@ internal fun AgentChatInputBar(
                                 )
                             }
                         } else {
+                            if (showBackendSwitch) {
+                                AgentBackendChip(
+                                    backend = backend,
+                                    onBackendChange = onBackendChange,
+                                )
+                                Spacer(modifier = Modifier.width(2.dp))
+                            }
+
                             AgentAttachmentPickerButton(
                                 glassBackdrop = glassBackdrop,
                                 inputContainerTopPx = inputContainerTopPx,

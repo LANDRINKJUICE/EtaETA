@@ -18,7 +18,16 @@ internal sealed interface DshStreamEvent {
     /** attempt 已落盘：text 为全文，用于替换流式气泡（settle 语义）。 */
     data class AttemptCommitted(val attemptKey: String, val text: String) : DshStreamEvent
     data class AttemptAbandoned(val attemptKey: String) : DshStreamEvent
+    /** 引擎侧流级失败（error 帧）：不再静默，交由上层以错误收尾。 */
+    data class StreamFailed(val message: String) : DshStreamEvent
+    /** snapshot 里已经落盘的对话历史，用于附加既有会话时回填气泡。 */
+    data class HistoryLoaded(val entries: List<HistoryEntry>) : DshStreamEvent
+    /** snapshot 投影里的当前模型选择（provider 到 model），用于选择器回显。 */
+    data class ModelSelection(val provider: String, val model: String) : DshStreamEvent
 }
+
+/** 一条已落盘的历史消息：角色 + 纯文本正文。 */
+internal data class HistoryEntry(val role: String, val text: String)
 
 /**
  * 单个 DSH 会话：session/follow 流的打开、prompt 与帧分派。
@@ -39,14 +48,15 @@ internal class DshConversation(
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
 
-    fun openFollow() {
-        sockets.register(streamId, ::onFollowFrame)
+    /** [activate] 为 true 时请求引擎在后台激活该会话（冷会话恢复）；附加只读场景传 false。 */
+    fun openFollow(activate: Boolean = true) {
+        sockets.register(streamId, ::onFollowFrame, ::onStreamFailure)
         sockets.send(client.openStreamFrame(
             streamId = streamId,
             endpoint = "session/follow",
             args = JSONObject()
                 .put("address", JSONObject().put("kind", "session").put("sessionId", sessionId))
-                .put("activate", true)
+                .put("activate", activate)
                 .put("assistantStream", true),
         ))
     }
@@ -70,6 +80,10 @@ internal class DshConversation(
         when (value.optString("type")) {
             "snapshot" -> {
                 assistantStreamRevision = value.optJSONObject("assistantStream")?.optInt("revision", -1) ?: -1
+                historyEntries(value.optJSONArray("records"))?.let { entries ->
+                    events.tryEmit(DshStreamEvent.HistoryLoaded(entries))
+                }
+                modelSelection(value)?.let(events::tryEmit)
             }
             "event" -> handleDurableEvent(value.optJSONObject("event") ?: return)
             "assistant-stream" -> handleAssistantStream(value.optJSONObject("frame") ?: return)
@@ -117,10 +131,18 @@ internal class DshConversation(
         }
     }
 
+    /** assistant/message 的 data 形如 {turn,step,message:{role,content:[…]},usage,stream}；
+     *  兼容旧版把 content/blocks 直接挂在 data 上的写法。 */
     private fun extractAssistantText(data: JSONObject?): String? {
         data ?: return null
-        // wire 事件的 data 结构随版本略有差异，宽松提取全部 text 块。
-        val blocks = data.optJSONArray("blocks") ?: data.optJSONArray("content") ?: return null
+        val blocks = data.optJSONObject("message")?.optJSONArray("content")
+            ?: data.optJSONArray("blocks")
+            ?: data.optJSONArray("content")
+            ?: return null
+        return textOfBlocks(blocks)
+    }
+
+    private fun textOfBlocks(blocks: JSONArray): String? {
         val text = buildString {
             for (i in 0 until blocks.length()) {
                 val block = blocks.optJSONObject(i) ?: continue
@@ -128,6 +150,45 @@ internal class DshConversation(
             }
         }
         return text.ifBlank { null }
+    }
+
+    /** snapshot.projections.values.modelSelection.next（或 lastUsed）→ 当前模型选择。 */
+    private fun modelSelection(snapshot: JSONObject): DshStreamEvent.ModelSelection? {
+        val values = snapshot.optJSONObject("projections")?.optJSONObject("values") ?: return null
+        val selection = values.optJSONObject("modelSelection")?.let {
+            it.optJSONObject("next") ?: it.optJSONObject("lastUsed")
+        } ?: return null
+        val provider = selection.optString("provider")
+        val model = selection.optString("model")
+        if (provider.isBlank() || model.isBlank()) return null
+        return DshStreamEvent.ModelSelection(provider, model)
+    }
+
+    /** snapshot.records → 历史气泡：只取 user/assistant 的正文，工具与系统事件不进对话正文。 */
+    private fun historyEntries(records: JSONArray?): List<HistoryEntry>? {
+        records ?: return null
+        if (records.length() == 0) return null
+        val entries = mutableListOf<HistoryEntry>()
+        for (i in 0 until records.length()) {
+            val event = records.optJSONObject(i)?.optJSONObject("event") ?: continue
+            val data = event.optJSONObject("data") ?: continue
+            when (event.optString("type")) {
+                "user/message" -> {
+                    val text = textOfBlocks(data.optJSONArray("content") ?: continue)
+                    if (text != null) entries += HistoryEntry("user", text)
+                }
+                "assistant/message" -> {
+                    val text = extractAssistantText(data)
+                    if (text != null) entries += HistoryEntry("assistant", text)
+                }
+            }
+        }
+        return entries.ifEmpty { null }
+    }
+
+    /** 流级失败（引擎 error 帧）：上抛给运行层，避免界面无声卡住。 */
+    private fun onStreamFailure(message: String) {
+        events.tryEmit(DshStreamEvent.StreamFailed(message))
     }
 
     fun close() {
@@ -144,6 +205,7 @@ internal class DshSocketHub(private val client: DshWebClient) {
     private val lock = Any()
     private var webSocket: WebSocket? = null
     private val streams = mutableMapOf<String, (JSONObject) -> Unit>()
+    private val failures = mutableMapOf<String, (String) -> Unit>()
 
     fun isOpen(): Boolean = synchronized(lock) { webSocket != null }
 
@@ -164,7 +226,15 @@ internal class DshSocketHub(private val client: DshWebClient) {
                             val value = frame.optJSONObject("value") ?: return
                             handler?.invoke(value)
                         }
-                        // "error"/"end" 属流级状态帧：V1 交由上层 durable 事件兜底，无需处理。
+                        "error" -> {
+                            // 流级失败必须让上层看见，否则界面停在"没反应"。
+                            val listener: ((String) -> Unit)?
+                            synchronized(lock) { listener = failures[frame.optString("streamId")] }
+                            val message = frame.optJSONObject("error")?.optString("message")
+                                ?.ifBlank { null } ?: "DSH 流已中断"
+                            listener?.invoke(message)
+                        }
+                        "end" -> Unit
                         else -> Unit
                     }
                 }
@@ -180,12 +250,18 @@ internal class DshSocketHub(private val client: DshWebClient) {
         }
     }
 
-    fun register(streamId: String, handler: (JSONObject) -> Unit) {
-        synchronized(lock) { streams[streamId] = handler }
+    fun register(streamId: String, handler: (JSONObject) -> Unit, onFailure: (String) -> Unit) {
+        synchronized(lock) {
+            streams[streamId] = handler
+            failures[streamId] = onFailure
+        }
     }
 
     fun unregister(streamId: String) {
-        synchronized(lock) { streams.remove(streamId) }
+        synchronized(lock) {
+            streams.remove(streamId)
+            failures.remove(streamId)
+        }
     }
 
     fun send(payload: String): Boolean =
@@ -196,6 +272,7 @@ internal class DshSocketHub(private val client: DshWebClient) {
             webSocket?.close(1000, "client shutdown")
             webSocket = null
             streams.clear()
+            failures.clear()
         }
     }
 }

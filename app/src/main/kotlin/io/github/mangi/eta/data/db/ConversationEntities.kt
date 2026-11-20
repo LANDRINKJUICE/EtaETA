@@ -26,6 +26,8 @@ internal data class ConversationEntity(
     @ColumnInfo(name = "is_pinned", defaultValue = "0") val isPinned: Boolean = false,
     /** 会话后端：eta（默认，走 Agent Runtime）或 dsh（官方 DeepSeek Harness 引擎）。 */
     @ColumnInfo(name = "backend", defaultValue = "'eta'") val backend: String = BACKEND_ETA,
+    /** 绑定的 DSH 引擎会话 id；仅 backend=dsh 时有值，用于重开后接回同一段引擎对话。 */
+    @ColumnInfo(name = "dsh_session_id") val dshSessionId: String? = null,
 ) {
     companion object {
         const val BACKEND_ETA = "eta"
@@ -46,6 +48,7 @@ internal data class ConversationMetadata(
     @ColumnInfo(name = "model_id") val modelId: String? = null,
     @ColumnInfo(name = "is_pinned") val isPinned: Boolean = false,
     @ColumnInfo(name = "backend") val backend: String = ConversationEntity.BACKEND_ETA,
+    @ColumnInfo(name = "dsh_session_id") val dshSessionId: String? = null,
 )
 
 /** 会话侧栏只读取定长预览，不读取上下文、角色卡与修订正文。 */

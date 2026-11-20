@@ -82,6 +82,7 @@ import com.itos.coui.text.CouiTextKind
 import com.itos.coui.text.Text as CouiText
 import com.itos.coui.theme.CouiTheme
 import io.github.mangi.eta.R
+import io.github.mangi.eta.data.db.ConversationEntity
 import io.github.mangi.eta.data.model.AppearanceUiStyle
 import io.github.mangi.eta.ui.app.LocalUiStyle
 import io.github.mangi.eta.ui.components.coui.CouiIcon
@@ -706,14 +707,33 @@ private fun ConversationHistoryRow(
 
             Column(modifier = Modifier.weight(1f)) {
                 val title = conversation.title.ifBlank { conversation.preview }
-                Text(
-                    text = title,
-                    color = titleColor,
-                    style = MiuixTheme.textStyles.body1.copy(fontSize = 15.sp),
-                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = title,
+                        color = titleColor,
+                        style = MiuixTheme.textStyles.body1.copy(fontSize = 15.sp),
+                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    if (conversation.backend == ConversationEntity.BACKEND_DSH) {
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = stringResource(R.string.chat_backend_dsh),
+                            style = MiuixTheme.textStyles.footnote1.copy(
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Medium,
+                            ),
+                            color = accentColor,
+                            maxLines = 1,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(accentColor.copy(alpha = if (miuixDark) 0.18f else 0.10f))
+                                .padding(horizontal = 4.dp, vertical = 1.dp),
+                        )
+                    }
+                }
                 // 标题与角色名相同（如未改名的角色会话）时不再重复第二行。
                 conversation.characterName?.takeIf { it != title }?.let { name ->
                     Text(

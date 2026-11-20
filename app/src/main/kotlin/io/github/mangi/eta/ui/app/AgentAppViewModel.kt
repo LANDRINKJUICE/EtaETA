@@ -16,4 +16,9 @@ internal class AgentAppViewModel(application: Application) : AndroidViewModel(ap
     private val terminalHost = TerminalSessionHost.get(application)
     val terminalStore = terminalHost.terminal
     val consoleStore = terminalHost.console
+
+    override fun onCleared() {
+        state.shutdownToolBridge()
+        super.onCleared()
+    }
 }

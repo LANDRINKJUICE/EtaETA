@@ -60,7 +60,6 @@
   <string name="action_more">更多选项</string>
   <string name="action_open_terminal">打开终端</string>
   <string name="action_open_browser">打开浏览器</string>
-  <string name="action_new_dsh_conversation">新建 DSH 对话</string>
   <string name="action_open_dsh_web">打开 DSH 网页</string>
   <string name="dsh_engine_unavailable">DSH 引擎不可用：请先在终端环境中安装 DSH 组件，再重试。</string>
   <string name="dsh_prompt_failed">消息未能送达 DSH 引擎。</string>
@@ -1543,4 +1542,15 @@
   <string name="scheduled_notification_gui_ready_title">定时任务就绪：%1$s</string>
   <string name="scheduled_action_run_now">立即试跑</string>
   <string name="scheduled_action_stop">停止运行</string>
+  <string name="chat_backend_eta">Eta</string>
+  <string name="chat_backend_dsh">DSH</string>
+  <string name="chat_backend_switch">切换 Agent 后端；当前：%1$s</string>
+  <string name="approval_title">工具授权</string>
+  <string name="approval_risk_mutating">会改变设备</string>
+  <string name="approval_risk_root">Root</string>
+  <string name="approval_source_mcp">DSH → Eta 工具</string>
+  <string name="approval_allow_once">允许一次</string>
+  <string name="approval_allow_always">本会话总是允许</string>
+  <string name="approval_deny">拒绝</string>
+  <string name="dsh_model_switch_failed">切换 DSH 引擎模型失败。</string>
 </resources>

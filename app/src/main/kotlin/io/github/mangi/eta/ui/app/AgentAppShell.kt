@@ -23,7 +23,6 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Public
-import androidx.compose.material.icons.rounded.SmartToy
 import androidx.compose.material.icons.automirrored.outlined.ShortText
 import androidx.compose.material.icons.automirrored.rounded.VolumeOff
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
@@ -138,7 +137,6 @@ internal fun AgentAppShell(
     onNewConversation: () -> Unit,
     onOpenTerminal: () -> Unit,
     onOpenBrowser: () -> Unit,
-    onNewDshConversation: () -> Unit = {},
     onOpenDshWeb: () -> Unit = {},
     onSelectConversation: (String) -> Unit,
     onConversationTogglePin: (ConversationSummaryUi) -> Unit,
@@ -224,7 +222,6 @@ internal fun AgentAppShell(
                                                 onNewConversation = onNewConversation,
                                                 onOpenTerminal = onOpenTerminal,
                                                 onOpenBrowser = onOpenBrowser,
-                                                onNewDshConversation = onNewDshConversation,
                                                 onOpenDshWeb = onOpenDshWeb,
                                             )
                                         }
@@ -266,7 +263,6 @@ internal fun AgentAppShell(
                                 onNewConversation = onNewConversation,
                                 onOpenTerminal = onOpenTerminal,
                                 onOpenBrowser = onOpenBrowser,
-                                onNewDshConversation = onNewDshConversation,
                                 onOpenDshWeb = onOpenDshWeb,
                                 homeTitle = homeTitle,
                                 homeCharacter = homeCharacter,
@@ -336,7 +332,6 @@ private fun CouiTopBarOverflowMenu(
     onNewConversation: () -> Unit,
     onOpenTerminal: () -> Unit,
     onOpenBrowser: () -> Unit,
-    onNewDshConversation: () -> Unit,
     onOpenDshWeb: () -> Unit,
 ) {
     var showMenu by remember { mutableStateOf(false) }
@@ -349,7 +344,6 @@ private fun CouiTopBarOverflowMenu(
     val newConversationText = stringResource(R.string.action_new_conversation)
     val openTerminalText = stringResource(R.string.action_open_terminal)
     val openBrowserText = stringResource(R.string.action_open_browser)
-    val dshConversationText = stringResource(R.string.action_new_dsh_conversation)
     val dshWebText = stringResource(R.string.action_open_dsh_web)
     val autoReadText = stringResource(
         if (autoReadEnabled) R.string.speech_disable_auto_read else R.string.speech_enable_auto_read,
@@ -358,7 +352,6 @@ private fun CouiTopBarOverflowMenu(
         newConversationText,
         openTerminalText,
         openBrowserText,
-        dshConversationText,
         dshWebText,
         autoReadText,
         hasSpeechPlayback,
@@ -368,8 +361,7 @@ private fun CouiTopBarOverflowMenu(
             add(CouiMenuItem(value = 0, text = newConversationText, icon = Icons.Rounded.MapsUgc))
             add(CouiMenuItem(value = 1, text = openTerminalText, icon = Icons.Rounded.Terminal))
             add(CouiMenuItem(value = 2, text = openBrowserText, icon = Icons.Rounded.Language))
-            add(CouiMenuItem(value = 10, text = dshConversationText, icon = Icons.Rounded.SmartToy))
-            add(CouiMenuItem(value = 11, text = dshWebText, icon = Icons.Rounded.Public))
+            add(CouiMenuItem(value = 10, text = dshWebText, icon = Icons.Rounded.Public))
             if (hasSpeechPlayback) {
                 add(
                     CouiMenuItem(
@@ -403,8 +395,7 @@ private fun CouiTopBarOverflowMenu(
                     0 -> onNewConversation()
                     1 -> onOpenTerminal()
                     2 -> onOpenBrowser()
-                    10 -> onNewDshConversation()
-                    11 -> onOpenDshWeb()
+                    10 -> onOpenDshWeb()
                     3 -> speechSettings?.let { current ->
                         scope.launch {
                             SpeechSettingsRepository.save(current.copy(chatAutoSpeak = !current.chatAutoSpeak))
@@ -428,7 +419,6 @@ private fun AgentTopBar(
     onNewConversation: () -> Unit,
     onOpenTerminal: () -> Unit,
     onOpenBrowser: () -> Unit,
-    onNewDshConversation: () -> Unit = {},
     onOpenDshWeb: () -> Unit = {},
     homeTitle: String?,
     homeCharacter: RoleplayChatUi?,
@@ -446,7 +436,6 @@ private fun AgentTopBar(
             onNewConversation = onNewConversation,
             onOpenTerminal = onOpenTerminal,
             onOpenBrowser = onOpenBrowser,
-            onNewDshConversation = onNewDshConversation,
             onOpenDshWeb = onOpenDshWeb,
         ) {
             AgentTopBarChatHeader(
@@ -479,7 +468,6 @@ private fun HomeMiuixTopBar(
     onNewConversation: () -> Unit,
     onOpenTerminal: () -> Unit,
     onOpenBrowser: () -> Unit,
-    onNewDshConversation: () -> Unit = {},
     onOpenDshWeb: () -> Unit = {},
     centerContent: @Composable () -> Unit,
 ) {
@@ -563,8 +551,7 @@ private fun HomeMiuixTopBar(
                     onNewConversation = onNewConversation,
                     onOpenTerminal = onOpenTerminal,
                     onOpenBrowser = onOpenBrowser,
-                    onNewDshConversation = onNewDshConversation,
-                    onOpenDshWeb = onOpenDshWeb,
+                            onOpenDshWeb = onOpenDshWeb,
                 )
             }
         },
@@ -592,7 +579,6 @@ private fun TopBarOverflowMenu(
     onNewConversation: () -> Unit,
     onOpenTerminal: () -> Unit,
     onOpenBrowser: () -> Unit,
-    onNewDshConversation: () -> Unit = {},
     onOpenDshWeb: () -> Unit = {},
 ) {
     var showMenu by remember { mutableStateOf(false) }
@@ -607,7 +593,6 @@ private fun TopBarOverflowMenu(
     val newConversationText = stringResource(R.string.action_new_conversation)
     val openTerminalText = stringResource(R.string.action_open_terminal)
     val openBrowserText = stringResource(R.string.action_open_browser)
-    val dshConversationText = stringResource(R.string.action_new_dsh_conversation)
     val dshWebText = stringResource(R.string.action_open_dsh_web)
     val autoReadText = stringResource(
         if (autoReadEnabled) R.string.speech_disable_auto_read else R.string.speech_enable_auto_read,
@@ -671,14 +656,6 @@ private fun TopBarOverflowMenu(
                     onClick = {
                         showMenu = false
                         onOpenBrowser()
-                    },
-                )
-                GlassPopupItem(
-                    text = dshConversationText,
-                    icon = MiuixIcons.Glass.NewMessage,
-                    onClick = {
-                        showMenu = false
-                        onNewDshConversation()
                     },
                 )
                 GlassPopupItem(

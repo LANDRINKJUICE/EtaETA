@@ -58,6 +58,7 @@ import io.github.mangi.eta.data.repository.RuntimeConfigRepository
 import io.github.mangi.eta.ui.AppearanceSettingsScreen
 import io.github.mangi.eta.ui.IncomingShareRequest
 import io.github.mangi.eta.ui.SettingsScreen
+import io.github.mangi.eta.ui.components.AgentApprovalDialog
 import io.github.mangi.eta.ui.components.MiuixDialogActions
 import io.github.mangi.eta.ui.components.currentGlassOverlayBackdrop
 import io.github.mangi.eta.ui.components.glassOverlayTextFieldColors
@@ -371,7 +372,6 @@ fun AgentAppRoot(
             onNewConversation = { createConversation() },
             onOpenTerminal = { pushRoute(AppRoute.Terminal) },
             onOpenBrowser = { openConversationBrowser() },
-            onNewDshConversation = { agentState.createDshConversation() },
             onOpenDshWeb = { openDshWeb() },
             onSelectConversation = { conversationId -> selectConversation(conversationId) },
             onConversationTogglePin = { conversation ->
@@ -489,6 +489,8 @@ fun AgentAppRoot(
                                         AgentHomeAction.OpenSettings -> pushRoute(AppRoute.Settings)
                                         AgentHomeAction.OpenBrowser -> openConversationBrowser()
                                         AgentHomeAction.ExpandRunTrace -> Unit
+                                        is AgentHomeAction.BackendChanged ->
+                                            agentState.switchConversationBackend(action.backend)
                                     }
                                 },
                                 isLoadingConversation = agentState.isLoadingConversation,
@@ -910,6 +912,15 @@ fun AgentAppRoot(
                     }
         }
     }
+
+    // 审批卡：DSH 经 MCP 调用 Eta 工具、以及 DSH 自身危险工具都在这里拦一次。
+    val pendingApprovals by agentState.pendingApprovals.collectAsState()
+    AgentApprovalDialog(
+        approval = pendingApprovals.firstOrNull(),
+        onAllow = agentState::approvePendingTool,
+        onAllowAlways = agentState::approvePendingToolForSession,
+        onDeny = agentState::denyPendingTool,
+    )
 
     when (LocalUiStyle.current) {
         AppearanceUiStyle.COUI -> {

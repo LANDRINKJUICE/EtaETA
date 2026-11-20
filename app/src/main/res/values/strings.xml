@@ -58,7 +58,6 @@
   <string name="action_more">More options</string>
   <string name="action_open_terminal">Open terminal</string>
   <string name="action_open_browser">Open browser</string>
-  <string name="action_new_dsh_conversation">New DSH chat</string>
   <string name="action_open_dsh_web">Open DSH web</string>
   <string name="dsh_engine_unavailable">DSH engine is not available. Install the DSH profile in the Linux environment first, then try again.</string>
   <string name="dsh_prompt_failed">Failed to deliver the message to the DSH engine.</string>
@@ -1562,4 +1561,15 @@
   <string name="scheduled_notification_gui_ready_title">Ready to run: %1$s</string>
   <string name="scheduled_action_run_now">Run now</string>
   <string name="scheduled_action_stop">Stop</string>
+  <string name="chat_backend_eta">Eta</string>
+  <string name="chat_backend_dsh">DSH</string>
+  <string name="chat_backend_switch">Switch agent backend; current: %1$s</string>
+  <string name="approval_title">Tool permission</string>
+  <string name="approval_risk_mutating">Changes device</string>
+  <string name="approval_risk_root">Root</string>
+  <string name="approval_source_mcp">DSH → Eta tool</string>
+  <string name="approval_allow_once">Allow once</string>
+  <string name="approval_allow_always">Always allow this session</string>
+  <string name="approval_deny">Deny</string>
+  <string name="dsh_model_switch_failed">Failed to switch the DSH engine model.</string>
 </resources>

@@ -119,6 +119,7 @@ internal object AgentConversationStore {
                                     modelId = state.modelId,
                                     isPinned = state.isPinned,
                                     backend = state.backend ?: ConversationEntity.BACKEND_ETA,
+                                    dshSessionId = state.dshSessionId,
                                 )
                                 phase = "write_metadata"
                                 dao.insertConversations(listOf(row))
@@ -273,6 +274,7 @@ internal object AgentConversationStore {
                 reasoningEffort = conversation.reasoningEffortValue,
                 modelId = conversation.modelId,
                 backend = conversation.backend,
+                dshSessionId = conversation.dshSessionId,
                 messageStartIndex = page.startIndex,
                 hasEarlierMessages = page.hasEarlierMessages,
             )

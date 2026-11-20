@@ -36,6 +36,10 @@ internal data class AgentChatUiState(
 
     /** 会话后端：null（默认 eta）或 "dsh"（官方 DeepSeek Harness 引擎，流式走 DshCoordinator）。 */
     val backend: String? = null,
+    /** 绑定的 DSH 引擎会话 id；backend=dsh 时用于接回同一段引擎对话。 */
+    val dshSessionId: String? = null,
+    /** DSH 会话当前选中的引擎模型（provider 到 model）；运行期来自引擎 snapshot，不落库。 */
+    val dshModelSelection: Pair<String, String>? = null,
     /** 未打开的会话仅保留侧栏预览，不能把占位状态写回消息和上下文。 */
     val isConversationLoaded: Boolean = true,
     /** 当前展示窗口首条消息的持久化 sort_index，保存只更新这一位置之后的后缀。 */

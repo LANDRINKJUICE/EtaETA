@@ -34,6 +34,8 @@ sealed interface AgentHomeAction {
     data object OpenSettings : AgentHomeAction
     data object OpenBrowser : AgentHomeAction
     data object ExpandRunTrace : AgentHomeAction
+    /** 空会话切换后端：eta 或 dsh。 */
+    data class BackendChanged(val backend: String) : AgentHomeAction
 }
 
 sealed interface PermissionHealthAction {

@@ -64,16 +64,23 @@ internal class DshWebClient(
         authCookie = null
     }
 
-    /** 一元 RPC：POST /api/<namespace>/<method>；返回 result.value；业务错误抛 [DshRpcException]。 */
-    suspend fun rpc(namespace: String, method: String, args: JSONObject): JSONObject = withContext(Dispatchers.IO) {
+    /**
+     * 一元 RPC：POST /api/<namespace>/<method>；返回 result.value；业务错误抛 [DshRpcException]。
+     *
+     * 网关按 descriptor 校验参数名：带一个 `request` 参数的方法必须包一层，
+     * 无参方法（如 session/modelCatalog）必须传空对象，多包一层会被判 `arguments-invalid`。
+     * 因此 [args] 为 null 时发送空 args，非 null 时包成 `{request: args}`。
+     */
+    suspend fun rpc(namespace: String, method: String, args: JSONObject?): JSONObject = withContext(Dispatchers.IO) {
         val cookie = authCookie ?: throw DshRpcException("NOT_CONNECTED", "未连接 DSH 引擎")
         val rpcId = UUID.randomUUID().toString()
         val endpoint = "$namespace/$method"
+        val wireArgs = if (args == null) JSONObject() else JSONObject().put("request", args)
         val envelope = JSONObject()
             .put("type", "client-request")
             .put("rpcId", rpcId)
             .put("method", endpoint)
-            .put("payload", JSONObject().put("args", args))
+            .put("payload", JSONObject().put("args", wireArgs))
         val request = Request.Builder()
             .url("$baseUrl/api/$endpoint")
             .header("Content-Type", "application/json")
@@ -113,13 +120,13 @@ internal class DshWebClient(
             .build()
     }
 
-    /** open 帧：endpoint 如 session/follow；payload 必须为恰好含 args 的对象。 */
+    /** open 帧：endpoint 如 session/follow；payload 为 {args:{request:{...}}}，与一元 RPC 同一收口。 */
     fun openStreamFrame(streamId: String, endpoint: String, args: JSONObject): String =
         JSONObject()
             .put("type", "open")
             .put("streamId", streamId)
             .put("endpoint", endpoint)
-            .put("payload", JSONObject().put("args", args))
+            .put("payload", JSONObject().put("args", JSONObject().put("request", args)))
             .toString()
 
     fun cancelStreamFrame(streamId: String): String =

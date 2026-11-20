@@ -28,7 +28,7 @@ import androidx.room.migration.Migration
         ScheduledTaskEntity::class,
         ScheduledTaskRunEntity::class,
     ],
-    version = 31,
+    version = 32,
     exportSchema = false,
 )
 internal abstract class EtaDatabase : RoomDatabase() {
@@ -77,6 +77,7 @@ internal abstract class EtaDatabase : RoomDatabase() {
                         MIGRATION_28_29,
                         MIGRATION_29_30,
                         MIGRATION_30_31,
+                        MIGRATION_31_32,
                     )
                     .addCallback(object : Callback() {
                         override fun onCreate(db: androidx.sqlite.db.SupportSQLiteDatabase) { createTextChunkCleanup(db) }
@@ -226,6 +227,13 @@ internal abstract class EtaDatabase : RoomDatabase() {
         internal val MIGRATION_30_31 = Migration(30, 31) { database ->
             database.execSQL(
                 "ALTER TABLE conversations ADD COLUMN backend TEXT NOT NULL DEFAULT 'eta'"
+            )
+        }
+
+        /** DSH 引擎会话绑定：仅 dsh 后端会话有值，eta 会话保持 NULL。 */
+        internal val MIGRATION_31_32 = Migration(31, 32) { database ->
+            database.execSQL(
+                "ALTER TABLE conversations ADD COLUMN dsh_session_id TEXT"
             )
         }
 
