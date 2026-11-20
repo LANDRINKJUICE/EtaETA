@@ -326,18 +326,23 @@ fun AgentAppRoot(
         context.startActivity(AgentBrowserActivity.createIntent(context, sessionKey))
     }
 
-    /** 启动（或复用）DSH 引擎后在内置浏览器打开带 token 的 Web UI。 */
+    /** 启动（或复用）DSH 引擎后用系统浏览器打开带 token 的 Web UI。 */
     fun openDshWeb() {
         focusManager.clearFocus()
         agentState.launchDshWeb { url ->
             if (url == null) {
                 Toast.makeText(context, R.string.dsh_engine_unavailable, Toast.LENGTH_LONG).show()
             } else {
-                BrowserSessionRegistry.get(BrowserSessionRegistry.MANUAL_SESSION_KEY)
-                    .navigateFromUser(context.applicationContext, url)
-                context.startActivity(
-                    AgentBrowserActivity.createIntent(context, BrowserSessionRegistry.MANUAL_SESSION_KEY)
-                )
+                try {
+                    context.startActivity(
+                        android.content.Intent(
+                            android.content.Intent.ACTION_VIEW,
+                            android.net.Uri.parse(url),
+                        ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+                    )
+                } catch (_: android.content.ActivityNotFoundException) {
+                    Toast.makeText(context, R.string.dsh_engine_unavailable, Toast.LENGTH_LONG).show()
+                }
             }
         }
     }
