@@ -114,6 +114,29 @@ internal class AgentAppState(
     private val dshCoordinator by lazy { io.github.mangi.eta.agent.dsh.DshCoordinator(appContext) }
     /** 活跃 DSH run 的收集 job；stopRun 时据此终止流式渲染。 */
     private val dshRunJobs = mutableMapOf<String, kotlinx.coroutines.Job>()
+    /** 已完成 snapshot 回填的会话（conversationId 到 sessionId）：重复打开不再空等。 */
+    private val dshAttached = mutableMapOf<String, String>()
+
+    // ── Eta 工具对 DSH 的 MCP 暴露 ──
+    /** 审批闸门：DSH 经 MCP 调用 Eta 工具时的统一等待点。 */
+    private val approvalGate by lazy { io.github.mangi.eta.agent.mcp.McpApprovalGate(io.github.mangi.eta.core.AndroidAgentLogger) }
+    /** MCP 工具服务端：127.0.0.1:8790，把 Eta 工具目录暴露给引擎。 */
+    private val mcpToolServer by lazy {
+        io.github.mangi.eta.agent.mcp.McpToolServer(
+            context = appContext,
+            logger = io.github.mangi.eta.core.AndroidAgentLogger,
+            approvalGate = approvalGate,
+            onToolCall = { record ->
+                io.github.mangi.eta.core.AndroidAgentLogger.info(
+                    "mcp_tool name=${record.toolName} approved=${record.approved} " +
+                        "ms=${record.durationMs} args=${record.arguments.take(120)}",
+                )
+            },
+        )
+    }
+    /** 审批队列快照，UI 据此弹审批卡。 */
+    val pendingApprovals: kotlinx.coroutines.flow.StateFlow<List<io.github.mangi.eta.agent.mcp.McpApprovalGate.PendingApproval>> =
+        approvalGate.queue
     private val pendingConversationDeletes = mutableSetOf<String>()
     private val persistenceLock = Any()
     private var persistenceJob: Job? = null
@@ -228,6 +251,12 @@ internal class AgentAppState(
      * 模型重新启用后会话自动回到原模型；真正发送后才把实际模型写入绑定。
      */
     private fun refreshConversationModel() {
+        // DSH 会话的模型由引擎持有，本地 provider 配置对它无效：
+        // 既不能覆盖引擎目录投影，也不能因为"本地模型不存在"而回落。
+        if (homeState.backend == io.github.mangi.eta.data.db.ConversationEntity.BACKEND_DSH) {
+            if (modelPickerState.providerGroups.isEmpty()) refreshDshModelPicker()
+            return
+        }
         val bound = providers.enabledModel(homeState.modelId)
         val pickerState = if (bound != null) {
             AgentModelPickerProjector.project(providers, bound.provider.id, bound.model.id)
@@ -953,6 +982,10 @@ internal class AgentAppState(
         ) {
             return
         }
+        if (homeState.backend == io.github.mangi.eta.data.db.ConversationEntity.BACKEND_DSH) {
+            selectDshModel(modelId)
+            return
+        }
         updateCurrentConversation(homeState.copy(modelId = modelId))
         refreshConversationModel()
         if (selectedConversationId != null) persistConversations()
@@ -1018,6 +1051,9 @@ internal class AgentAppState(
                     return@launch
                 }
                 if (conversationSelectionVersion != selectionVersion) return@launch
+                // DSH 会话：接回绑定的引擎会话，并用 snapshot 回填本地尚未落下的历史。
+                val boundSession = conversationsById[conversationId]?.dshSessionId
+                if (boundSession != null) attachDshConversation(conversationId, boundSession)
                 refreshConversationModel()
                 if (homeState.roleplayMessages.pendingRewrites.isNotEmpty()) refreshRuntimeResults()
                 if (homeState.modelId != null && providers.enabledModel(homeState.modelId) == null) {
@@ -1211,7 +1247,10 @@ internal class AgentAppState(
         fileAttachmentOwnerVersion += 1
         currentDraftReasoningCustomized = false
         selectedConversationId = null
-        homeState = emptyChatState(defaultReasoningEffort())
+        homeState = emptyChatState(defaultReasoningEffort()).let { empty ->
+            if (preferredBackend == io.github.mangi.eta.data.db.ConversationEntity.BACKEND_ETA) empty
+            else empty.copy(backend = preferredBackend)
+        }
         refreshConversationModel()
         conversationPaneState = conversationPaneState.copy(
             selectedConversationId = null,
@@ -1233,13 +1272,20 @@ internal class AgentAppState(
         }
     }
 
-    /** 新建 DSH 会话：同一套聊天页，消息由本地 DSH 引擎流式生成。 */
-    fun createDshConversation() {
-        createConversation()
-        homeState = homeState.copy(backend = io.github.mangi.eta.data.db.ConversationEntity.BACKEND_DSH)
+    /** 空会话上切换后端（Eta / DSH）；已有消息的会话不允许切换。 */
+    fun switchConversationBackend(backend: String) {
+        val state = homeState
+        if (state.messages.isNotEmpty() || state.isStreaming) return
+        if (state.backend == backend) return
+        homeState = state.copy(backend = backend)
+        preferredBackend = backend
         refreshConversationSummaries()
         persistConversations()
     }
+
+    /** 下一条新会话默认使用的后端（默认 eta），由输入栏的后端切换面板写入。 */
+    var preferredBackend: String = io.github.mangi.eta.data.db.ConversationEntity.BACKEND_ETA
+        private set
 
     fun branchConversation(conversationId: String, messageId: String, draftText: String = homeState.input) {
         // DSH 会话的历史由引擎持有，V1 不支持分支（分支出的 eta 会话没有可重放的历史）。
@@ -2575,7 +2621,8 @@ internal class AgentAppState(
                     }
                     return@launch
                 }
-                val conversation = dshCoordinator.openSession(conversationId)
+                ensureMcpToolServer()
+                val conversation = ensureDshConversation(conversationId)
                 if (conversation == null) {
                     withContext(Dispatchers.Main.immediate) {
                         finishDshRun(runId, error = appContext.getString(R.string.dsh_engine_unavailable))
@@ -2584,6 +2631,7 @@ internal class AgentAppState(
                 }
                 val attemptIndex = mutableMapOf<String, Int>()
                 var nextIndex = 0
+                var failure: String? = null
                 val settled = CompletableDeferred<Boolean>()
                 val collectJob = launch {
                     conversation.events.collect { event ->
@@ -2618,6 +2666,13 @@ internal class AgentAppState(
                                 settled.complete(true)
                             }
                             is io.github.mangi.eta.agent.dsh.DshStreamEvent.AttemptAbandoned -> Unit
+                            is io.github.mangi.eta.agent.dsh.DshStreamEvent.StreamFailed -> {
+                                settled.complete(false)
+                                failure = event.message
+                            }
+                            // 发送流程中不处理历史回填：附加时的 snapshot 由 attachDshConversation 处理。
+                            is io.github.mangi.eta.agent.dsh.DshStreamEvent.HistoryLoaded -> Unit
+                            is io.github.mangi.eta.agent.dsh.DshStreamEvent.ModelSelection -> Unit
                         }
                     }
                 }
@@ -2639,6 +2694,7 @@ internal class AgentAppState(
                     withContext(Dispatchers.Main.immediate) {
                         when {
                             settledOk -> finishDshRun(runId)
+                            failure != null -> finishDshRun(runId, error = failure)
                             pendingText.isNullOrBlank() -> finishDshRun(runId, error = "DSH 引擎响应超时")
                             else -> finishDshRun(runId, error = "DSH 流式输出未完成，内容已保留")
                         }
@@ -2657,6 +2713,216 @@ internal class AgentAppState(
         }
         dshRunJobs[runId] = job
         runStore.observe(runId, job)
+    }
+
+    // ── DSH 会话的模型选择（由引擎持有） ──
+
+    /** DSH 会话的模型目录来自引擎，本地 provider 配置对它无效。 */
+    private fun refreshDshModelPicker(conversationId: String? = selectedConversationId) {
+        scope.launch(Dispatchers.IO) {
+            val catalog = try {
+                dshCoordinator.modelCatalog()
+            } catch (_: Exception) {
+                null
+            }
+            if (catalog == null) return@launch
+            val current = conversationId?.let { conversationsById[it] }
+            val selection = current?.dshModelSelection
+            withContext(Dispatchers.Main.immediate) {
+                val projected = io.github.mangi.eta.ui.model.DshModelCatalogProjector.project(
+                    catalog = catalog,
+                    selectedProvider = selection?.first,
+                    selectedModel = selection?.second,
+                )
+                modelPickerState = projected.copy(isChanging = modelPickerState.isChanging)
+            }
+        }
+    }
+
+    /** 把选择器的复合键拆成 provider/model 回传引擎，并记住本会话的选择。 */
+    private fun selectDshModel(optionId: String) {
+        val split = io.github.mangi.eta.ui.model.DshModelCatalogProjector.split(optionId) ?: return
+        val (provider, model) = split
+        val conversationId = selectedConversationId
+        val sessionId = conversationId?.let { conversationsById[it]?.dshSessionId }
+        if (sessionId == null) {
+            // 尚未建立引擎会话：只记住选择，等首次发送建会话后再下发。
+            modelPickerState = modelPickerState.copy(
+                selectedModel = modelPickerState.providerGroups.asSequence()
+                    .flatMap { it.models.asSequence() }
+                    .firstOrNull { it.id == optionId },
+            )
+            return
+        }
+        modelPickerState = modelPickerState.copy(isChanging = true)
+        scope.launch(Dispatchers.IO) {
+            val result = try {
+                dshCoordinator.selectModel(
+                    sessionId = sessionId,
+                    provider = provider,
+                    model = model,
+                    reasoningEffort = homeState.reasoningEffort.wireValue
+                        .takeUnless { it == ReasoningEffort.DEFAULT.wireValue },
+                )
+            } catch (_: Exception) {
+                null
+            }
+            withContext(Dispatchers.Main.immediate) {
+                if (result != null && conversationId != null) {
+                    val current = conversationsById[conversationId]
+                    if (current != null) {
+                        updateConversation(
+                            conversationId,
+                            current.copy(dshModelSelection = provider to model),
+                            updateTimestamp = false,
+                        )
+                        persistConversations()
+                    }
+                } else {
+                    Toast.makeText(
+                        appContext,
+                        appContext.getString(R.string.dsh_model_switch_failed),
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+                modelPickerState = modelPickerState.copy(isChanging = false)
+            }
+        }
+    }
+
+    // ── MCP 工具服务端与审批 ──
+
+    /** 释放 MCP 服务端与其工具执行器（进程内会话结束时调用）。 */
+    fun shutdownToolBridge() {
+        mcpToolServer.close()
+    }
+
+    /** 幂等启动 MCP 工具服务端；失败只记日志，不影响聊天本身。 */
+    private fun ensureMcpToolServer() {
+        if (mcpToolServer.isRunning) return
+        if (mcpToolServer.start()) {
+            io.github.mangi.eta.core.AndroidAgentLogger.info("mcp_tool_server_started port=8790")
+        } else {
+            io.github.mangi.eta.core.AndroidAgentLogger.warn("mcp_tool_server_start_failed port=8790")
+        }
+    }
+
+    /** 用户裁决当前审批卡：允许一次。 */
+    fun approvePendingTool() {
+        val current = pendingApprovals.value.firstOrNull() ?: return
+        approvalGate.resolve(current.id, approved = true)
+    }
+
+    /** 用户裁决当前审批卡：本会话总是允许。 */
+    fun approvePendingToolForSession() {
+        val current = pendingApprovals.value.firstOrNull() ?: return
+        approvalGate.allowForSession(current.toolName)
+        approvalGate.resolve(current.id, approved = true, reason = "本会话已允许")
+    }
+
+    /** 用户裁决当前审批卡：拒绝。 */
+    fun denyPendingTool() {
+        val current = pendingApprovals.value.firstOrNull() ?: return
+        approvalGate.resolve(current.id, approved = false)
+    }
+
+    // ── DSH 会话绑定与附加 ──
+
+    /**
+     * 取当前会话对应的 DSH 引擎会话：已绑定的直接接回（snapshot 回填历史），
+     * 未绑定的新建并把 sessionId 写回会话元数据，供重启后继续接回。
+     */
+    private suspend fun ensureDshConversation(conversationId: String):
+        io.github.mangi.eta.agent.dsh.DshConversation? {
+        val bound = conversationsById[conversationId]?.dshSessionId
+        if (bound != null) {
+            return dshCoordinator.attachSession(conversationId, bound)
+        }
+        val created = dshCoordinator.openSession(conversationId) ?: return null
+        bindDshSession(conversationId, created.sessionId)
+        // 新会话没有 snapshot 可回填，目录要主动拉一次，否则选择器停在本地模型上。
+        refreshDshModelPicker(conversationId)
+        return created
+    }
+
+    private suspend fun bindDshSession(conversationId: String, sessionId: String) {
+        dshAttached.remove(conversationId)
+        val current = conversationsById[conversationId] ?: return
+        if (current.dshSessionId == sessionId) return
+        withContext(Dispatchers.Main.immediate) {
+            updateConversation(conversationId, current.copy(dshSessionId = sessionId), updateTimestamp = false)
+            persistConversations()
+        }
+    }
+
+    /** 打开一条已绑定的 DSH 会话：接回引擎会话并用 snapshot 回填本地缺失的历史。 */
+    private fun attachDshConversation(conversationId: String, sessionId: String) {
+        ensureMcpToolServer()
+        // 已经接回并回填过：不再重复 follow，否则每次切换都要空等 snapshot 超时。
+        if (dshAttached[conversationId] == sessionId) return
+        // 目录只在需要时拉一次；选中项以 snapshot 的 modelSelection 为准。
+        refreshDshModelPicker(conversationId)
+        scope.launch(Dispatchers.IO) {
+            val conversation = try {
+                dshCoordinator.attachSession(conversationId, sessionId)
+            } catch (_: Exception) {
+                null
+            } ?: return@launch
+            var historyHandled = false
+            var selectionHandled = false
+            val collector = launch {
+                conversation.events.collect { event ->
+                    when (event) {
+                        is io.github.mangi.eta.agent.dsh.DshStreamEvent.HistoryLoaded -> {
+                            withContext(Dispatchers.Main.immediate) {
+                                backfillDshHistory(conversationId, event.entries)
+                            }
+                            historyHandled = true
+                        }
+                        is io.github.mangi.eta.agent.dsh.DshStreamEvent.ModelSelection -> {
+                            withContext(Dispatchers.Main.immediate) {
+                                val current = conversationsById[conversationId]
+                                if (current != null && current.dshModelSelection == null) {
+                                    updateConversation(
+                                        conversationId,
+                                        current.copy(dshModelSelection = event.provider to event.model),
+                                        updateTimestamp = false,
+                                    )
+                                }
+                            }
+                            selectionHandled = true
+                        }
+                        else -> Unit
+                    }
+                    if (historyHandled && selectionHandled) collector.cancel()
+                }
+            }
+            // snapshot 是 follow 的第一帧；超时未到说明会话不可读，放弃回填但保留本地历史。
+            kotlinx.coroutines.withTimeoutOrNull(15_000L) { collector.join() }
+            collector.cancel()
+            if (historyHandled) dshAttached[conversationId] = sessionId
+        }
+    }
+
+    /** snapshot 历史回填：只补本地缺失的尾部，绝不覆盖本地已有消息。 */
+    private suspend fun backfillDshHistory(
+        conversationId: String,
+        entries: List<io.github.mangi.eta.agent.dsh.HistoryEntry>,
+    ) {
+        val state = conversationsById[conversationId] ?: return
+        if (state.isStreaming) return
+        val existing = state.messages
+        if (existing.isNotEmpty()) return
+        val restored = entries.map { entry ->
+            if (entry.role == "user") {
+                UserMessageUi(id = "dsh-user-${UUID.randomUUID()}", content = entry.text)
+            } else {
+                AgentMessageUi(id = "dsh-assistant-${UUID.randomUUID()}", content = entry.text, renderMarkdown = true)
+            }
+        }
+        if (restored.isEmpty()) return
+        updateConversation(conversationId, state.copy(messages = restored), updateTimestamp = false)
+        persistConversations()
     }
 
     /** DSH run 收尾：定格气泡、清运行态；与 applyRunResult 的 runtime 结算互斥使用。 */
@@ -3135,6 +3401,8 @@ internal class AgentAppState(
                     characterName = state.roleplay?.characterName ?: state.conversationCharacterName,
                     characterAvatarPath = state.roleplay?.avatarPath ?: state.conversationCharacterAvatarPath,
                     isActiveRun = state.isStreaming,
+                    backend = state.backend
+                        ?: io.github.mangi.eta.data.db.ConversationEntity.BACKEND_ETA,
                     runStatus = when (runStore.guiStatus(id)) {
                         GuiControlStatus.Waiting -> appContext.getString(R.string.run_waiting_for_gui)
                         GuiControlStatus.UserPaused -> appContext.getString(R.string.run_gui_user_paused)

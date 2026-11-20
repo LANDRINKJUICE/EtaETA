@@ -22,6 +22,8 @@ data class ConversationSummaryUi(
     val runStatus: String? = null,
     val characterName: String? = null,
     val characterAvatarPath: String? = null,
+    /** 会话后端：eta 或 dsh，侧栏据此显示 DSH 角标。 */
+    val backend: String = "eta",
 )
 
 @Immutable

@@ -148,6 +148,9 @@ import top.yukonga.miuix.kmp.utils.scrollEndHaptic
 internal fun AgentChatBody(
     messages: List<AgentChatMessageUi>,
     modelPickerState: AgentModelPickerUiState,
+    /** 当前会话后端（eta/dsh）；仅空会话可在输入栏切换。 */
+    backend: String = "eta",
+    onBackendChange: (String) -> Unit = {},
     isCompacting: Boolean,
     isBranching: Boolean,
     input: String,
@@ -258,6 +261,8 @@ internal fun AgentChatBody(
             scrollState = scrollState,
             input = input,
             modelPickerState = modelPickerState,
+            backend = backend,
+            onBackendChange = onBackendChange,
             isCompacting = isCompacting,
             isBranching = isBranching,
             contextUsage = contextUsage,
@@ -331,6 +336,8 @@ private fun AgentChatScaffold(
     scrollState: LazyListState,
     input: String,
     modelPickerState: AgentModelPickerUiState,
+    backend: String,
+    onBackendChange: (String) -> Unit,
     isCompacting: Boolean,
     isBranching: Boolean,
     contextUsage: AgentContextUsageUi,
@@ -395,6 +402,9 @@ private fun AgentChatScaffold(
         bottomBar = {
             AgentChatBottomBar(
                 input = input,
+                backend = backend,
+                onBackendChange = onBackendChange,
+                showBackendSwitch = !hasMessages,
                 isCompacting = isCompacting,
                 contextUsage = contextUsage,
                 showContextUsage = hasMessages,
@@ -1071,6 +1081,9 @@ internal fun resolveFinalResultMessageIds(
 @Composable
 private fun AgentChatBottomBar(
     input: String,
+    backend: String,
+    onBackendChange: (String) -> Unit,
+    showBackendSwitch: Boolean,
     isCompacting: Boolean,
     contextUsage: AgentContextUsageUi,
     showContextUsage: Boolean,
@@ -1132,6 +1145,9 @@ private fun AgentChatBottomBar(
         ) {
             AgentChatInputBar(
                 input = input,
+                backend = backend,
+                onBackendChange = onBackendChange,
+                showBackendSwitch = showBackendSwitch,
                 isCompacting = isCompacting,
                 contextUsage = contextUsage,
                 showContextUsage = showContextUsage,

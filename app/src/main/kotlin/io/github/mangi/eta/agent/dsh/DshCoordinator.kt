@@ -68,7 +68,7 @@ internal class DshCoordinator(private val context: Context) {
             val value = client.rpc("session", "create", JSONObject().put("cwd", "/workspace"))
             val sessionId = value.optString("sessionId").takeIf { it.isNotBlank() } ?: return null
             val conversation = DshConversation(sessionId, client, sockets)
-            conversation.openFollow()
+            conversation.openFollow(activate = true)
             conversations[conversationKey] = conversation
             conversation
         } catch (failure: DshRpcException) {
@@ -78,6 +78,62 @@ internal class DshCoordinator(private val context: Context) {
             AndroidAgentLogger.warn("dsh_session_create_failed type=${failure.javaClass.simpleName}")
             null
         }
+    }
+
+    /** 接回已绑定的引擎会话（冷会话只读挂载，不抢占运行中的 Agent）；失败返回 null。 */
+    suspend fun attachSession(conversationKey: String, sessionId: String): DshConversation? {
+        if (ensureConnected() != null) return null
+        conversations[conversationKey]?.let { existing ->
+            if (existing.sessionId == sessionId) return existing
+            existing.close()
+            conversations.remove(conversationKey)
+        }
+        val conversation = DshConversation(sessionId, client, sockets)
+        // 附加只读：不 activate，避免与网页端或其他客户端抢占同一会话的运行权。
+        conversation.openFollow(activate = false)
+        conversations[conversationKey] = conversation
+        return conversation
+    }
+
+    /** 引擎侧的模型目录：provider 分组 + 默认选择，供 DSH 会话的模型选择器使用。 */
+    suspend fun modelCatalog(): JSONObject? = try {
+        if (ensureConnected() != null) null
+        else client.rpc("session", "modelCatalog", args = null)
+    } catch (failure: DshRpcException) {
+        AndroidAgentLogger.warn("dsh_model_catalog_failed code=${failure.code}")
+        null
+    } catch (failure: Exception) {
+        AndroidAgentLogger.warn("dsh_model_catalog_failed type=${failure.javaClass.simpleName}")
+        null
+    }
+
+    /** 为已绑定的引擎会话选择模型；成功返回引擎确认后的选择。 */
+    suspend fun selectModel(
+        sessionId: String,
+        provider: String,
+        model: String,
+        reasoningEffort: String?,
+    ): JSONObject? = try {
+        if (ensureConnected() != null) null
+        else {
+            val request = JSONObject()
+                .put("sessionId", sessionId)
+                .put("provider", provider)
+                .put("model", model)
+            if (reasoningEffort != null) request.put("reasoningEffort", reasoningEffort)
+            client.rpc("session", "selectModel", request)
+        }
+    } catch (failure: DshRpcException) {
+        AndroidAgentLogger.warn("dsh_select_model_failed code=${failure.code}")
+        null
+    } catch (failure: Exception) {
+        AndroidAgentLogger.warn("dsh_select_model_failed type=${failure.javaClass.simpleName}")
+        null
+    }
+
+    /** 释放本地句柄（引擎会话本身保留，便于下次接回）。 */
+    fun detachSession(conversationKey: String) {
+        conversations.remove(conversationKey)?.close()
     }
 
     suspend fun sendPrompt(conversationKey: String, text: String): Boolean {

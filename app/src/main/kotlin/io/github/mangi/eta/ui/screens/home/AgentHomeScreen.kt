@@ -59,6 +59,8 @@ internal fun AgentHomeScreen(
                 AgentChatBody(
                     messages = state.messages,
                     modelPickerState = modelPickerState,
+                    backend = state.backend ?: io.github.mangi.eta.data.db.ConversationEntity.BACKEND_ETA,
+                    onBackendChange = { onAction(AgentHomeAction.BackendChanged(it)) },
                     topInset = topInset,
                     isCompacting = state.isCompacting,
                     isBranching = isBranching,
