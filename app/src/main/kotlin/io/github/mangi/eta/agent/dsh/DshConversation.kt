@@ -54,7 +54,7 @@ internal class DshConversation(
         sockets.send(client.openStreamFrame(
             streamId = streamId,
             endpoint = "session/follow",
-            request = JSONObject()
+            args = JSONObject()
                 .put("address", JSONObject().put("kind", "session").put("sessionId", sessionId))
                 .put("activate", activate)
                 .put("assistantStream", true),

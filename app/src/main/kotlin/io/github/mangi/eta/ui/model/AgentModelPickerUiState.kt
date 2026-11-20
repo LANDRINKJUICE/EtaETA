@@ -207,7 +207,11 @@ internal object DshModelCatalogProjector {
                 )
             }
         }
-        val target = optionId(selectedProvider, selectedModel)
+        val target = if (selectedProvider.isNullOrBlank() || selectedModel.isNullOrBlank()) {
+            null
+        } else {
+            optionId(selectedProvider, selectedModel)
+        }
         val selected = groups.asSequence()
             .flatMap { it.models.asSequence() }
             .firstOrNull { it.id == target }
@@ -215,8 +219,7 @@ internal object DshModelCatalogProjector {
         return AgentModelPickerUiState(providerGroups = groups, selectedModel = selected)
     }
 
-    private fun optionId(provider: String?, model: String?): String? =
-        if (provider.isNullOrBlank() || model.isNullOrBlank()) null else "$provider/$model"
+    private fun optionId(provider: String, model: String): String = "$provider/$model"
 
     /** 从复合键拆出引擎要的 provider 与 model。 */
     fun split(optionId: String): Pair<String, String>? {

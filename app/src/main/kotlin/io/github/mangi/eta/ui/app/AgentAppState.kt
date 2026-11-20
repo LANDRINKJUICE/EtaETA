@@ -93,6 +93,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.transformWhile
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.sync.Mutex
@@ -2870,8 +2871,10 @@ internal class AgentAppState(
             } ?: return@launch
             var historyHandled = false
             var selectionHandled = false
-            val collector = launch {
-                conversation.events.collect { event ->
+            // snapshot 是 follow 的第一帧，会依次发出历史与模型选择；
+            // 两者都到就停，超时未到说明会话不可读，放弃回填但保留本地历史。
+            kotlinx.coroutines.withTimeoutOrNull(15_000L) {
+                conversation.events.transformWhile { event ->
                     when (event) {
                         is io.github.mangi.eta.agent.dsh.DshStreamEvent.HistoryLoaded -> {
                             withContext(Dispatchers.Main.immediate) {
@@ -2894,12 +2897,9 @@ internal class AgentAppState(
                         }
                         else -> Unit
                     }
-                    if (historyHandled && selectionHandled) collector.cancel()
-                }
+                    !(historyHandled && selectionHandled)
+                }.collect { }
             }
-            // snapshot 是 follow 的第一帧；超时未到说明会话不可读，放弃回填但保留本地历史。
-            kotlinx.coroutines.withTimeoutOrNull(15_000L) { collector.join() }
-            collector.cancel()
             if (historyHandled) dshAttached[conversationId] = sessionId
         }
     }
