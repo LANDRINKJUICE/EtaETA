@@ -61,7 +61,7 @@ internal class DshCoordinator(private val context: Context) {
 
     /** 新建（或复用）DSH 会话，返回会话句柄；失败返回 null。 */
     suspend fun openSession(conversationKey: String): DshConversation? {
-        ensureConnected() ?: return null
+        if (ensureConnected() != null) return null
         conversations[conversationKey]?.let { return it }
         return try {
             val value = client.rpc("session", "create", JSONObject().put("cwd", "/workspace"))
@@ -97,7 +97,9 @@ internal class DshCoordinator(private val context: Context) {
 
     /** 供首页 WebView 入口：确保引擎运行并返回带 token 的启动 URL。 */
     suspend fun launchUrlForWebView(): String? {
-        ensureConnected() ?: return null
+        // ensureConnected 返回 null 表示成功；返回错误码表示失败。
+        val error = ensureConnected()
+        if (error != null) return null
         return lastLaunchUrl
     }
 
