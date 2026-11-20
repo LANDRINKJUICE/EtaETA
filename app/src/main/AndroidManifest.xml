@@ -95,6 +95,13 @@
             android:theme="@style/Theme.Eta"
             android:windowSoftInputMode="adjustResize" />
 
+        <!-- DSH 网页内嵌宿主：由 App 内部启动，凭据走 WebView 自己的 Cookie 存储。 -->
+        <activity
+            android:name=".ui.screens.dsh.DshWebActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Eta"
+            android:windowSoftInputMode="adjustResize" />
+
         <activity
             android:name=".agent.voice.EtaVoiceAssistActivity"
             android:excludeFromRecents="true"

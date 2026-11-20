@@ -126,6 +126,9 @@ android {
         unitTests.isIncludeAndroidResources = true
         // Robolectric 在高版本 JDK 下需要访问内部 API，参数只作用于测试 JVM。
         unitTests.all {
+            // EtaBackupStreamingTest 需同时驻留多份 17MB 级字符串（原文、JSON 转义副本、
+            // 导出/导入中间态），默认测试堆（512MB）会 OOM。只放大测试进程的堆，不影响 Gradle daemon。
+            it.maxHeapSize = "3g"
             it.jvmArgs(
                 "--add-opens=java.base/java.lang=ALL-UNNAMED",
                 "--add-opens=java.base/java.util=ALL-UNNAMED",

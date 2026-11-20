@@ -11,12 +11,15 @@ internal object AlpineEnvironmentPaths {
     const val PYTHON_TOOLS_MARKER = ".eta-python-tools-ready"
     const val NODE_TOOLS_MARKER = ".eta-node-tools-ready"
     const val SSH_TOOLS_MARKER = ".eta-ssh-tools-ready"
+    const val DSH_TOOLS_MARKER = ".eta-dsh-tools-ready"
     const val TOOLSET_REVISION = 1
     const val APK_ANALYSIS_REVISION = 1
     const val PYTHON_TOOLS_REVISION = 1
     // revision 2：Debian 规格补装 libatomic1，已就绪环境需重走安装补齐依赖。
     const val NODE_TOOLS_REVISION = 2
     const val SSH_TOOLS_REVISION = 1
+    // revision 1：首版 DSH 安装标记；引擎版本升级时递增以触发重装。
+    const val DSH_TOOLS_REVISION = 1
 
     fun environmentDir(context: Context): File =
         LinuxEnvironmentPaths.environmentDir(context, LinuxDistribution.ALPINE)

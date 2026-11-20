@@ -27,6 +27,7 @@ import androidx.compose.material.icons.automirrored.rounded.VolumeOff
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.MapsUgc
+import androidx.compose.material.icons.rounded.SmartToy
 import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -136,6 +137,7 @@ internal fun AgentAppShell(
     onNewConversation: () -> Unit,
     onOpenTerminal: () -> Unit,
     onOpenBrowser: () -> Unit,
+    onOpenDsh: () -> Unit,
     onSelectConversation: (String) -> Unit,
     onConversationTogglePin: (ConversationSummaryUi) -> Unit,
     onConversationRename: (ConversationSummaryUi) -> Unit,
@@ -220,6 +222,7 @@ internal fun AgentAppShell(
                                                 onNewConversation = onNewConversation,
                                                 onOpenTerminal = onOpenTerminal,
                                                 onOpenBrowser = onOpenBrowser,
+                                                onOpenDsh = onOpenDsh,
                                             )
                                         }
                                     }
@@ -260,6 +263,7 @@ internal fun AgentAppShell(
                                 onNewConversation = onNewConversation,
                                 onOpenTerminal = onOpenTerminal,
                                 onOpenBrowser = onOpenBrowser,
+                                onOpenDsh = onOpenDsh,
                                 homeTitle = homeTitle,
                                 homeCharacter = homeCharacter,
                                 homeModelPickerState = homeModelPickerState,
@@ -328,6 +332,7 @@ private fun CouiTopBarOverflowMenu(
     onNewConversation: () -> Unit,
     onOpenTerminal: () -> Unit,
     onOpenBrowser: () -> Unit,
+    onOpenDsh: () -> Unit,
 ) {
     var showMenu by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -339,6 +344,7 @@ private fun CouiTopBarOverflowMenu(
     val newConversationText = stringResource(R.string.action_new_conversation)
     val openTerminalText = stringResource(R.string.action_open_terminal)
     val openBrowserText = stringResource(R.string.action_open_browser)
+    val openDshText = stringResource(R.string.action_open_dsh)
     val autoReadText = stringResource(
         if (autoReadEnabled) R.string.speech_disable_auto_read else R.string.speech_enable_auto_read,
     )
@@ -346,6 +352,7 @@ private fun CouiTopBarOverflowMenu(
         newConversationText,
         openTerminalText,
         openBrowserText,
+        openDshText,
         autoReadText,
         hasSpeechPlayback,
         autoReadEnabled,
@@ -354,6 +361,7 @@ private fun CouiTopBarOverflowMenu(
             add(CouiMenuItem(value = 0, text = newConversationText, icon = Icons.Rounded.MapsUgc))
             add(CouiMenuItem(value = 1, text = openTerminalText, icon = Icons.Rounded.Terminal))
             add(CouiMenuItem(value = 2, text = openBrowserText, icon = Icons.Rounded.Language))
+            add(CouiMenuItem(value = 4, text = openDshText, icon = Icons.Rounded.SmartToy))
             if (hasSpeechPlayback) {
                 add(
                     CouiMenuItem(
@@ -387,6 +395,7 @@ private fun CouiTopBarOverflowMenu(
                     0 -> onNewConversation()
                     1 -> onOpenTerminal()
                     2 -> onOpenBrowser()
+                    4 -> onOpenDsh()
                     3 -> speechSettings?.let { current ->
                         scope.launch {
                             SpeechSettingsRepository.save(current.copy(chatAutoSpeak = !current.chatAutoSpeak))
@@ -410,6 +419,7 @@ private fun AgentTopBar(
     onNewConversation: () -> Unit,
     onOpenTerminal: () -> Unit,
     onOpenBrowser: () -> Unit,
+    onOpenDsh: () -> Unit,
     homeTitle: String?,
     homeCharacter: RoleplayChatUi?,
     homeModelPickerState: AgentModelPickerUiState?,
@@ -426,6 +436,7 @@ private fun AgentTopBar(
             onNewConversation = onNewConversation,
             onOpenTerminal = onOpenTerminal,
             onOpenBrowser = onOpenBrowser,
+            onOpenDsh = onOpenDsh,
         ) {
             AgentTopBarChatHeader(
                 conversationTitle = homeTitle,
@@ -457,6 +468,7 @@ private fun HomeMiuixTopBar(
     onNewConversation: () -> Unit,
     onOpenTerminal: () -> Unit,
     onOpenBrowser: () -> Unit,
+    onOpenDsh: () -> Unit,
     centerContent: @Composable () -> Unit,
 ) {
     val surfaceColor = MiuixTheme.colorScheme.surface
@@ -539,6 +551,7 @@ private fun HomeMiuixTopBar(
                     onNewConversation = onNewConversation,
                     onOpenTerminal = onOpenTerminal,
                     onOpenBrowser = onOpenBrowser,
+                    onOpenDsh = onOpenDsh,
                 )
             }
         },
@@ -566,6 +579,7 @@ private fun TopBarOverflowMenu(
     onNewConversation: () -> Unit,
     onOpenTerminal: () -> Unit,
     onOpenBrowser: () -> Unit,
+    onOpenDsh: () -> Unit,
 ) {
     var showMenu by remember { mutableStateOf(false) }
     LaunchedEffect(isCurrentRoute) {
@@ -579,6 +593,7 @@ private fun TopBarOverflowMenu(
     val newConversationText = stringResource(R.string.action_new_conversation)
     val openTerminalText = stringResource(R.string.action_open_terminal)
     val openBrowserText = stringResource(R.string.action_open_browser)
+    val openDshText = stringResource(R.string.action_open_dsh)
     val autoReadText = stringResource(
         if (autoReadEnabled) R.string.speech_disable_auto_read else R.string.speech_enable_auto_read,
     )
@@ -641,6 +656,14 @@ private fun TopBarOverflowMenu(
                     onClick = {
                         showMenu = false
                         onOpenBrowser()
+                    },
+                )
+                GlassPopupItem(
+                    text = openDshText,
+                    icon = MiuixIcons.Glass.NewMessage,
+                    onClick = {
+                        showMenu = false
+                        onOpenDsh()
                     },
                 )
                 if (hasSpeechPlayback) {
