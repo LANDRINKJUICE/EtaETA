@@ -1535,4 +1535,10 @@
   <string name="scheduled_notification_gui_ready_title">定时任务就绪：%1$s</string>
   <string name="scheduled_action_run_now">立即试跑</string>
   <string name="scheduled_action_stop">停止运行</string>
+  <string name="action_open_dsh">打开 DSH</string>
+  <string name="dsh_engine_unavailable">DSH 引擎不可用：请先在 Linux 环境中安装 DSH 组件，再重试。</string>
+  <string name="dsh_web_load_failed">DSH 页面加载失败，请确认引擎已启动。</string>
+  <string name="linux_dsh_tools">DeepSeek Harness（DSH 引擎）</string>
+  <string name="linux_dsh_tools_summary">通过 npm 安装官方 DSH 引擎；需先准备 Node.js 环境</string>
+  <string name="linux_dsh_tools_ready">DSH 引擎已安装；在首页菜单打开</string>
 </resources>

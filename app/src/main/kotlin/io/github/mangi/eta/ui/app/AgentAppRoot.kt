@@ -82,6 +82,7 @@ import io.github.mangi.eta.ui.pages.providers.ModelProviderDetailScreen
 import io.github.mangi.eta.ui.pages.providers.ModelProviderListScreen
 import io.github.mangi.eta.ui.screens.backup.DataBackupScreen
 import io.github.mangi.eta.ui.screens.browser.AgentBrowserActivity
+import io.github.mangi.eta.ui.screens.dsh.DshWebActivity
 import io.github.mangi.eta.agent.browser.BrowserSessionRegistry
 import io.github.mangi.eta.ui.screens.characters.CharacterDetailScreen
 import io.github.mangi.eta.ui.screens.characters.CharacterEditorScreen
@@ -326,6 +327,18 @@ fun AgentAppRoot(
         context.startActivity(AgentBrowserActivity.createIntent(context, sessionKey))
     }
 
+    /** 打开 DSH 网页：起引擎 → 用内嵌 WebView 加载带 token 的地址。 */
+    fun openDshWeb() {
+        focusManager.clearFocus()
+        agentState.launchDshWeb { url ->
+            if (url == null) {
+                Toast.makeText(context, R.string.dsh_engine_unavailable, Toast.LENGTH_LONG).show()
+            } else {
+                context.startActivity(DshWebActivity.createIntent(context, url))
+            }
+        }
+    }
+
     @Composable
     fun RoutedShell(
         route: AppRoute,
@@ -349,6 +362,7 @@ fun AgentAppRoot(
             onNewConversation = { createConversation() },
             onOpenTerminal = { pushRoute(AppRoute.Terminal) },
             onOpenBrowser = { openConversationBrowser() },
+            onOpenDsh = { openDshWeb() },
             onSelectConversation = { conversationId -> selectConversation(conversationId) },
             onConversationTogglePin = { conversation ->
                 agentState.toggleConversationPin(conversation.id)

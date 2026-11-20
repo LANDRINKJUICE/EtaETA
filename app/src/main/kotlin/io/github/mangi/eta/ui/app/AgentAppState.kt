@@ -180,6 +180,25 @@ internal class AgentAppState(
             return conversationTitles[id]?.takeIf(String::isNotBlank)
         }
 
+    // ── DSH 引擎（最小版：只负责把引擎跑起来并交出访问地址） ──
+    private val dshCoordinator by lazy { io.github.mangi.eta.agent.dsh.DshCoordinator(appContext) }
+
+    /**
+     * 启动（或复用）DSH 引擎并回调带 token 的访问地址；失败回调 null。
+     * 该地址必须交给 WebView 直接加载——引擎凭据是 HttpOnly + SameSite=Strict，
+     * 只有同源页面自己发起请求才会带上。
+     */
+    fun launchDshWeb(onReady: (String?) -> Unit) {
+        scope.launch(Dispatchers.IO) {
+            val url = try {
+                dshCoordinator.launchWebUrl()
+            } catch (_: Exception) {
+                null
+            }
+            withContext(Dispatchers.Main.immediate) { onReady(url) }
+        }
+    }
+
     init {
         refreshConversationSummaries()
         observeRuntimeSelection()
