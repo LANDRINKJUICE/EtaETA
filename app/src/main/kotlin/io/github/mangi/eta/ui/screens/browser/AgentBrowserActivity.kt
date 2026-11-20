@@ -24,6 +24,7 @@ class AgentBrowserActivity : ComponentActivity() {
             finish()
             return
         }
+        val initialUrl = intent.getStringExtra(EXTRA_INITIAL_URL)?.takeIf { it.isNotBlank() }
         enableEdgeToEdge()
         val session = BrowserSessionRegistry.get(sessionKey)
         lifecycleScope.launch {
@@ -43,7 +44,7 @@ class AgentBrowserActivity : ComponentActivity() {
                         enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
                     },
                 ) {
-                    AgentBrowserScreen(session = session, onBack = ::finish)
+                    AgentBrowserScreen(session = session, initialUrl = initialUrl, onBack = ::finish)
                 }
             }
         }
@@ -51,10 +52,14 @@ class AgentBrowserActivity : ComponentActivity() {
 
     companion object {
         private const val EXTRA_SESSION_KEY = "io.github.mangi.eta.extra.BROWSER_SESSION_KEY"
+        private const val EXTRA_INITIAL_URL = "io.github.mangi.eta.extra.BROWSER_INITIAL_URL"
 
-        fun createIntent(context: Context, sessionKey: String): Intent {
+        /** [initialUrl] 非空时，页面挂载后自动导航到该地址。 */
+        fun createIntent(context: Context, sessionKey: String, initialUrl: String? = null): Intent {
             require(sessionKey.isNotBlank())
-            return Intent(context, AgentBrowserActivity::class.java).putExtra(EXTRA_SESSION_KEY, sessionKey)
+            return Intent(context, AgentBrowserActivity::class.java)
+                .putExtra(EXTRA_SESSION_KEY, sessionKey)
+                .putExtra(EXTRA_INITIAL_URL, initialUrl)
         }
     }
 }

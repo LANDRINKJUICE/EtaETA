@@ -82,7 +82,6 @@ import io.github.mangi.eta.ui.pages.providers.ModelProviderDetailScreen
 import io.github.mangi.eta.ui.pages.providers.ModelProviderListScreen
 import io.github.mangi.eta.ui.screens.backup.DataBackupScreen
 import io.github.mangi.eta.ui.screens.browser.AgentBrowserActivity
-import io.github.mangi.eta.ui.screens.dsh.DshWebActivity
 import io.github.mangi.eta.agent.browser.BrowserSessionRegistry
 import io.github.mangi.eta.ui.screens.characters.CharacterDetailScreen
 import io.github.mangi.eta.ui.screens.characters.CharacterEditorScreen
@@ -327,14 +326,21 @@ fun AgentAppRoot(
         context.startActivity(AgentBrowserActivity.createIntent(context, sessionKey))
     }
 
-    /** 打开 DSH 网页：起引擎 → 用内嵌 WebView 加载带 token 的地址。 */
+    /**
+     * 打开 DSH 网页：起引擎 → 复用 Eta 自带的浏览器打开带 token 的地址。
+     *
+     * 复用现有浏览器而不是另写一套 WebView，是为了直接继承它的安全区避让、地址栏、
+     * 返回/刷新等能力；地址栏可编辑，用户也能从这里复制链接到外部浏览器使用。
+     */
     fun openDshWeb() {
         focusManager.clearFocus()
         agentState.launchDshWeb { url ->
             if (url == null) {
                 Toast.makeText(context, R.string.dsh_engine_unavailable, Toast.LENGTH_LONG).show()
             } else {
-                context.startActivity(DshWebActivity.createIntent(context, url))
+                context.startActivity(
+                    AgentBrowserActivity.createIntent(context, DSH_BROWSER_SESSION_KEY, url),
+                )
             }
         }
     }
@@ -1175,6 +1181,9 @@ fun AgentAppRoot(
         }
     }
 }
+
+/** DSH 网页固定使用同一个浏览器会话，重开时沿用同一份 Cookie。 */
+private const val DSH_BROWSER_SESSION_KEY = "browser:dsh"
 
 private val CorePermissionAttentionIds = setOf(
     "background",

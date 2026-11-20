@@ -51,6 +51,8 @@ internal fun AgentBrowserScreen(
     session: AgentBrowserSession,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    /** 非空时在页面挂载后自动导航一次（如从首页打开 DSH 网页）。 */
+    initialUrl: String? = null,
 ) {
     val context = LocalContext.current
     val keyboard = LocalSoftwareKeyboardController.current
@@ -104,6 +106,15 @@ internal fun AgentBrowserScreen(
         focusManager.clearFocus()
         keyboard?.hide()
         launchBrowserAction { session.navigateFromUser(context.applicationContext, target) }
+    }
+
+    // 从首页打开 DSH 等场景：页面挂载后自动导航一次。
+    // 导航是阻塞调用（最长 25s），必须放到 IO 线程，否则会卡住首帧。
+    LaunchedEffect(session, initialUrl) {
+        val target = initialUrl ?: return@LaunchedEffect
+        withContext(Dispatchers.IO) {
+            runCatching { session.navigateFromUser(context.applicationContext, target) }
+        }
     }
 
     val pageContent: @Composable (Modifier) -> Unit = { bodyModifier ->

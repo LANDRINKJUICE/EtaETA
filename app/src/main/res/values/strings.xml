@@ -1556,7 +1556,6 @@
   <string name="scheduled_action_stop">Stop</string>
   <string name="action_open_dsh">Open DSH</string>
   <string name="dsh_engine_unavailable">DSH engine is not available. Install the DSH component in the Linux environment first, then try again.</string>
-  <string name="dsh_web_load_failed">Failed to load the DSH page. Check that the engine is running.</string>
   <string name="linux_dsh_tools">DeepSeek Harness (DSH)</string>
   <string name="linux_dsh_tools_summary">Install the official DSH engine via npm; requires the Node.js environment first</string>
   <string name="linux_dsh_tools_ready">DSH engine installed; open it from the home menu</string>
