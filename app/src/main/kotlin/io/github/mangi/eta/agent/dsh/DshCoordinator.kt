@@ -12,7 +12,6 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
@@ -37,6 +36,7 @@ internal class DshCoordinator(private val context: Context) {
     private val engine = DshEngineLauncher(context, daemonSupervisor)
     private val client = DshWebClient()
     private val sockets = DshSocketHub(client)
+    private val webProxy = DshWebProxy()
     private val conversations = mutableMapOf<String, DshConversation>()
     private val connectMutex = Mutex()
 
@@ -54,7 +54,7 @@ internal class DshCoordinator(private val context: Context) {
                 lastLaunchUrl = launched.url
                 val token = launched.url.substringAfterLast("token=", "")
                 if (token.isBlank() || !client.connect(token)) return "AUTH_FAILED"
-                sockets.ensureOpen { }
+                sockets.ensureOpen()
                 null
             }
         }
@@ -80,9 +80,6 @@ internal class DshCoordinator(private val context: Context) {
         }
     }
 
-    fun conversationEvents(conversationKey: String): Flow<DshStreamEvent>? =
-        conversations[conversationKey]?.events
-
     suspend fun sendPrompt(conversationKey: String, text: String): Boolean {
         var conversation = conversations[conversationKey]
         if (conversation == null) {
@@ -92,33 +89,40 @@ internal class DshCoordinator(private val context: Context) {
         return conversation.prompt(text)
     }
 
-    fun closeSession(conversationKey: String) {
-        conversations.remove(conversationKey)?.close()
-    }
-
-    /** 供首页 WebView 入口：确保引擎运行并返回经过 303 自检的启动 URL。 */
+    /** 供网页入口：确保引擎运行、本地代理就绪，返回代理地址（浏览器打开即用，无需种 Cookie）。 */
     suspend fun launchUrlForWebView(): String? {
         // ensureConnected 返回 null 表示成功；返回错误码表示失败。
         val error = ensureConnected()
         if (error != null) return null
-        val url = lastLaunchUrl ?: return null
-        if (verifyLaunchUrl(url)) return url
-        // 自检失败最常见于引擎曾重启、旧 URL 令牌失效：重启引擎换新 token 再验一次。
+        if (webProxyReady()) return webProxy.proxyUrl
+        // 就绪失败最常见于引擎曾重启、旧令牌失效：重启引擎换新 token 再试一次。
         if (restartEngine()) {
-            val fresh = lastLaunchUrl ?: return null
-            if (verifyLaunchUrl(fresh)) return fresh
+            if (webProxyReady()) return webProxy.proxyUrl
         }
         return null
     }
 
-    /** 浏览器同款探测：带 token 请求根路径，合法令牌应答 303（token→Cookie 交换）。 */
-    private suspend fun verifyLaunchUrl(url: String): Boolean = withContext(Dispatchers.IO) {
+    /** 代理就绪三步：token 换引擎 Cookie → 启动监听 → 探测入口返回 200。 */
+    private suspend fun webProxyReady(): Boolean {
+        val token = lastLaunchUrl?.substringAfterLast("token=", "").orEmpty()
+        if (token.isBlank() || !webProxy.authenticate(token)) return false
+        if (!webProxy.start()) return false
+        return probeProxy()
+    }
+
+    /** 探测本地入口：代理注入凭据后，引擎应直接返回 200 页面。用带超时的独立探测端，避免挂住。 */
+    private val probeClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(5, TimeUnit.SECONDS)
+            .readTimeout(8, TimeUnit.SECONDS)
+            .build()
+    }
+
+    private suspend fun probeProxy(): Boolean = withContext(Dispatchers.IO) {
         try {
-            val probe = OkHttpClient.Builder()
-                .connectTimeout(5, TimeUnit.SECONDS)
-                .followRedirects(false)
-                .build()
-            probe.newCall(Request.Builder().url(url).build()).execute().use { it.code == 303 }
+            probeClient.newCall(
+                Request.Builder().url(webProxy.proxyUrl).build(),
+            ).execute().use { it.code == 200 }
         } catch (_: Exception) {
             false
         }
@@ -131,16 +135,10 @@ internal class DshCoordinator(private val context: Context) {
         runCatching { engine.stop(currentEnvironment()) }
         client.disconnect()
         sockets.close()
+        webProxy.stop()
         ensureConnected() == null
     } catch (_: Exception) {
         false
-    }
-
-    fun shutdown() {
-        conversations.values.forEach(DshConversation::close)
-        conversations.clear()
-        sockets.close()
-        client.disconnect()
     }
 
     private fun currentEnvironment() =

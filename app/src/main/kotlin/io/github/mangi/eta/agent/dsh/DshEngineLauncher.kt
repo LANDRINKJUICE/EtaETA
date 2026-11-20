@@ -7,7 +7,6 @@ import io.github.mangi.eta.agent.terminal.DetachedTaskSupervisor
 import io.github.mangi.eta.agent.terminal.LinuxEnvironmentPaths
 import io.github.mangi.eta.agent.terminal.TerminalEnvironment
 import io.github.mangi.eta.agent.terminal.TerminalRuntime
-import io.github.mangi.eta.core.AndroidAgentLogger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -16,13 +15,6 @@ import kotlinx.coroutines.job
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-
-internal data class DshEngineStatus(
-    val taskId: String? = null,
-    val running: Boolean = false,
-    val launchUrl: String? = null,
-    val code: String? = null,
-)
 
 internal sealed interface DshEngineResult {
     data class Ready(val url: String) : DshEngineResult
@@ -90,37 +82,22 @@ internal class DshEngineLauncher(
         return DshEngineResult.Failed("URL_TIMEOUT")
     }
 
-    suspend fun status(environment: TerminalEnvironment): DshEngineStatus = withContext(Dispatchers.IO) {
-        val distribution = environment.linuxDistribution
-            ?: return@withContext DshEngineStatus(code = "INVALID_ENVIRONMENT")
+    /** 找到当前运行中引擎的任务 id（stop 用）；无运行实例返回 null。 */
+    private suspend fun runningTaskId(environment: TerminalEnvironment): String? = withContext(Dispatchers.IO) {
+        val distribution = environment.linuxDistribution ?: return@withContext null
         val rootfs = LinuxEnvironmentPaths.rootfsDir(context, distribution)
-        if (!LinuxEnvironmentPaths.rootfsReady(rootfs.path)) {
-            return@withContext DshEngineStatus(code = "LINUX_ENVIRONMENT_NOT_READY")
-        }
+        if (!LinuxEnvironmentPaths.rootfsReady(rootfs.path)) return@withContext null
         val identity = TerminalRuntime.defaultIdentity(environment, rootfs.path)
-        if (identity == "root" && !TerminalRuntime.rootAvailable) {
-            return@withContext DshEngineStatus(code = "ROOT_REQUIRED")
-        }
+        val backend = LinuxEnvironmentPaths.backendOf(rootfs.path)
         val matches = daemonSupervisor.list().filter {
             it.task.environment == environment && it.task.identity == identity &&
-                it.task.backend == LinuxEnvironmentPaths.backendOf(rootfs.path) &&
-                it.task.command.trim() == COMMAND
+                it.task.backend == backend && it.task.command.trim() == COMMAND
         }
-        val task = matches.lastOrNull { it.running } ?: matches.lastOrNull()
-            ?: return@withContext DshEngineStatus()
-        if (!task.running) return@withContext DshEngineStatus(task.task.id, code = "DSH_EXITED")
-        val logs = daemonSupervisor.readLogs(task.task.id)
-        DshEngineStatus(
-            taskId = task.task.id,
-            running = true,
-            launchUrl = if (logs.ok) launchUrlFromLogs(logs.text) else null,
-            code = if (logs.ok) null else logs.code,
-        )
+        (matches.lastOrNull { it.running } ?: matches.lastOrNull())?.task?.id
     }
-
     suspend fun stop(environment: TerminalEnvironment): Boolean = launchMutex.withLock {
         withContext(Dispatchers.IO) {
-            status(environment).taskId?.let(daemonSupervisor::stop) ?: false
+            runningTaskId(environment)?.let(daemonSupervisor::stop) ?: false
         }
     }
 

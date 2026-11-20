@@ -147,7 +147,7 @@ internal class DshSocketHub(private val client: DshWebClient) {
 
     fun isOpen(): Boolean = synchronized(lock) { webSocket != null }
 
-    fun ensureOpen(onFatal: (String) -> Unit) {
+    fun ensureOpen() {
         synchronized(lock) {
             if (webSocket != null) return
             webSocket = DshWebClient.client.newWebSocket(client.webSocketRequest(), object : WebSocketListener() {
@@ -164,8 +164,8 @@ internal class DshSocketHub(private val client: DshWebClient) {
                             val value = frame.optJSONObject("value") ?: return
                             handler?.invoke(value)
                         }
-                        "error" -> onFatal(frame.optJSONObject("error")?.optString("message") ?: "stream error")
-                        "end" -> Unit
+                        // "error"/"end" 属流级状态帧：V1 交由上层 durable 事件兜底，无需处理。
+                        else -> Unit
                     }
                 }
 
