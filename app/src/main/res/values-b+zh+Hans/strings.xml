@@ -1063,6 +1063,8 @@
   <string name="browser_stop_loading">停止加载</string>
   <string name="browser_refresh">刷新</string>
   <string name="browser_open_external">用外部应用打开</string>
+  <string name="browser_copy_link">复制链接</string>
+  <string name="browser_link_copied">链接已复制</string>
   <string name="browser_close_page">关闭网页</string>
   <string name="model_not_selected">未选择</string>
   <string name="conversation_model_unavailable">此会话原用的模型不可用，已改用 %1$s</string>

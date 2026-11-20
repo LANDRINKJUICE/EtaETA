@@ -1,6 +1,7 @@
 package io.github.mangi.eta.ui.screens.browser
 
 import android.content.Intent
+import android.net.Uri
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
@@ -21,10 +22,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.core.net.toUri
@@ -58,8 +61,21 @@ internal fun AgentBrowserScreen(
     val keyboard = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
+    val clipboard = LocalClipboardManager.current
     val noExternalAppMessage = stringResource(R.string.browser_no_external_app)
+    val linkCopiedMessage = stringResource(R.string.browser_link_copied)
     val snapshot by session.snapshots.collectAsState()
+    // 交给外部浏览器的地址：首页打开 DSH 时带 token（303 之后地址栏里已经没有它），
+    // 只有页面仍停留在该站点时才使用，跳转走后回落到当前地址，避免拿旧 token 误导。
+    val externalUrl = remember(initialUrl, snapshot.url) {
+        externalBrowserUrl(initialUrl, snapshot.url)
+    }
+    val onCopyLink = {
+        if (externalUrl.isNotBlank()) {
+            clipboard.setText(AnnotatedString(externalUrl))
+            Toast.makeText(context, linkCopiedMessage, Toast.LENGTH_SHORT).show()
+        }
+    }
     var address by remember(session) { mutableStateOf(TextFieldValue("")) }
     var addressFocused by remember(session) { mutableStateOf(false) }
     var actionPending by remember(session) { mutableStateOf(false) }
@@ -145,14 +161,15 @@ internal fun AgentBrowserScreen(
                     }
                 },
                 onOpenExternal = {
-                    if (snapshot.url.startsWith("http://") || snapshot.url.startsWith("https://")) {
+                    if (externalUrl.startsWith("http://") || externalUrl.startsWith("https://")) {
                         try {
-                            context.startActivity(Intent(Intent.ACTION_VIEW, snapshot.url.toUri()))
+                            context.startActivity(Intent(Intent.ACTION_VIEW, externalUrl.toUri()))
                         } catch (_: android.content.ActivityNotFoundException) {
                             Toast.makeText(context, noExternalAppMessage, Toast.LENGTH_SHORT).show()
                         }
                     }
                 },
+                onCopyLink = onCopyLink,
                 onClosePage = {
                     focusManager.clearFocus()
                     keyboard?.hide()
@@ -204,4 +221,25 @@ internal fun AgentBrowserScreen(
             }
         }
     }
+}
+
+/** 入口地址携带的认证参数；只有这类地址才需要原样交给外部浏览器。 */
+private val TOKEN_QUERY = Regex("[?&]token=")
+
+/**
+ * 交给外部浏览器的地址：入口地址带 token、且页面仍停在同一站点时原样返回，
+ * 否则返回页面当前地址（303 之后 token 已不在地址里，直接复制过去会被 401 拒绝）。
+ */
+internal fun externalBrowserUrl(initialUrl: String?, currentUrl: String): String {
+    val tokenized = initialUrl?.takeIf { TOKEN_QUERY.containsMatchIn(it) }
+        ?: return currentUrl
+    return if (sameOrigin(tokenized, currentUrl)) tokenized else currentUrl
+}
+
+/** 两个地址是否同协议、同主机端口；空地址视为不同源。 */
+private fun sameOrigin(left: String, right: String): Boolean {
+    if (right.isBlank()) return false
+    val leftUri = Uri.parse(left)
+    val rightUri = Uri.parse(right)
+    return leftUri.scheme == rightUri.scheme && leftUri.authority == rightUri.authority
 }

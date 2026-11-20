@@ -84,6 +84,7 @@ internal fun BrowserAddressBar(
     onForward: () -> Unit,
     onRefreshOrStop: () -> Unit,
     onOpenExternal: () -> Unit,
+    onCopyLink: () -> Unit,
     onClosePage: () -> Unit,
     onClearData: () -> Unit,
 ) {
@@ -172,6 +173,11 @@ internal fun BrowserAddressBar(
         }
         BrowserOverflowMenu(
             items = listOf(
+                DropdownItem(
+                    text = stringResource(R.string.browser_copy_link),
+                    enabled = snapshot.url.startsWith("http://") || snapshot.url.startsWith("https://"),
+                    onClick = onCopyLink,
+                ),
                 DropdownItem(
                     text = stringResource(R.string.browser_open_external),
                     enabled = snapshot.url.startsWith("http://") || snapshot.url.startsWith("https://"),

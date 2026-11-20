@@ -1051,6 +1051,8 @@
   <string name="browser_stop_loading">停止載入</string>
   <string name="browser_refresh">重新整理</string>
   <string name="browser_open_external">使用其他應用程式開啟</string>
+  <string name="browser_copy_link">複製連結</string>
+  <string name="browser_link_copied">連結已複製</string>
   <string name="browser_close_page">關閉網頁</string>
   <string name="model_not_selected">未選擇</string>
   <string name="conversation_model_unavailable">此對話原用的模型無法使用，已改用 %1$s</string>
