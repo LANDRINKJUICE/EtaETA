@@ -131,11 +131,14 @@ internal class DshEngineLauncher(
         const val LAUNCH_ID = "dsh-launch"
         const val DEFAULT_PORT = 3080
 
-        fun launchUrlFromLogs(text: String): String? = LAUNCH_URL_REGEX.findAll(text).lastOrNull()?.value
+        fun launchUrlFromLogs(text: String): String? =
+            LAUNCH_URL_REGEX.findAll(text).lastOrNull()?.groupValues?.get(1)?.trim()
 
-        /** 启动行 `dsh web: http://127.0.0.1:3080/?token=<43 位 base64url>`；token 字符集收紧防吃进 ANSI 尾巴。 */
+        /** 启动行 `dsh web: http://127.0.0.1:3080/?token=<43 位 base64url>`。
+         *  捕获组只取 URL 本体（不带 "dsh web: " 前缀）；token 收口在 43 字符，
+         *  行尾 CR（日志为 CRLF）不会进入捕获组；再叠 trim() 双保险。 */
         private val LAUNCH_URL_REGEX = Regex(
-            "dsh web: http://127\\.0\\.0\\.1:\\d+/\\?token=" + "[A-Za" + "z0-9_" + "-]{43}",
+            "dsh web: (http://127[.]0[.]0[.]1:[0-9]+/[?]token=[A-Za-z0-9_-]{43})",
         )
     }
 }
