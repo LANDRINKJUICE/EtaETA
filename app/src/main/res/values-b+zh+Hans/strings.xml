@@ -64,6 +64,7 @@
   <string name="action_open_dsh_web">打开 DSH 网页</string>
   <string name="dsh_engine_unavailable">DSH 引擎不可用：请先在终端环境中安装 DSH 组件，再重试。</string>
   <string name="dsh_prompt_failed">消息未能送达 DSH 引擎。</string>
+  <string name="dsh_url_copied">DSH 地址已复制，页面若拒绝登录可粘贴到 Chrome 打开</string>
   <string name="route_tools">工具能力</string>
   <string name="route_permissions">权限</string>
   <string name="route_system_enhancements">系统增强</string>

@@ -62,6 +62,7 @@
   <string name="action_open_dsh_web">Open DSH web</string>
   <string name="dsh_engine_unavailable">DSH engine is not available. Install the DSH profile in the Linux environment first, then try again.</string>
   <string name="dsh_prompt_failed">Failed to deliver the message to the DSH engine.</string>
+  <string name="dsh_url_copied">DSH URL copied; paste in Chrome if the page rejects the login</string>
   <string name="route_tools">Tools</string>
   <string name="route_skills" translatable="false">Skills</string>
   <string name="route_permissions">Permissions</string>

@@ -333,6 +333,14 @@ fun AgentAppRoot(
             if (url == null) {
                 Toast.makeText(context, R.string.dsh_engine_unavailable, Toast.LENGTH_LONG).show()
             } else {
+                // URL 已在 App 内通过 303 自检；仍复制到剪贴板兜底：
+                // 个别浏览器对 127.0.0.1 的 Cookie 策略可能拦截登录，粘贴到 Chrome 可绕开。
+                val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                    as android.content.ClipboardManager
+                clipboard.setPrimaryClip(
+                    android.content.ClipData.newPlainText("DSH Web", url),
+                )
+                Toast.makeText(context, R.string.dsh_url_copied, Toast.LENGTH_SHORT).show()
                 try {
                     context.startActivity(
                         android.content.Intent(

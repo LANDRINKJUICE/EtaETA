@@ -7,6 +7,11 @@ import io.github.mangi.eta.agent.terminal.SharedFolderMounts
 import io.github.mangi.eta.core.AndroidAgentLogger
 import io.github.mangi.eta.data.repository.LinuxEnvironmentSettingsRepository
 import io.github.mangi.eta.agent.terminal.terminalEnvironment
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -40,9 +45,6 @@ internal class DshCoordinator(private val context: Context) {
     var lastLaunchUrl: String? = null
         private set
 
-    val engineStatus: DshEngineStatus
-        get() = kotlinx.coroutines.runBlocking { engine.status(currentEnvironment()) }
-
     /** 确保「引擎运行 + API Cookie 就绪」，幂等。失败返回错误码。 */
     private suspend fun ensureConnected(): String? = connectMutex.withLock {
         if (client.hasSession() && sockets.isOpen()) return null
@@ -52,7 +54,6 @@ internal class DshCoordinator(private val context: Context) {
                 lastLaunchUrl = launched.url
                 val token = launched.url.substringAfterLast("token=", "")
                 if (token.isBlank() || !client.connect(token)) return "AUTH_FAILED"
-                sockets.addFaultListener(FAULT_KEY) { }
                 sockets.ensureOpen { }
                 null
             }
@@ -95,12 +96,44 @@ internal class DshCoordinator(private val context: Context) {
         conversations.remove(conversationKey)?.close()
     }
 
-    /** 供首页 WebView 入口：确保引擎运行并返回带 token 的启动 URL。 */
+    /** 供首页 WebView 入口：确保引擎运行并返回经过 303 自检的启动 URL。 */
     suspend fun launchUrlForWebView(): String? {
         // ensureConnected 返回 null 表示成功；返回错误码表示失败。
         val error = ensureConnected()
         if (error != null) return null
-        return lastLaunchUrl
+        val url = lastLaunchUrl ?: return null
+        if (verifyLaunchUrl(url)) return url
+        // 自检失败最常见于引擎曾重启、旧 URL 令牌失效：重启引擎换新 token 再验一次。
+        if (restartEngine()) {
+            val fresh = lastLaunchUrl ?: return null
+            if (verifyLaunchUrl(fresh)) return fresh
+        }
+        return null
+    }
+
+    /** 浏览器同款探测：带 token 请求根路径，合法令牌应答 303（token→Cookie 交换）。 */
+    private suspend fun verifyLaunchUrl(url: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val probe = OkHttpClient.Builder()
+                .connectTimeout(5, TimeUnit.SECONDS)
+                .followRedirects(false)
+                .build()
+            probe.newCall(Request.Builder().url(url).build()).execute().use { it.code == 303 }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /** 重启引擎并重建连接（旧 API Cookie 随旧进程失效，一并作废）。
+     *  stop 失败（如进程已死残留记录）不阻断重启：disconnect/close 后 ensureConnected
+     *  的 launch() 会按命令复用逻辑重新拉起，旧 Cookie 已作废无需回退。 */
+    private suspend fun restartEngine(): Boolean = try {
+        runCatching { engine.stop(currentEnvironment()) }
+        client.disconnect()
+        sockets.close()
+        ensureConnected() == null
+    } catch (_: Exception) {
+        false
     }
 
     fun shutdown() {
@@ -113,7 +146,5 @@ internal class DshCoordinator(private val context: Context) {
     private fun currentEnvironment() =
         LinuxEnvironmentSettingsRepository.current(context).terminalEnvironment
 
-    private companion object {
-        const val FAULT_KEY = "coordinator"
-    }
+
 }

@@ -9,7 +9,6 @@ import okhttp3.WebSocketListener
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
-import java.util.concurrent.atomic.AtomicInteger
 
 /** follow 流上需要渲染的事件：文本/思考增量与 attempt 边界。 */
 internal sealed interface DshStreamEvent {
@@ -145,19 +144,8 @@ internal class DshSocketHub(private val client: DshWebClient) {
     private val lock = Any()
     private var webSocket: WebSocket? = null
     private val streams = mutableMapOf<String, (JSONObject) -> Unit>()
-    private val observers = mutableMapOf<Any, (String) -> Unit>()
-    private val reconnectListeners = AtomicInteger(0)
 
     fun isOpen(): Boolean = synchronized(lock) { webSocket != null }
-
-    /** 注册 Socket 级故障通知（如 Socket 关闭导致 Cookie 吊销）。 */
-    fun addFaultListener(key: Any, listener: (String) -> Unit) {
-        synchronized(lock) { observers[key] = listener }
-    }
-
-    fun removeFaultListener(key: Any) {
-        synchronized(lock) { observers.remove(key) }
-    }
 
     fun ensureOpen(onFatal: (String) -> Unit) {
         synchronized(lock) {
@@ -183,7 +171,6 @@ internal class DshSocketHub(private val client: DshWebClient) {
 
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                     synchronized(lock) { this@DshSocketHub.webSocket = null }
-                    notifyFaults(t.message ?: "socket failure")
                 }
 
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
@@ -191,12 +178,6 @@ internal class DshSocketHub(private val client: DshWebClient) {
                 }
             })
         }
-    }
-
-    private fun notifyFaults(message: String) {
-        val listeners: List<(String) -> Unit>
-        synchronized(lock) { listeners = observers.values.toList() }
-        listeners.forEach { runCatching { it(message) } }
     }
 
     fun register(streamId: String, handler: (JSONObject) -> Unit) {
@@ -215,7 +196,6 @@ internal class DshSocketHub(private val client: DshWebClient) {
             webSocket?.close(1000, "client shutdown")
             webSocket = null
             streams.clear()
-            observers.clear()
         }
     }
 }
