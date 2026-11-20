@@ -2,7 +2,10 @@ package io.github.mangi.eta.ui.screens.browser
 
 import android.content.Intent
 import android.net.Uri
+import android.webkit.WebChromeClient
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
@@ -14,6 +17,7 @@ import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -41,6 +45,7 @@ import io.github.mangi.eta.ui.app.LocalUiStyle
 import io.github.mangi.eta.ui.components.MiuixDialogActions
 import io.github.mangi.eta.ui.components.currentGlassOverlayBackdrop
 import io.github.mangi.eta.ui.components.coui.CouiConfirmDialog
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -74,6 +79,32 @@ internal fun AgentBrowserScreen(
         if (externalUrl.isNotBlank()) {
             clipboard.setText(AnnotatedString(externalUrl))
             Toast.makeText(context, linkCopiedMessage, Toast.LENGTH_SHORT).show()
+        }
+    }
+    // 网页里的 <input type="file">（DSH 的「文件/图片」按钮）必须由宿主接管，
+    // 否则 WebView 默认实现返回 false，点下去毫无反应。这里接到系统文件选择器。
+    val pendingFileChooser = remember(session) { AtomicReference<((Array<Uri>?) -> Unit)?>(null) }
+    val fileChooserLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        pendingFileChooser.getAndSet(null)?.invoke(
+            WebChromeClient.FileChooserParams.parseResult(result.resultCode, result.data),
+        )
+    }
+    DisposableEffect(session) {
+        session.setFileChooser { intent, onResult ->
+            pendingFileChooser.set(onResult)
+            runCatching { fileChooserLauncher.launch(intent) }.onFailure {
+                pendingFileChooser.set(null)
+                onResult(null)
+            }
+            true
+        }
+        onDispose {
+            session.setFileChooser(null)
+            // 页面离开时把未决选择作废，否则回来还停在"等待选择"。
+            pendingFileChooser.getAndSet(null)?.invoke(null)
+            session.cancelPendingFileChooser()
         }
     }
     var address by remember(session) { mutableStateOf(TextFieldValue("")) }

@@ -2,6 +2,7 @@ package io.github.mangi.eta.agent.browser
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.Intent
 import android.content.MutableContextWrapper
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -14,6 +15,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.RenderProcessGoneDetail
+import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -33,6 +35,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 import kotlin.math.roundToInt
@@ -106,6 +109,13 @@ internal class AgentBrowserSession(
 
     @Volatile
     private var attachedContainer: ViewGroup? = null
+
+    /** 页面 `<input type=file>` 的选择交给当前可见的浏览器页面；离屏（Agent 自用）时为 null。 */
+    @Volatile
+    private var fileChooser: ((Intent, (Array<Uri>?) -> Unit) -> Boolean)? = null
+
+    /** WebView 只允许一个未决文件选择：新的顶替旧的，旧的必须显式作废，否则页面永久停在等待态。 */
+    private val pendingFileChooser = AtomicReference<ValueCallback<Array<Uri>>?>(null)
 
     @Volatile
     private var currentLoadWaiter: LoadWaiter? = null
@@ -282,6 +292,7 @@ internal class AgentBrowserSession(
                 val wasControlling = userControlActive
                 userControlActive = false
                 if (wasControlling) interruptCurrentAction(force = true)
+                cancelPendingFileChooser()
                 webView?.takeIf { it.parent === container }?.let(container::removeView)
                 attachedContainer = null
                 appContext?.let { contextWrapper?.baseContext = it }
@@ -303,6 +314,16 @@ internal class AgentBrowserSession(
         } finally {
             operationLock.unlock()
         }
+    }
+
+    /** 注册（或清除）文件选择代理；只有页面挂到可见窗口时才会被注册。 */
+    internal fun setFileChooser(chooser: ((Intent, (Array<Uri>?) -> Unit) -> Boolean)?) {
+        fileChooser = chooser
+    }
+
+    /** 作废未决的文件选择并把结果回调成 null，页面据此退出"等待选择"状态。 */
+    internal fun cancelPendingFileChooser() {
+        pendingFileChooser.getAndSet(null)?.onReceiveValue(null)
     }
 
     /**
@@ -746,6 +767,7 @@ internal class AgentBrowserSession(
     }
 
     private fun destroyWebViewOnMain() {
+        cancelPendingFileChooser()
         val view = webView ?: return
         (view.parent as? ViewGroup)?.removeView(view)
         runCatching { view.stopLoading() }
@@ -1107,6 +1129,55 @@ internal class AgentBrowserSession(
             currentProgress = newProgress.coerceIn(0, 100)
             // 进度回调可能在主页面结束后继续到达，不能反复切换导航的加载状态。
             publishSnapshotOnMain()
+        }
+
+        /**
+         * 网页里的 `<input type="file">` 点击必须由宿主接管，默认实现返回 false 会被静默丢弃
+         * （DSH 网页的"文件/图片"按钮就是这么失效的）。这里转交给当前可见的浏览器页面。
+         */
+        override fun onShowFileChooser(
+            view: WebView,
+            filePathCallback: ValueCallback<Array<Uri>>?,
+            fileChooserParams: WebChromeClient.FileChooserParams?,
+        ): Boolean {
+            if (webView !== view || filePathCallback == null) return false
+            return dispatchFileChooser(filePathCallback, fileChooserParams)
+        }
+    }
+
+    /**
+     * 接管一次网页文件选择：同一时刻只保留一个未决回调（新的顶替旧的，旧的回 null），
+     * 没有可见页面时立即回 null，避免页面永久停在"等待选择"。
+     */
+    internal fun dispatchFileChooser(
+        callback: ValueCallback<Array<Uri>>,
+        params: WebChromeClient.FileChooserParams?,
+    ): Boolean {
+        pendingFileChooser.getAndSet(callback)?.onReceiveValue(null)
+        val chooser = fileChooser
+        if (chooser == null) {
+            pendingFileChooser.set(null)
+            callback.onReceiveValue(null)
+            return true
+        }
+        val accepted = chooser(fileChooserIntent(params)) { uris ->
+            if (pendingFileChooser.compareAndSet(callback, null)) callback.onReceiveValue(uris)
+        }
+        if (!accepted) {
+            pendingFileChooser.set(null)
+            callback.onReceiveValue(null)
+        }
+        return true
+    }
+
+    /** 按 `<input>` 的 accept/multiple 生成选择器意图；宿主给的意图不合法时回落到任意文件。 */
+    private fun fileChooserIntent(params: WebChromeClient.FileChooserParams?): Intent {
+        val created = runCatching { params?.createIntent() }.getOrNull()
+        if (created != null) return created
+        return Intent(Intent.ACTION_GET_CONTENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, params?.mode == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE)
         }
     }
 
