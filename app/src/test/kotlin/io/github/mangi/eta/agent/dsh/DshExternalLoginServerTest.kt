@@ -23,6 +23,8 @@ class DshExternalLoginServerTest {
             port = DshExternalLoginServer.DEFAULT_PORT,
             targetUrl = "http://127.0.0.1:3080/",
             cookieProvider = { null },
+            logger = {},
+            warnLogger = {},
         )
         assertEquals(
             "http://127.0.0.1:${DshExternalLoginServer.DEFAULT_PORT}/dsh-login",
@@ -36,6 +38,8 @@ class DshExternalLoginServerTest {
             port = 0,
             targetUrl = "http://127.0.0.1:3080/",
             cookieProvider = { "dsh-session-VPhEEcLKeqRDBoBalzN2Nm7CnfxKhLE00pKIDWxt1sw" },
+            logger = {},
+            warnLogger = {},
         )
         assertTrue("新建实例不应处于已启动状态", !server.isStarted)
         server.close()
@@ -51,6 +55,8 @@ class DshExternalLoginServerTest {
             port = freePort(),
             targetUrl = "http://127.0.0.1:3080/",
             cookieProvider = { null },
+            logger = {},
+            warnLogger = {},
         )
         server.start()
         try {
@@ -74,6 +80,8 @@ class DshExternalLoginServerTest {
             port = freePort(),
             targetUrl = "http://127.0.0.1:3080/",
             cookieProvider = { cookie },
+            logger = {},
+            warnLogger = {},
         )
         server.start()
         try {
@@ -106,6 +114,8 @@ class DshExternalLoginServerTest {
             port = freePort(),
             targetUrl = "http://127.0.0.1:3080/",
             cookieProvider = { "dsh-session-VPhEEcLKeqRDBoBalzN2Nm7CnfxKhLE00pKIDWxt1sw" },
+            logger = {},
+            warnLogger = {},
         )
         server.start()
         try {
@@ -125,9 +135,9 @@ class DshExternalLoginServerTest {
     @Test
     fun startOnOccupiedPortDoesNotThrow() {
         val port = freePort()
-        val first = DshExternalLoginServer(port, "http://127.0.0.1:3080/") { "a=b" }
+        val first = DshExternalLoginServer(port, "http://127.0.0.1:3080/", { "a=b" }, {}, {})
         first.start()
-        val second = DshExternalLoginServer(port, "http://127.0.0.1:3080/") { "a=b" }
+        val second = DshExternalLoginServer(port, "http://127.0.0.1:3080/", { "a=b" }, {}, {})
         try {
             second.start() // 不应抛
             assertTrue("第二个实例不该抢占成功", !second.isStarted)

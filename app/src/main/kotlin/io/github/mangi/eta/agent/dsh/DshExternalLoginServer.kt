@@ -51,6 +51,9 @@ internal class DshExternalLoginServer(
     private val port: Int = DEFAULT_PORT,
     private val targetUrl: String,
     private val cookieProvider: () -> String?,
+    /** 可注入，便于 JVM 单测（`AndroidAgentLogger` 走 `android.util.Log`，单测里会抛）。 */
+    private val logger: (String) -> Unit = { AndroidAgentLogger.info(it) },
+    private val warnLogger: (String) -> Unit = { AndroidAgentLogger.warn(it) },
 ) : AutoCloseable {
 
     private val closed = AtomicBoolean(false)
@@ -72,7 +75,7 @@ internal class DshExternalLoginServer(
         val socket = try {
             ServerSocket(port, BACKLOG, InetAddress.getByName(HOST))
         } catch (error: IOException) {
-            AndroidAgentLogger.warn("dsh_external_login_bind_failed port=$port error=${error.javaClass.simpleName}")
+            warnLogger("dsh_external_login_bind_failed port=$port error=${error.javaClass.simpleName}")
             return
         }
         server = socket
@@ -80,7 +83,7 @@ internal class DshExternalLoginServer(
             isDaemon = true
             start()
         }
-        AndroidAgentLogger.info("dsh_external_login_started port=$port")
+        logger("dsh_external_login_started port=$port")
     }
 
     private fun acceptLoop(socket: ServerSocket) {
