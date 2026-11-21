@@ -36,6 +36,15 @@ internal object DshWebAuth {
     private const val RECORD_KEY = "client-connection/browser-session"
 
     /**
+     * 签发 cookie 的有效期，对齐官方 `cookieMaxAgeDays` 的默认值（30 天）。
+     *
+     * 服务端会拒绝 `expiresAt - issuedAt` 超过自己配置上限的 cookie，因此这里只能
+     * 取官方默认值而不能更长；用户把 `cookieMaxAgeDays` 调小时，本 cookie 会被判过期，
+     * 下次启动重新签发即可。
+     */
+    private const val COOKIE_MAX_AGE_SECONDS = 30L * 24 * 3600
+
+    /**
      * 读取 rootfs 内持久化的浏览器会话签名密钥。
      * 文件缺失、记录缺失或格式不符时返回 `null`，调用方需回退到日志抓取。
      */
@@ -71,14 +80,19 @@ internal object DshWebAuth {
      * 用持久化签名密钥直接签发浏览器会话 cookie。
      *
      * 这条路径与启动 token 无关：cookie 的签名密钥持久化在 `.credentials.yaml`，
-     * 跨进程重启不变，因此即便引擎尚未加载「token 派生」的修复，也能凭 cookie 直接
-     * 通过认证。返回 `name=value`，调用方交给 [installCookie] 写入 CookieManager。
+     * 跨进程重启不变，因此即便引擎没有加载任何 token 相关插件，也能凭 cookie 通过认证。
+     * 返回 `name=value`，调用方交给 [installCookie] 写入 CookieManager。
+     *
+     * 有效期取 [COOKIE_MAX_AGE_SECONDS]（官方 `cookieMaxAgeDays` 的默认值 30 天）。
+     * 服务端校验里有一条 `expiresAt - issuedAt > maxAgeMilliseconds` 就拒绝，
+     * 所以这里**不能**比官方默认值更长；调短则每次启动重签，代价可忽略。
      */
-    fun mintCookie(secret: ByteArray, host: String, port: Int, maxAgeSeconds: Long = 30L * 24 * 3600): String {
+    fun mintCookie(secret: ByteArray, host: String, port: Int): String {
         val authority = "$host:$port"
         val name = cookieName(authority)
         val now = System.currentTimeMillis()
-        val payload = """{"version":1,"authority":"$authority","issuedAt":$now,"expiresAt":${now + maxAgeSeconds * 1000}}"""
+        val expiresAt = now + COOKIE_MAX_AGE_SECONDS * 1000
+        val payload = """{"version":1,"authority":"$authority","issuedAt":$now,"expiresAt":$expiresAt}"""
         val body = Base64.getUrlEncoder().withoutPadding()
             .encodeToString(payload.toByteArray(Charsets.UTF_8))
         val signature = Base64.getUrlEncoder().withoutPadding()

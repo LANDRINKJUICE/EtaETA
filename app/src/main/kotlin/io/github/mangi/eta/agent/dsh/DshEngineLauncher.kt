@@ -73,7 +73,13 @@ internal class DshEngineLauncher(
         // 一个不在 supervisor 记录里的新进程；若此时再起一个实例，必然撞上 EADDRINUSE，
         // 整片依赖 webServer 的插件全部挂起，日志里再也不会出现可用的启动行，
         // 最终表现就是「dsh 组件不可用」。复用既有实例可彻底绕开这条失败路径。
-        reuseListeningEngine(rootfs)?.let { return it }
+        when (val reused = reuseListeningEngine(rootfs)) {
+            is ReuseOutcome.Ready -> return reused.result
+            // 端口已被占用却不是我们能认证的 dsh：再起实例只会撞 EADDRINUSE 并空等超时，
+            // 直接给出可诊断的失败码，比让用户干等 90 秒好。
+            is ReuseOutcome.Occupied -> return DshEngineResult.Failed("PORT_OCCUPIED")
+            ReuseOutcome.Free -> Unit
+        }
 
         val existing = daemonSupervisor.list().firstOrNull {
             it.running && it.task.environment == environment && it.task.identity == identity &&
@@ -102,14 +108,31 @@ internal class DshEngineLauncher(
         return DshEngineResult.Failed("URL_TIMEOUT")
     }
 
+    /** 端口复用的三种结论，让调用方能区分「可复用」「被别人占着」「端口空着」。 */
+    private sealed interface ReuseOutcome {
+        data class Ready(val result: DshEngineResult) : ReuseOutcome
+        data object Occupied : ReuseOutcome
+        data object Free : ReuseOutcome
+    }
+
     /**
-     * 复用已在监听 [PORT] 的引擎：优先用派生 token 探测，失败退到 cookie。
-     * 探测不通过则返回 `null`，由调用方决定是否新起实例。
+     * 探测 [PORT] 上是否已有可复用的引擎：
+     * - 端口空着 → [ReuseOutcome.Free]，由调用方正常启动；
+     * - 端口在监听且凭据能认证 → [ReuseOutcome.Ready]，直接复用；
+     * - 端口在监听、凭据也在、但认证不通过 → [ReuseOutcome.Occupied]（确实不是我们的 dsh）。
+     *
+     * **凭据不存在时必须返回 [ReuseOutcome.Free]**：首次运行或凭据被清掉时，
+     * 端口可能刚好被上一次残留的引擎听着，此时没有凭据就无法判定归属，
+     * 若误报 Occupied 会让全新安装直接失败。交给正常启动流程处理更安全
+     * ——真正冲突时 supervisor 会给出 EADDRINUSE，不会静默出错。
      */
-    private suspend fun reuseListeningEngine(rootfs: File): DshEngineResult? =
+    private suspend fun reuseListeningEngine(rootfs: File): ReuseOutcome =
         withContext(Dispatchers.IO) {
-            if (!DshWebAuth.isPortListening(HOST, PORT)) return@withContext null
-            readyFromCredentials(rootfs)
+            if (!DshWebAuth.isPortListening(HOST, PORT)) return@withContext ReuseOutcome.Free
+            if (DshWebAuth.readSigningSecret(rootfs) == null) return@withContext ReuseOutcome.Free
+            val ready = readyFromCredentials(rootfs)
+                ?: return@withContext ReuseOutcome.Occupied
+            ReuseOutcome.Ready(ready)
         }
 
     /**

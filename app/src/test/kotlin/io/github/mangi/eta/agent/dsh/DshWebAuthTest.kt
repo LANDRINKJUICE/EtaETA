@@ -145,6 +145,44 @@ class DshWebAuthTest {
         assertEquals(expected, name)
     }
 
+    /**
+     * 服务端（browser-auth 的 decodeCookie）会逐字段校验：version 必须为 1、
+     * authority 必须与请求一致、issuedAt/expiresAt 必须是安全整数且未过期。
+     * 这里按同一规则反解自己签发的 cookie，确保格式真的能被接受，而不是只看着像。
+     */
+    @Test
+    fun mintCookie_payloadSatisfiesServerValidation() {
+        val secret = secretBytes(b64u("eta-test-secret-bytes-0000000000000000"))
+        val authority = "127.0.0.1:3080"
+        val cookie = DshWebAuth.mintCookie(secret, "127.0.0.1", 3080)
+
+        val value = cookie.substringAfter('=')
+        val parts = value.split('.')
+        assertEquals(3, parts.size)
+        assertEquals("v1", parts[0])
+
+        val body = parts[1]
+        val payload = String(
+            Base64.getUrlDecoder().decode(body),
+            StandardCharsets.UTF_8,
+        )
+        assertTrue(payload.contains("\"version\":1"))
+        assertTrue(payload.contains("\"authority\":\"$authority\""))
+
+        // 签名必须是 HMAC-SHA256(body) 的 base64url
+        val mac = Mac.getInstance("HmacSHA256")
+        mac.init(SecretKeySpec(secret, "HmacSHA256"))
+        val expectedSignature = Base64.getUrlEncoder().withoutPadding()
+            .encodeToString(mac.doFinal(body.toByteArray(StandardCharsets.UTF_8)))
+        assertEquals(expectedSignature, parts[2])
+
+        // 有效期必须是正数且不超过 30 天（服务端上限）
+        val issuedAt = Regex(""""issuedAt":(\d+)""").find(payload)!!.groupValues[1].toLong()
+        val expiresAt = Regex(""""expiresAt":(\d+)""").find(payload)!!.groupValues[1].toLong()
+        assertTrue(expiresAt > issuedAt)
+        assertTrue(expiresAt - issuedAt <= 30L * 24 * 3600 * 1000)
+    }
+
     @Test
     fun mintCookie_differsPerAuthority() {
         val secret = secretBytes(b64u("eta-test-secret-bytes-0000000000000000"))

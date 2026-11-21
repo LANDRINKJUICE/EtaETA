@@ -52,7 +52,7 @@ internal object LinuxPackageProfiles {
      * pnpm 随 Node 环境一起装。
      *
      * DSH 的插件管理器用 `spawn("pnpm")` 装插件，只认 PATH 里的 `pnpm`，找不到就直接
-     * `ENOENT`（`.plugin-manager/logs/*/pnpm.log` 里的 `spawn pnpm ENOENT`）。ETA 的
+     * 抛 ENOENT（插件管理器的 pnpm.log 里可看到 `spawn pnpm ENOENT`）。ETA 的
      * Linux 环境原本不带 pnpm，导致「装插件失败」，只能事后手工补。
      *
      * 装到 `/usr/local` 是为了落进默认 PATH（`/usr/local/bin` 在首位）。先走国内镜像，
