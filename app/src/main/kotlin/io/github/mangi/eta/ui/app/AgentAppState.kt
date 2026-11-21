@@ -188,14 +188,17 @@ internal class AgentAppState(
      * 该地址必须交给 WebView 直接加载——引擎凭据是 HttpOnly + SameSite=Strict，
      * 只有同源页面自己发起请求才会带上。
      */
-    fun launchDshWeb(onReady: (String?) -> Unit) {
+    fun launchDshWeb(onReady: (String?, String?) -> Unit) {
         scope.launch(Dispatchers.IO) {
             val url = try {
                 dshCoordinator.launchWebUrl()
             } catch (_: Exception) {
                 null
             }
-            withContext(Dispatchers.Main.immediate) { onReady(url) }
+            // 外部打开地址：DSH 的 cookie 是 SameSite=Strict，直接给外部浏览器
+            // 会停在 401，必须走 ETA 的中转端点（见 DshExternalLoginServer）。
+            val external = if (url == null) null else dshCoordinator.externalLoginUrl()
+            withContext(Dispatchers.Main.immediate) { onReady(url, external) }
         }
     }
 

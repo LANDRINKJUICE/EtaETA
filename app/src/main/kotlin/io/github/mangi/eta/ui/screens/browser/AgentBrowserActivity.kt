@@ -25,6 +25,7 @@ class AgentBrowserActivity : ComponentActivity() {
             return
         }
         val initialUrl = intent.getStringExtra(EXTRA_INITIAL_URL)?.takeIf { it.isNotBlank() }
+        val externalOpenUrl = intent.getStringExtra(EXTRA_EXTERNAL_OPEN_URL)?.takeIf { it.isNotBlank() }
         enableEdgeToEdge()
         val session = BrowserSessionRegistry.get(sessionKey)
         lifecycleScope.launch {
@@ -44,7 +45,12 @@ class AgentBrowserActivity : ComponentActivity() {
                         enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
                     },
                 ) {
-                    AgentBrowserScreen(session = session, initialUrl = initialUrl, onBack = ::finish)
+                    AgentBrowserScreen(
+                        session = session,
+                        initialUrl = initialUrl,
+                        onBack = ::finish,
+                        externalOpenUrl = externalOpenUrl,
+                    )
                 }
             }
         }
@@ -53,13 +59,24 @@ class AgentBrowserActivity : ComponentActivity() {
     companion object {
         private const val EXTRA_SESSION_KEY = "io.github.mangi.eta.extra.BROWSER_SESSION_KEY"
         private const val EXTRA_INITIAL_URL = "io.github.mangi.eta.extra.BROWSER_INITIAL_URL"
+        private const val EXTRA_EXTERNAL_OPEN_URL = "io.github.mangi.eta.extra.BROWSER_EXTERNAL_OPEN_URL"
 
-        /** [initialUrl] 非空时，页面挂载后自动导航到该地址。 */
-        fun createIntent(context: Context, sessionKey: String, initialUrl: String? = null): Intent {
+        /**
+         * @param initialUrl 非空时，页面挂载后自动导航到该地址。
+         * @param externalOpenUrl 「用外部应用打开」应交给浏览器的地址；DSH 页面
+         *   需传中转地址，否则外部浏览器会因 `SameSite=Strict` 停在 401。
+         */
+        fun createIntent(
+            context: Context,
+            sessionKey: String,
+            initialUrl: String? = null,
+            externalOpenUrl: String? = null,
+        ): Intent {
             require(sessionKey.isNotBlank())
             return Intent(context, AgentBrowserActivity::class.java)
                 .putExtra(EXTRA_SESSION_KEY, sessionKey)
                 .putExtra(EXTRA_INITIAL_URL, initialUrl)
+                .putExtra(EXTRA_EXTERNAL_OPEN_URL, externalOpenUrl)
         }
     }
 }

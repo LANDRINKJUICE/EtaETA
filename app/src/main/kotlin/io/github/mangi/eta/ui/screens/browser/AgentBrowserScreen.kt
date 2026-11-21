@@ -61,6 +61,14 @@ internal fun AgentBrowserScreen(
     modifier: Modifier = Modifier,
     /** 非空时在页面挂载后自动导航一次（如从首页打开 DSH 网页）。 */
     initialUrl: String? = null,
+    /**
+     * 「用外部应用打开」应交给浏览器的地址；为空时用当前页地址。
+     *
+     * DSH 页面必须传中转地址：它的会话 cookie 是 `SameSite=Strict`，
+     * 外部应用跳转过来时浏览器不会带上，直接开 3080 会停在 401。
+     * 见 [io.github.mangi.eta.agent.dsh.DshExternalLoginServer]。
+     */
+    externalOpenUrl: String? = null,
 ) {
     val context = LocalContext.current
     val keyboard = LocalSoftwareKeyboardController.current
@@ -192,9 +200,13 @@ internal fun AgentBrowserScreen(
                     }
                 },
                 onOpenExternal = {
-                    if (externalUrl.startsWith("http://") || externalUrl.startsWith("https://")) {
+                    // DSH 页面优先走中转地址：它用 ETA 自己发的 Set-Cookie 种下会话
+                    // （不带 SameSite=Strict），浏览器随后跳 3080 时就能带上。
+                    // 其余网站行为完全不变。
+                    val target = externalOpenUrl?.takeIf { it.isNotBlank() } ?: externalUrl
+                    if (target.startsWith("http://") || target.startsWith("https://")) {
                         try {
-                            context.startActivity(Intent(Intent.ACTION_VIEW, externalUrl.toUri()))
+                            context.startActivity(Intent(Intent.ACTION_VIEW, target.toUri()))
                         } catch (_: android.content.ActivityNotFoundException) {
                             Toast.makeText(context, noExternalAppMessage, Toast.LENGTH_SHORT).show()
                         }

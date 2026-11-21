@@ -1,13 +1,18 @@
 package io.github.mangi.eta.agent.dsh
 
 import android.content.Context
+import io.github.mangi.eta.agent.device.BoundedRootCommandExecutor
+import io.github.mangi.eta.agent.device.RootAccess
 import io.github.mangi.eta.agent.runtime.AgentExecutionService
 import io.github.mangi.eta.agent.terminal.DaemonStartResult
 import io.github.mangi.eta.agent.terminal.DetachedTaskSupervisor
+import io.github.mangi.eta.agent.terminal.LinuxDistribution
 import io.github.mangi.eta.agent.terminal.LinuxEnvironmentPaths
 import io.github.mangi.eta.agent.terminal.TerminalEnvironment
 import io.github.mangi.eta.agent.terminal.TerminalRuntime
+import io.github.mangi.eta.agent.terminal.shellQuote
 import io.github.mangi.eta.core.AndroidAgentLogger
+import io.github.mangi.eta.data.repository.LinuxEnvironmentSettingsRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -32,6 +37,7 @@ internal sealed interface DshEngineResult {
 internal class DshEngineLauncher(
     private val context: Context,
     private val daemonSupervisor: DetachedTaskSupervisor,
+    private val rootExecutor: BoundedRootCommandExecutor,
     private val waitAttempts: Int = 90,
     private val waitIntervalMs: Long = 1_000,
 ) {
@@ -134,34 +140,66 @@ internal class DshEngineLauncher(
     private suspend fun reuseListeningEngine(rootfs: File): ReuseOutcome =
         withContext(Dispatchers.IO) {
             if (!DshWebAuth.isPortListening(HOST, PORT)) return@withContext ReuseOutcome.Free
-            if (DshWebAuth.readSigningSecret(rootfs) == null) return@withContext ReuseOutcome.Free
-            val ready = readyFromCredentials(rootfs)
+            val secret = signingSecret(rootfs) ?: return@withContext ReuseOutcome.Free
+            val ready = readyWithSecret(secret)
                 ?: return@withContext ReuseOutcome.Occupied
             ReuseOutcome.Ready(ready)
         }
 
     /**
-     * 由持久化签名密钥派生凭据并探测引擎：
-     * 1. 派生启动 token，探测带 token 的入口地址，通过即返回该地址；
-     * 2. 否则签发浏览器会话 cookie，探测干净地址；通过则把 cookie 写入 CookieManager
-     *    并返回干净地址（WebView 加载时会自动带上）。
-     * 取不到密钥或两条路径都不通过时返回 `null`。
+     * 取签名密钥。直读失败时退回 root 通道。
+     *
+     * `dsh-home` 是 `700 root`、凭据是 `600 root`，ETA 以普通应用 uid 运行时直读必然
+     * `Permission denied`（实测）。若此时当作「没有凭据」，复用判定会返回 Free，
+     * 接着新起实例撞 `EADDRINUSE` —— 就是「dsh 组件不可用」的老毛病。
      */
+    private suspend fun signingSecret(rootfs: File): ByteArray? {
+        DshWebAuth.readSigningSecret(rootfs)?.let { return it }
+        if (!RootAccess.isGranted) return null
+        return DshWebAuth.readSigningSecretViaRoot(rootfs) { path ->
+            runCatching {
+                rootExecutor.execute("cat ${shellQuote(path)}")
+                    .takeIf { it.ok }?.stdout
+            }.getOrNull()
+        }
+    }
+
     private suspend fun readyFromCredentials(rootfs: File): DshEngineResult? =
         withContext(Dispatchers.IO) {
-            val secret = DshWebAuth.readSigningSecret(rootfs) ?: return@withContext null
-
-            val tokenUrl = DshWebAuth.authenticatedUrl(HOST, PORT, DshWebAuth.launchToken(secret))
-            if (DshWebAuth.probeUsable(tokenUrl)) return@withContext DshEngineResult.Ready(tokenUrl)
-
-            val clean = DshWebAuth.cleanUrl(HOST, PORT)
-            val cookie = DshWebAuth.mintCookie(secret, HOST, PORT)
-            if (DshWebAuth.probeWithCookie(clean, cookie)) {
-                DshWebAuth.installCookie(clean, cookie)
-                return@withContext DshEngineResult.Ready(clean)
-            }
-            null
+            val secret = signingSecret(rootfs) ?: return@withContext null
+            readyWithSecret(secret)
         }
+
+    /**
+     * 当前可用的会话 cookie（`name=value`），供外部浏览器中转服务下发。
+     *
+     * 引擎已就绪时凭据必然可读，这里只做一次派生，不再重复探测端口。
+     */
+    suspend fun currentSessionCookie(): String? = withContext(Dispatchers.IO) {
+        val distribution = currentDistribution()
+        val rootfs = LinuxEnvironmentPaths.rootfsDir(context, distribution)
+        val secret = signingSecret(rootfs) ?: return@withContext null
+        DshWebAuth.mintCookie(secret, HOST, PORT)
+    }
+
+    /**
+     * 与 [DshCoordinator] 相同的环境解析路径，避免两处取值口径不一致。
+     * `current()` 直接返回 [LinuxDistribution]。
+     */
+    private fun currentDistribution(): LinuxDistribution =
+        LinuxEnvironmentSettingsRepository.current(context)
+    private fun readyWithSecret(secret: ByteArray): DshEngineResult? {
+        val tokenUrl = DshWebAuth.authenticatedUrl(HOST, PORT, DshWebAuth.launchToken(secret))
+        if (DshWebAuth.probeUsable(tokenUrl)) return DshEngineResult.Ready(tokenUrl)
+
+        val clean = DshWebAuth.cleanUrl(HOST, PORT)
+        val cookie = DshWebAuth.mintCookie(secret, HOST, PORT)
+        if (DshWebAuth.probeWithCookie(clean, cookie)) {
+            DshWebAuth.installCookie(clean, cookie)
+            return DshEngineResult.Ready(clean)
+        }
+        return null
+    }
 
     /** 找到当前运行中引擎的任务 id（停止用）；无运行实例返回 null。 */
     private suspend fun runningTaskId(environment: TerminalEnvironment): String? = withContext(Dispatchers.IO) {

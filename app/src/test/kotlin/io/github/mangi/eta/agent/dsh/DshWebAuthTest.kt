@@ -112,6 +112,37 @@ class DshWebAuthTest {
         assertNull(DshWebAuth.readSigningSecret(rootfs))
     }
 
+    /**
+     * 凭据是 `600 root`、父目录 `700 root`，ETA 以普通应用 uid 运行时直读会
+     * `Permission denied`。此时必须能经 root 通道取到同一把密钥，否则复用判定
+     * 会退化成「端口被占」，最终新起实例撞 EADDRINUSE。
+     */
+    @Test
+    fun readSigningSecretViaRoot_parsesSameSecretAsDirectRead() {
+        val rootfs = Files.createTempDirectory("dsh-auth-rootread").toFile()
+        val secret = b64u("persisted-signing-secret-0000000000000000")
+        val file = writeCredentials(rootfs, secret)
+
+        // 模拟 root 通道：以 uid 0 读同一份文件。
+        val viaRoot = DshWebAuth.readSigningSecretViaRoot(rootfs) { path ->
+            assertEquals(file.absolutePath, path)
+            file.readText()
+        }
+        assertNotNull(viaRoot)
+        assertArrayEquals(secretBytes(secret), viaRoot)
+        assertArrayEquals(DshWebAuth.readSigningSecret(rootfs), viaRoot)
+    }
+
+    /** root 通道读不到（无 root / su 失败）时必须返回 null，不能抛。 */
+    @Test
+    fun readSigningSecretViaRoot_returnsNullWhenReaderFails() {
+        val rootfs = Files.createTempDirectory("dsh-auth-rootfail").toFile()
+        writeCredentials(rootfs, b64u("persisted-signing-secret-0000000000000000"))
+        assertNull(DshWebAuth.readSigningSecretViaRoot(rootfs) { null })
+        assertNull(DshWebAuth.readSigningSecretViaRoot(rootfs) { "" })
+        assertNull(DshWebAuth.readSigningSecretViaRoot(rootfs) { "version: 1\nrecords:\n" })
+    }
+
     @Test
     fun authenticatedUrl_carriesTokenAsQuery() {
         val url = DshWebAuth.authenticatedUrl("127.0.0.1", 3080, "abc123token")

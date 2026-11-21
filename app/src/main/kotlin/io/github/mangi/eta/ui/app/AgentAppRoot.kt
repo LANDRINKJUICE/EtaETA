@@ -334,12 +334,17 @@ fun AgentAppRoot(
      */
     fun openDshWeb() {
         focusManager.clearFocus()
-        agentState.launchDshWeb { url ->
+        agentState.launchDshWeb { url, externalUrl ->
             if (url == null) {
                 Toast.makeText(context, R.string.dsh_engine_unavailable, Toast.LENGTH_LONG).show()
             } else {
                 context.startActivity(
-                    AgentBrowserActivity.createIntent(context, DSH_BROWSER_SESSION_KEY, url),
+                    AgentBrowserActivity.createIntent(
+                        context = context,
+                        sessionKey = DSH_BROWSER_SESSION_KEY,
+                        initialUrl = url,
+                        externalOpenUrl = externalUrl,
+                    ),
                 )
             }
         }
