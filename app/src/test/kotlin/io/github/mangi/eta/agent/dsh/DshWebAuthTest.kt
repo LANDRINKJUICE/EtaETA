@@ -24,7 +24,13 @@ import org.junit.Test
  */
 class DshWebAuthTest {
 
-    private fun b64u(value: ByteArray): String =
+    /** 把一段文本编码成 base64url，用于构造测试用的 secret 字面量。 */
+    private fun b64u(value: String): String =
+        Base64.getUrlEncoder().withoutPadding()
+            .encodeToString(value.toByteArray(StandardCharsets.UTF_8))
+
+    /** 把字节编码成 base64url，用于比对派生结果。 */
+    private fun b64uBytes(value: ByteArray): String =
         Base64.getUrlEncoder().withoutPadding().encodeToString(value)
 
     private fun secretBytes(value: String): ByteArray =
@@ -66,7 +72,7 @@ class DshWebAuthTest {
         val secret = b64u("reference-derivation-key-1234567890abcdef")
         val mac = Mac.getInstance("HmacSHA256")
         mac.init(SecretKeySpec(secretBytes(secret), "HmacSHA256"))
-        val expected = b64u(mac.doFinal("dsh-launch-token-v1".toByteArray(StandardCharsets.UTF_8)))
+        val expected = b64uBytes(mac.doFinal("dsh-launch-token-v1".toByteArray(StandardCharsets.UTF_8)))
 
         assertEquals(expected, DshWebAuth.launchToken(secretBytes(secret)))
     }
@@ -212,6 +218,44 @@ class DshWebAuthTest {
     fun probeUsable_rejectsUnreachableAddress() {
         // 端口 1 通常无人监听，连接必然失败。
         assertFalse(DshWebAuth.probeUsable("http://127.0.0.1:1/", 500))
+    }
+
+    /** cookie 路径必须真的把 Cookie 头发出去，且只在服务端回 200 时判为可用。 */
+    @Test
+    fun probeWithCookie_sendsCookieHeaderAndAccepts200() {
+        var seenCookie: String? = null
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/") { exchange ->
+            seenCookie = exchange.requestHeaders.getFirst("Cookie")
+            exchange.sendResponseHeaders(200, -1)
+            exchange.close()
+        }
+        server.start()
+        val port = server.address.port
+        try {
+            val cookie = "dsh-auth-test=v1.payload.sig"
+            assertTrue(DshWebAuth.probeWithCookie("http://127.0.0.1:$port/", cookie, 2_000))
+            assertEquals(cookie, seenCookie)
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    /** 服务端回 401 时必须判为不可用，不能把「有响应」当成「已认证」。 */
+    @Test
+    fun probeWithCookie_rejectsUnauthorized() {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/") { exchange ->
+            exchange.sendResponseHeaders(401, -1)
+            exchange.close()
+        }
+        server.start()
+        val port = server.address.port
+        try {
+            assertFalse(DshWebAuth.probeWithCookie("http://127.0.0.1:$port/", "bad=1", 2_000))
+        } finally {
+            server.stop(0)
+        }
     }
 
     @Test
