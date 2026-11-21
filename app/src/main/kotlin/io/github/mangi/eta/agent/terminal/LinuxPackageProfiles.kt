@@ -48,6 +48,20 @@ internal data class LinuxPackageProfile(
 }
 
 internal object LinuxPackageProfiles {
+    /**
+     * pnpm 随 Node 环境一起装。
+     *
+     * DSH 的插件管理器用 `spawn("pnpm")` 装插件，只认 PATH 里的 `pnpm`，找不到就直接
+     * `ENOENT`（`.plugin-manager/logs/*/pnpm.log` 里的 `spawn pnpm ENOENT`）。ETA 的
+     * Linux 环境原本不带 pnpm，导致「装插件失败」，只能事后手工补。
+     *
+     * 装到 `/usr/local` 是为了落进默认 PATH（`/usr/local/bin` 在首位）。先走国内镜像，
+     * 失败回退官方源；两者都失败也不阻断 Node 环境就绪——pnpm 缺失只影响装插件。
+     */
+    private const val PNPM_SETUP_SCRIPT =
+        "npm install -g --prefix /usr/local --registry=https://registry.npmmirror.com pnpm@12 >/dev/null 2>&1 || " +
+            "npm install -g --prefix /usr/local pnpm@12 >/dev/null 2>&1 || true"
+
     /** DSH 引擎安装脚本：先试国内镜像，失败回退官方源；全局装到 /usr/local。 */
     private const val DSH_INSTALL_SCRIPT =
         "mkdir -p /opt/eta/dsh-home && " +
@@ -81,11 +95,13 @@ internal object LinuxPackageProfiles {
         specs = mapOf(
             LinuxDistribution.ALPINE to LinuxPackageSpec(
                 packages = listOf("nodejs-current", "npm"),
+                setupScript = PNPM_SETUP_SCRIPT,
             ),
             LinuxDistribution.DEBIAN to LinuxPackageSpec(
                 // Node 官方 arm64 二进制链接 libatomic.so.1，归档安装不含系统依赖，需补装。
                 packages = listOf("libatomic1"),
                 managedTool = ManagedLinuxTool.NODE,
+                setupScript = PNPM_SETUP_SCRIPT,
             ),
         ),
     )

@@ -16,7 +16,8 @@ internal object AlpineEnvironmentPaths {
     const val APK_ANALYSIS_REVISION = 1
     const val PYTHON_TOOLS_REVISION = 1
     // revision 2：Debian 规格补装 libatomic1，已就绪环境需重走安装补齐依赖。
-    const val NODE_TOOLS_REVISION = 2
+    // revision 3：Node 环境附带 pnpm（DSH 插件管理器 `spawn pnpm` 依赖它），已就绪环境需重装。
+    const val NODE_TOOLS_REVISION = 3
     const val SSH_TOOLS_REVISION = 1
     // revision 1：首版 DSH 安装标记；引擎版本升级时递增以触发重装。
     const val DSH_TOOLS_REVISION = 1

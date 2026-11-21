@@ -16,6 +16,7 @@ import kotlinx.coroutines.job
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.io.File
 
 internal sealed interface DshEngineResult {
     data class Ready(val url: String) : DshEngineResult
@@ -64,6 +65,16 @@ internal class DshEngineLauncher(
         identity: String,
         backend: io.github.mangi.eta.agent.terminal.LinuxExecutionBackend,
     ): DshEngineResult {
+        val distribution = environment.linuxDistribution
+            ?: return DshEngineResult.Failed("INVALID_ENVIRONMENT")
+        val rootfs = LinuxEnvironmentPaths.rootfsDir(context, distribution)
+
+        // [eta-fix] 先尝试复用已在监听的引擎。插件自愈重启（dsh-purge 的 restart-web）会拉起
+        // 一个不在 supervisor 记录里的新进程；若此时再起一个实例，必然撞上 EADDRINUSE，
+        // 整片依赖 webServer 的插件全部挂起，日志里再也不会出现可用的启动行，
+        // 最终表现就是「dsh 组件不可用」。复用既有实例可彻底绕开这条失败路径。
+        reuseListeningEngine(rootfs)?.let { return it }
+
         val existing = daemonSupervisor.list().firstOrNull {
             it.running && it.task.environment == environment && it.task.identity == identity &&
                 it.task.backend == backend && it.task.command.trim() == COMMAND
@@ -79,11 +90,50 @@ internal class DshEngineLauncher(
             if (status == null || !status.running) return DshEngineResult.Failed("DSH_EXITED")
             val logs = daemonSupervisor.readLogs(taskId)
             if (!logs.ok) return DshEngineResult.Failed(logs.code.ifBlank { "LOGS_UNAVAILABLE" })
+
+            // [eta-fix] 就绪判定不再只依赖启动行：先用派生 token 探测（与 Harness 侧
+            // 修复后的稳定 token 对齐），失败再退到持久化密钥签发的 cookie。两条路径
+            // 都跨重启有效，比等日志行可靠，也不受日志轮转或截断影响。
+            readyFromCredentials(rootfs)?.let { return it }
+
             launchUrlFromLogs(logs.text)?.let { return DshEngineResult.Ready(it) }
             delay(waitIntervalMs)
         }
         return DshEngineResult.Failed("URL_TIMEOUT")
     }
+
+    /**
+     * 复用已在监听 [PORT] 的引擎：优先用派生 token 探测，失败退到 cookie。
+     * 探测不通过则返回 `null`，由调用方决定是否新起实例。
+     */
+    private suspend fun reuseListeningEngine(rootfs: File): DshEngineResult? =
+        withContext(Dispatchers.IO) {
+            if (!DshWebAuth.isPortListening(HOST, PORT)) return@withContext null
+            readyFromCredentials(rootfs)
+        }
+
+    /**
+     * 由持久化签名密钥派生凭据并探测引擎：
+     * 1. 派生启动 token，探测带 token 的入口地址，通过即返回该地址；
+     * 2. 否则签发浏览器会话 cookie，探测干净地址；通过则把 cookie 写入 CookieManager
+     *    并返回干净地址（WebView 加载时会自动带上）。
+     * 取不到密钥或两条路径都不通过时返回 `null`。
+     */
+    private suspend fun readyFromCredentials(rootfs: File): DshEngineResult? =
+        withContext(Dispatchers.IO) {
+            val secret = DshWebAuth.readSigningSecret(rootfs) ?: return@withContext null
+
+            val tokenUrl = DshWebAuth.authenticatedUrl(HOST, PORT, DshWebAuth.launchToken(secret))
+            if (DshWebAuth.probeUsable(tokenUrl)) return@withContext DshEngineResult.Ready(tokenUrl)
+
+            val clean = DshWebAuth.cleanUrl(HOST, PORT)
+            val cookie = DshWebAuth.mintCookie(secret, HOST, PORT)
+            if (DshWebAuth.probeWithCookie(clean, cookie)) {
+                DshWebAuth.installCookie(clean, cookie)
+                return@withContext DshEngineResult.Ready(clean)
+            }
+            null
+        }
 
     /** 找到当前运行中引擎的任务 id（停止用）；无运行实例返回 null。 */
     private suspend fun runningTaskId(environment: TerminalEnvironment): String? = withContext(Dispatchers.IO) {
@@ -106,9 +156,12 @@ internal class DshEngineLauncher(
     }
 
     companion object {
+        const val HOST = "127.0.0.1"
+        const val PORT = 3080
+
         /** daemon 命令不带 &：supervisor 自行后台化并接管日志与所有权。 */
         const val COMMAND =
-            "export DSH_HOME=/opt/eta/dsh-home && dsh --profile web --no-open --host 127.0.0.1 --port 3080"
+            "export DSH_HOME=/opt/eta/dsh-home && dsh --profile web --no-open --host $HOST --port $PORT"
         const val LAUNCH_ID = "dsh-launch"
 
         /** 启动行 `dsh web: http://127.0.0.1:3080/?token=<43 位 base64url>`。
