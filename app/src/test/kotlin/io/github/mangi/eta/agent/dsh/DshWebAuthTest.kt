@@ -9,6 +9,7 @@ import java.security.MessageDigest
 import java.util.Base64
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -92,7 +93,8 @@ class DshWebAuthTest {
 
         val parsed = DshWebAuth.readSigningSecret(rootfs)
         assertNotNull(parsed)
-        assertEquals(secretBytes(secret), parsed)
+        // ByteArray 的 equals 是引用比较，必须用 assertArrayEquals 比内容。
+        assertArrayEquals(secretBytes(secret), parsed)
     }
 
     @Test
@@ -104,10 +106,9 @@ class DshWebAuthTest {
     @Test
     fun readSigningSecret_returnsNullWhenRecordMissing() {
         val rootfs = Files.createTempDirectory("dsh-auth-norec").toFile()
-        File(rootfs, "opt/eta/dsh-home/.credentials.yaml").apply {
-            parentFile.mkdirs()
-            writeText("version: 1\nrecords:\n  some-other-record:\n    kind: grant\n")
-        }
+        val file = File(rootfs, "opt/eta/dsh-home/.credentials.yaml")
+        file.parentFile?.mkdirs()
+        file.writeText("version: 1\nrecords:\n  some-other-record:\n    kind: grant\n")
         assertNull(DshWebAuth.readSigningSecret(rootfs))
     }
 
