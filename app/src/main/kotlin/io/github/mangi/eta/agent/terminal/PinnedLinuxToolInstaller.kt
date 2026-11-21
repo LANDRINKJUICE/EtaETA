@@ -28,6 +28,10 @@ internal class PinnedLinuxToolInstaller(
             distribution = distribution,
             abis = Build.SUPPORTED_ABIS.toList(),
         ) ?: return false
+        // 该版本已经装好且入口可用时直接复用，不重新下载。
+        // 典型场景：只提升 profile revision（例如 Node 环境补装 pnpm）时，
+        // Node 本身没变，没必要再拉一遍几十 MB 的归档。
+        if (alreadyInstalled(tool, artifact, rootfs)) return true
         val archive = File(context.cacheDir, "linux-installer/profiles/${artifact.fileName}.download")
         return try {
             onProgress(0, artifact.sizeBytes)
@@ -40,6 +44,35 @@ internal class PinnedLinuxToolInstaller(
             false
         } finally {
             archive.delete()
+        }
+    }
+
+    /**
+     * 该版本的制品是否已经装好并可直接使用。
+     *
+     * 判定标准是「目标版本目录存在」且「入口命令可解析到该版本」，
+     * 只做文件系统检查，不执行任何命令、不联网。
+     * 用于避免仅提升 profile revision 时重复下载几十 MB 的归档。
+     */
+    private fun alreadyInstalled(
+        tool: ManagedLinuxTool,
+        artifact: VerifiedArtifact,
+        rootfs: File,
+    ): Boolean {
+        val name = tool.name.lowercase()
+        val target = File(rootfs, "opt/eta/$name/${artifact.version}")
+        if (!target.isDirectory) return false
+        val localBin = File(rootfs, "usr/local/bin")
+        val entries = when (tool) {
+            ManagedLinuxTool.UV -> listOf("uv", "uvx")
+            ManagedLinuxTool.NODE -> listOf("node", "npm", "npx")
+        }
+        // 入口必须存在且指向本次要装的版本，否则视为未装好（例如被别的版本覆盖）。
+        return entries.all { entry ->
+            val path = File(localBin, entry)
+            val link = runCatching { java.nio.file.Files.readSymbolicLink(path.toPath()) }.getOrNull()
+                ?: return@all path.isFile
+            link.toString().contains("/opt/eta/$name/${artifact.version}/")
         }
     }
 
