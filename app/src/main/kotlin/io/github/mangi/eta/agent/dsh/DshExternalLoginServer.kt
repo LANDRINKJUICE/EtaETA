@@ -125,18 +125,61 @@ internal class DshExternalLoginServer(
             )
             return
         }
+        // 不能只回 303 + Set-Cookie：实测 Chrome 对「外部应用跳转」过来的
+        // 303 响应不保存 Cookie（交接 §8.1.1 的既有结论，本轮再次验证）。
+        // 改成回一个 HTML，用 JS 显式写 cookie 再跳转——脚本写 cookie 不受
+        // 该限制，且 DSH 接受同值但非 HttpOnly 的 cookie（实测 200）。
         respond(
             client,
-            303,
-            "",
-            "text/plain; charset=utf-8",
+            200,
+            loginBridgeHtml(cookie),
+            "text/html; charset=utf-8",
             listOf(
+                // 仍然发一次 Set-Cookie：Chrome 若接受就双保险，不接受也无害。
                 "Set-Cookie: $cookie; Path=/; Max-Age=$COOKIE_MAX_AGE_SECONDS",
-                "Location: $targetUrl",
                 "Cache-Control: no-store",
             ),
         )
     }
+
+    /**
+     * 用脚本写入 cookie 再跳转的桥接页。
+     *
+     * `cookie` 形如 `name=value`，只含 base64url 与点号，可直接拼进 JS 字符串；
+     * 这里仍做一次转义，避免将来格式变化引入注入。
+     */
+    private fun loginBridgeHtml(cookie: String): String {
+        val name = cookie.substringBefore('=')
+        val value = cookie.substringAfter('=')
+        val safeName = jsEscape(name)
+        val safeValue = jsEscape(value)
+        val safeTarget = jsEscape(targetUrl)
+        return """
+            <!doctype html><meta charset="utf-8">
+            <meta name="viewport" content="width=device-width,initial-scale=1">
+            <title>正在进入 DSH…</title>
+            <body style="font-family:system-ui;padding:24px">
+            正在进入 DSH…
+            <script>
+            (function () {
+              var name = '$safeName';
+              var value = '$safeValue';
+              var target = '$safeTarget';
+              document.cookie = name + '=' + value + '; path=/; max-age=$COOKIE_MAX_AGE_SECONDS';
+              if (document.cookie.indexOf(name + '=') === -1) {
+                document.body.textContent = 'Cookie 被浏览器拒绝，请在 Eta 内打开 DSH。';
+                return;
+              }
+              location.replace(target);
+            })();
+            </script>
+            </body>
+        """.trimIndent()
+    }
+
+    /** 只保留安全字符，避免拼进 JS 单引号字符串时出问题。 */
+    private fun jsEscape(value: String): String =
+        value.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "").replace("\r", "")
 
     /** 只读首行，够用且不会因为读到 body 而阻塞。 */
     private fun readRequestLine(client: Socket): String? {

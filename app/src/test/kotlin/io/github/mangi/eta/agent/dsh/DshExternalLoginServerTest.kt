@@ -11,7 +11,7 @@ import org.junit.Test
 /**
  * 外部浏览器中转端点的行为验证。
  *
- * 核心断言：`/dsh-login` 必须回 303 + `Set-Cookie` + `Location`，且这条
+ * 核心断言：`/dsh-login` 必须回 200 + HTML 桥接页（用 JS 写 cookie 再跳转），且这条
  * `Set-Cookie` **不能**带 `SameSite=Strict` —— 那正是 DSH 自己那条把外部
  * 跳转挡在 401 的策略，ETA 侧必须绕开。
  */
@@ -69,12 +69,14 @@ class DshExternalLoginServerTest {
     }
 
     /**
-     * 关键用例：303 + Set-Cookie 不得带 SameSite=Strict。
+     * 关键用例：回 200 + HTML 桥接页，用 JS 写 cookie 再跳转。
      *
-     * 带上的话浏览器在外部跳转场景不会保存这条 cookie，等于什么都没修。
+     * 不能回 303：实测 Chrome 对「外部应用跳转」过来的 303 响应不保存 Cookie
+     * （交接 §8.1.1 的既有结论）。脚本写 cookie 不受该限制。
+     * 同时 Set-Cookie 仍不得带 SameSite=Strict。
      */
     @Test
-    fun loginWithCookieReturns303AndSameSiteFreeCookie() {
+    fun loginWithCookieReturnsBridgeHtmlAndSameSiteFreeCookie() {
         val cookie = "dsh-auth-abc=v1.payload.sig"
         val server = DshExternalLoginServer(
             port = freePort(),
@@ -89,8 +91,12 @@ class DshExternalLoginServerTest {
             connection.instanceFollowRedirects = false
             connection.requestMethod = "GET"
             try {
-                assertEquals(303, connection.responseCode)
-                assertEquals("http://127.0.0.1:3080/", connection.getHeaderField("Location"))
+                assertEquals(200, connection.responseCode)
+                val body = connection.inputStream.bufferedReader().use { it.readText() }
+                assertTrue("必须是 HTML 桥接页", body.contains("document.cookie"))
+                assertTrue("必须用 JS 写会话 cookie", body.contains(cookie.substringBefore('=')))
+                assertTrue("必须跳转到 DSH", body.contains("location.replace"))
+                assertTrue("跳转目标必须是 3080", body.contains("http://127.0.0.1:3080/"))
                 val setCookie = connection.getHeaderField("Set-Cookie")
                 assertNotNull(setCookie)
                 assertTrue("必须下发会话 cookie", setCookie!!.startsWith("$cookie;"))
