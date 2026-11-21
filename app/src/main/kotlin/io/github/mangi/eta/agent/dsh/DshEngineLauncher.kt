@@ -73,13 +73,12 @@ internal class DshEngineLauncher(
         // 一个不在 supervisor 记录里的新进程；若此时再起一个实例，必然撞上 EADDRINUSE，
         // 整片依赖 webServer 的插件全部挂起，日志里再也不会出现可用的启动行，
         // 最终表现就是「dsh 组件不可用」。复用既有实例可彻底绕开这条失败路径。
-        when (val reused = reuseListeningEngine(rootfs)) {
-            is ReuseOutcome.Ready -> return reused.result
-            // 端口已被占用却不是我们能认证的 dsh：再起实例只会撞 EADDRINUSE 并空等超时，
-            // 直接给出可诊断的失败码，比让用户干等 90 秒好。
-            is ReuseOutcome.Occupied -> return DshEngineResult.Failed("PORT_OCCUPIED")
-            ReuseOutcome.Free -> Unit
-        }
+        //
+        // 复用失败（Occupied）时**不直接判死**，继续走下面的原有流程：
+        // 引擎可能正在启动、凭据尚未落盘，原有路径仍有机会通过日志行拿到地址。
+        // 只有在原有流程也失败时，才在末尾把 Occupied 作为更准确的失败码报出去。
+        val reuseOutcome = reuseListeningEngine(rootfs)
+        if (reuseOutcome is ReuseOutcome.Ready) return reuseOutcome.result
 
         val existing = daemonSupervisor.list().firstOrNull {
             it.running && it.task.environment == environment && it.task.identity == identity &&
@@ -105,7 +104,13 @@ internal class DshEngineLauncher(
             launchUrlFromLogs(logs.text)?.let { return DshEngineResult.Ready(it) }
             delay(waitIntervalMs)
         }
-        return DshEngineResult.Failed("URL_TIMEOUT")
+        // 原有流程也失败了。若端口从一开始就被非本引擎的进程占着，
+        // 报 PORT_OCCUPIED 比 URL_TIMEOUT 更能指向真正的原因。
+        return if (reuseOutcome is ReuseOutcome.Occupied) {
+            DshEngineResult.Failed("PORT_OCCUPIED")
+        } else {
+            DshEngineResult.Failed("URL_TIMEOUT")
+        }
     }
 
     /** 端口复用的三种结论，让调用方能区分「可复用」「被别人占着」「端口空着」。 */
