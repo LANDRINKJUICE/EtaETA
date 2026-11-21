@@ -55,12 +55,23 @@ internal object LinuxPackageProfiles {
      * 抛 ENOENT（插件管理器的 pnpm.log 里可看到 `spawn pnpm ENOENT`）。ETA 的
      * Linux 环境原本不带 pnpm，导致「装插件失败」，只能事后手工补。
      *
-     * 装到 `/usr/local` 是为了落进默认 PATH（`/usr/local/bin` 在首位）。先走国内镜像，
-     * 失败回退官方源；两者都失败也不阻断 Node 环境就绪——pnpm 缺失只影响装插件。
+     * 三步，顺序不能换：
+     *
+     * 1. **先删旧的入口软链**。重装 Node 会重建 `opt/eta/node/<版本>/`，让上一轮
+     *    `npm install -g` 写下的 `/usr/local/bin/pnpm` 变成指向已删除目标的断链。
+     *    npm 见到同名文件一律报 `EEXIST` 拒绝写入，于是「看起来在装、实际没装」。
+     *    这一步就是修这个坑（v1.1.4 实测踩到过）。
+     * 2. 装到 `/usr/local`，落进默认 PATH（`/usr/local/bin` 在首位）；先走国内镜像，
+     *    失败回退官方源。
+     * 3. 两条源都失败时把原因写到 stderr。**不能用 `|| true` 静默吞掉** ——
+     *    那会让 marker 照常写入、界面上「已安装」，而插件安装依旧 ENOENT，
+     *    排查成本极高。这里用 `echo`（退出码 0）保证只提示、不阻断 Node 环境就绪。
      */
     private const val PNPM_SETUP_SCRIPT =
-        "npm install -g --prefix /usr/local --registry=https://registry.npmmirror.com pnpm@12 >/dev/null 2>&1 || " +
-            "npm install -g --prefix /usr/local pnpm@12 >/dev/null 2>&1 || true"
+        "rm -f /usr/local/bin/pnpm /usr/local/bin/pnpx /usr/local/bin/pn /usr/local/bin/pnx; " +
+            "npm install -g --prefix /usr/local --registry=https://registry.npmmirror.com pnpm@12 " +
+            "|| npm install -g --prefix /usr/local pnpm@12 " +
+            "|| echo '[eta] pnpm install failed: DSH plugin installation will not work' >&2"
 
     /** DSH 引擎安装脚本：先试国内镜像，失败回退官方源；全局装到 /usr/local。 */
     private const val DSH_INSTALL_SCRIPT =
