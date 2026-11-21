@@ -47,11 +47,41 @@ internal object DshWebAuth {
     /**
      * 读取 rootfs 内持久化的浏览器会话签名密钥。
      * 文件缺失、记录缺失或格式不符时返回 `null`，调用方需回退到日志抓取。
+     *
+     * 注意：`dsh-home` 与 `.credentials.yaml` 都是 `700/600 root`，ETA 以普通应用
+     * uid 运行时**读不到**（实测 `Permission denied`）。这条直读路径只在 ETA 自身
+     * 以 root 运行时有效；其余情况必须走 [readSigningSecretViaRoot]。
      */
     fun readSigningSecret(rootfs: File): ByteArray? {
         val file = File(rootfs, CREDENTIALS_RELATIVE_PATH)
         if (!file.isFile) return null
         val text = runCatching { file.readText() }.getOrNull() ?: return null
+        return parseSigningSecret(text)
+    }
+
+    /**
+     * 通过 root 通道读取签名密钥。
+     *
+     * 凭据文件权限是 `600 root`、父目录 `700 root`，ETA 以 uid 10355 运行时直读必然
+     * `Permission denied`。此时复用判定会误判成「端口被别的进程占着」，进而新起实例
+     * 撞 `EADDRINUSE`，最终表现就是「dsh 组件不可用」。
+     *
+     * [readText] 由调用方注入（通常包装 `su -c cat <path>`），这样本类不必依赖
+     * ETA 的 root 执行器，也便于单测。
+     *
+     * @param readText 以 root 身份读取指定路径文本的函数；失败返回 null。
+     */
+    fun readSigningSecretViaRoot(
+        rootfs: File,
+        readText: (absolutePath: String) -> String?,
+    ): ByteArray? {
+        val path = File(rootfs, CREDENTIALS_RELATIVE_PATH).absolutePath
+        val text = readText(path)?.takeIf { it.isNotBlank() } ?: return null
+        return parseSigningSecret(text)
+    }
+
+    /** 从凭据 YAML 正文里解析 `client-connection/browser-session` 的 secret。 */
+    private fun parseSigningSecret(text: String): ByteArray? {
         val record = text.substringAfter("$RECORD_KEY:", missingDelimiterValue = "\u0000")
             .takeIf { it.isNotEmpty() } ?: return null
         val value = Regex("""secret:\s*['"]?([^'"\s]+)['"]?""")
