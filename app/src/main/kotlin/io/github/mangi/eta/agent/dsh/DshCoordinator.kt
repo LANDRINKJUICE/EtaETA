@@ -36,7 +36,14 @@ internal class DshCoordinator(private val context: Context) {
     private val rootExecutor = BoundedRootCommandExecutor(AndroidAgentLogger)
     private val engine = DshEngineLauncher(context, daemonSupervisor, rootExecutor)
 
-    /** 外部浏览器中转服务；首次成功启动引擎后才创建。 */
+    /**
+     * 外部浏览器中转服务；首次成功启动引擎后才创建。
+     *
+     * `@Volatile`：写入发生在 `launchWebUrl()` 的 IO 协程里，
+     * 读取发生在 `launchDshWeb()` 的同一协程后续（也可能从主线程调用），
+     * 不加会读到 null 导致外部打开退回 3080 而 401。
+     */
+    @Volatile
     private var externalLogin: DshExternalLoginServer? = null
 
     /** 中转服务当前下发的会话 cookie（每次引擎就绪时刷新）。 */
@@ -48,7 +55,9 @@ internal class DshCoordinator(private val context: Context) {
     suspend fun launchWebUrl(): String? = launchMutex.withLock {
         when (val launched = engine.launch(currentEnvironment())) {
             is DshEngineResult.Ready -> {
-                prepareExternalLogin()
+                // 中转是增强项：任何失败都不能影响内置打开。
+                runCatching { prepareExternalLogin() }
+                    .onFailure { AndroidAgentLogger.warn("dsh_external_login_failed ${it.javaClass.simpleName}") }
                 launched.url
             }
             is DshEngineResult.Failed -> {
@@ -65,8 +74,18 @@ internal class DshCoordinator(private val context: Context) {
      * `SameSite=Strict`，外部应用跳转过来时浏览器不会带上它，最终停在 401。
      * 详见 [DshExternalLoginServer] 的类注释。
      */
-    fun externalLoginUrl(): String? =
-        externalLogin?.takeIf { it.isStarted }?.loginUrl
+    fun externalLoginUrl(): String? {
+        val server = externalLogin
+        if (server == null) {
+            AndroidAgentLogger.warn("dsh_external_login_url_null reason=no_server")
+            return null
+        }
+        if (!server.isStarted) {
+            AndroidAgentLogger.warn("dsh_external_login_url_null reason=not_started")
+            return null
+        }
+        return server.loginUrl
+    }
 
     /**
      * 起中转服务并刷新它要下发的 cookie。
@@ -79,6 +98,7 @@ internal class DshCoordinator(private val context: Context) {
             AndroidAgentLogger.warn("dsh_external_login_no_cookie")
             return
         }
+        AndroidAgentLogger.info("dsh_external_login_cookie_ready len=${cookie.length}")
         val server = externalLogin ?: DshExternalLoginServer(
             targetUrl = DshWebAuth.cleanUrl(DshEngineLauncher.HOST, DshEngineLauncher.PORT),
             cookieProvider = { latestSessionCookie },
@@ -88,6 +108,7 @@ internal class DshCoordinator(private val context: Context) {
         }
         latestSessionCookie = cookie
         server.start()
+        AndroidAgentLogger.info("dsh_external_login_ready started=${server.isStarted} url=${server.loginUrl}")
     }
 
     /** 停止引擎（用户在环境页手动停止时调用）。 */
