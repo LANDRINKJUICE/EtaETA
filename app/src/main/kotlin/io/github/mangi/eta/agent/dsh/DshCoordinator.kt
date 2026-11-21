@@ -36,79 +36,17 @@ internal class DshCoordinator(private val context: Context) {
     private val rootExecutor = BoundedRootCommandExecutor(AndroidAgentLogger)
     private val engine = DshEngineLauncher(context, daemonSupervisor, rootExecutor)
 
-    /**
-     * 外部浏览器中转服务；首次成功启动引擎后才创建。
-     *
-     * `@Volatile`：写入发生在 `launchWebUrl()` 的 IO 协程里，
-     * 读取发生在 `launchDshWeb()` 的同一协程后续（也可能从主线程调用），
-     * 不加会读到 null 导致外部打开退回 3080 而 401。
-     */
-    @Volatile
-    private var externalLogin: DshExternalLoginServer? = null
-
-    /** 中转服务当前下发的会话 cookie（每次引擎就绪时刷新）。 */
-    @Volatile
-    private var latestSessionCookie: String? = null
     private val launchMutex = Mutex()
 
     /** 启动（或复用）引擎，返回可直接交给 WebView 的带 token 地址；失败返回 null。 */
     suspend fun launchWebUrl(): String? = launchMutex.withLock {
         when (val launched = engine.launch(currentEnvironment())) {
-            is DshEngineResult.Ready -> {
-                // 中转是增强项：任何失败都不能影响内置打开。
-                runCatching { prepareExternalLogin() }
-                    .onFailure { AndroidAgentLogger.warn("dsh_external_login_failed ${it.javaClass.simpleName}") }
-                launched.url
-            }
+            is DshEngineResult.Ready -> launched.url
             is DshEngineResult.Failed -> {
                 AndroidAgentLogger.warn("dsh_launch_failed code=${launched.code}")
                 null
             }
         }
-    }
-
-    /**
-     * 外部浏览器可用的中转地址；引擎未就绪或会话不可用时为 null。
-     *
-     * 走中转而不是把 `?token=` 直接交给外部浏览器：DSH 的会话 cookie 硬编码
-     * `SameSite=Strict`，外部应用跳转过来时浏览器不会带上它，最终停在 401。
-     * 详见 [DshExternalLoginServer] 的类注释。
-     */
-    fun externalLoginUrl(): String? {
-        val server = externalLogin
-        if (server == null) {
-            AndroidAgentLogger.warn("dsh_external_login_url_null reason=no_server")
-            return null
-        }
-        if (!server.isStarted) {
-            AndroidAgentLogger.warn("dsh_external_login_url_null reason=not_started")
-            return null
-        }
-        return server.loginUrl
-    }
-
-    /**
-     * 起中转服务并刷新它要下发的 cookie。
-     *
-     * 幂等：重复调用只更新 cookie，不重复绑定端口。绑定失败只记日志
-     * —— 外部打开是增强项，不能反过来拖垮内置打开。
-     */
-    private suspend fun prepareExternalLogin() {
-        val cookie = engine.currentSessionCookie() ?: run {
-            AndroidAgentLogger.warn("dsh_external_login_no_cookie")
-            return
-        }
-        AndroidAgentLogger.info("dsh_external_login_cookie_ready len=${cookie.length}")
-        val server = externalLogin ?: DshExternalLoginServer(
-            targetUrl = DshWebAuth.cleanUrl(DshEngineLauncher.HOST, DshEngineLauncher.PORT),
-            cookieProvider = { latestSessionCookie },
-        ).also {
-            it.start()
-            externalLogin = it
-        }
-        latestSessionCookie = cookie
-        server.start()
-        AndroidAgentLogger.info("dsh_external_login_ready started=${server.isStarted} url=${server.loginUrl}")
     }
 
     /** 停止引擎（用户在环境页手动停止时调用）。 */

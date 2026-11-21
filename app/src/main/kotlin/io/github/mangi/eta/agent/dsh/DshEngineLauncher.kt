@@ -6,13 +6,10 @@ import io.github.mangi.eta.agent.device.RootAccess
 import io.github.mangi.eta.agent.runtime.AgentExecutionService
 import io.github.mangi.eta.agent.terminal.DaemonStartResult
 import io.github.mangi.eta.agent.terminal.DetachedTaskSupervisor
-import io.github.mangi.eta.agent.terminal.LinuxDistribution
 import io.github.mangi.eta.agent.terminal.LinuxEnvironmentPaths
 import io.github.mangi.eta.agent.terminal.TerminalEnvironment
 import io.github.mangi.eta.agent.terminal.TerminalRuntime
 import io.github.mangi.eta.agent.terminal.shellQuote
-import io.github.mangi.eta.core.AndroidAgentLogger
-import io.github.mangi.eta.data.repository.LinuxEnvironmentSettingsRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -170,24 +167,6 @@ internal class DshEngineLauncher(
             readyWithSecret(secret)
         }
 
-    /**
-     * 当前可用的会话 cookie（`name=value`），供外部浏览器中转服务下发。
-     *
-     * 引擎已就绪时凭据必然可读，这里只做一次派生，不再重复探测端口。
-     */
-    suspend fun currentSessionCookie(): String? = withContext(Dispatchers.IO) {
-        val distribution = currentDistribution()
-        val rootfs = LinuxEnvironmentPaths.rootfsDir(context, distribution)
-        val secret = signingSecret(rootfs) ?: return@withContext null
-        DshWebAuth.mintCookie(secret, HOST, PORT)
-    }
-
-    /**
-     * 与 [DshCoordinator] 相同的环境解析路径，避免两处取值口径不一致。
-     * `current()` 直接返回 [LinuxDistribution]。
-     */
-    private fun currentDistribution(): LinuxDistribution =
-        LinuxEnvironmentSettingsRepository.current(context)
     private fun readyWithSecret(secret: ByteArray): DshEngineResult? {
         val tokenUrl = DshWebAuth.authenticatedUrl(HOST, PORT, DshWebAuth.launchToken(secret))
         if (DshWebAuth.probeUsable(tokenUrl)) return DshEngineResult.Ready(tokenUrl)
