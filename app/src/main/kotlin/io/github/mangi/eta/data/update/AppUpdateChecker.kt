@@ -15,10 +15,11 @@ internal data class AppLatestRelease(
 )
 
 /**
- * 应用更新检查：读取 GitHub 最新 Release 并与当前版本比较。
+ * 应用更新检查：读取本 fork 的 GitHub 最新 Release 并与当前版本比较。
  *
- * 版本号遵循发版流程的 v 前缀 + 点分数字约定（v3.0.6），比较按段进行：两段都是数字时
- * 按数值比较，否则按字符串比较。当前版本的构建类型后缀（-debug）与 CI 构建元数据（+提交号）不参与比较。
+ * 版本号约定为 `v` 前缀 + 点分数字 + 可选发行标记（`v1.1.3-dsh`）。比较按段进行：
+ * 两段都是数字时按数值比较，否则按字符串比较。`+提交号`、`-dsh`、`-debug`
+ * 这类后缀**两侧都不参与比较**（见 [normalize]）。
  * 所有网络与响应错误统一抛 [IOException]，由调用方提示。
  */
 internal object AppUpdateChecker {
@@ -64,9 +65,8 @@ internal object AppUpdateChecker {
     }
 
     fun isNewer(latest: String, current: String): Boolean {
-        val latestParts = latest.removePrefix("v").split('.')
-        val currentParts =
-            current.removePrefix("v").substringBefore('+').substringBefore('-').split('.')
+        val latestParts = normalize(latest).split('.')
+        val currentParts = normalize(current).split('.')
         for (index in 0 until maxOf(latestParts.size, currentParts.size)) {
             val latestPart = latestParts.getOrNull(index) ?: "0"
             val currentPart = currentParts.getOrNull(index) ?: "0"
@@ -82,11 +82,29 @@ internal object AppUpdateChecker {
         return false
     }
 
+    /**
+     * 去掉 v 前缀、构建元数据（+提交号）和预发布/发行标记（-dsh、-debug）后返回可比较的版本号。
+     *
+     * 两侧都必须归一化：本仓库发的是 `1.1.3-dsh`，若只剥当前版本的后缀，
+     * 远端 `1.1.3-dsh` 会被切成 `["1","1","3-dsh"]`，与 `["1","1","3"]` 走字符串比较，
+     * `"3-dsh" > "3"` 恒成立 —— 同一版本也会被判定为「有新版本」。
+     */
+    private fun normalize(version: String): String =
+        version.removePrefix("v").substringBefore('+').substringBefore('-')
+
     private val client = OkHttpClient.Builder()
         .connectTimeout(8, TimeUnit.SECONDS)
         .readTimeout(8, TimeUnit.SECONDS)
         .build()
 
-    private const val LATEST_RELEASE_URL = "https://api.github.com/repos/Mangi-11/Eta/releases/latest"
+    /**
+     * 本 fork 自己的 Release 源。
+     *
+     * 原先指向上游 `Mangi-11/Eta`，导致「检查更新」永远提示上游的 3.4.x，
+     * 用户发的版本反而收不到通知。上游版本号（3.x）与本 fork（1.1.x-dsh）不同轨，
+     * 所以必须查自己的仓库。
+     */
+    private const val LATEST_RELEASE_URL =
+        "https://api.github.com/repos/LANDRINKJUICE/EtaETA/releases/latest"
     private const val USER_AGENT = "Eta-Update-Checker"
 }
